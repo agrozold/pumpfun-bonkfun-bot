@@ -34,6 +34,9 @@ class PumpFunAddresses:
     LIQUIDITY_MIGRATOR: Final[Pubkey] = Pubkey.from_string(
         "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
     )
+    FEE_PROGRAM: Final[Pubkey] = Pubkey.from_string(
+        "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+    )
 
     @staticmethod
     def find_global_volume_accumulator() -> Pubkey:
@@ -63,6 +66,20 @@ class PumpFunAddresses:
         derived_address, _ = Pubkey.find_program_address(
             [b"user_volume_accumulator", bytes(user)],
             PumpFunAddresses.PROGRAM,
+        )
+        return derived_address
+
+    @staticmethod
+    def find_fee_config() -> Pubkey:
+        """
+        Derive the Program Derived Address (PDA) for the fee config.
+
+        Returns:
+            Pubkey of the derived fee config account
+        """
+        derived_address, _ = Pubkey.find_program_address(
+            [b"fee_config", bytes(PumpFunAddresses.PROGRAM)],
+            PumpFunAddresses.FEE_PROGRAM,
         )
         return derived_address
 
@@ -97,6 +114,7 @@ class PumpFunAddressProvider(AddressProvider):
             "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
             "fee": PumpFunAddresses.FEE,
             "liquidity_migrator": PumpFunAddresses.LIQUIDITY_MIGRATOR,
+            "fee_program": PumpFunAddresses.FEE_PROGRAM,
         }
 
         # Combine system and platform-specific addresses
@@ -223,6 +241,14 @@ class PumpFunAddressProvider(AddressProvider):
         """
         return PumpFunAddresses.find_user_volume_accumulator(user)
 
+    def derive_fee_config(self) -> Pubkey:
+        """Derive the fee config PDA.
+
+        Returns:
+            Fee config address
+        """
+        return PumpFunAddresses.find_fee_config()
+
     def get_buy_instruction_accounts(
         self, token_info: TokenInfo, user: Pubkey
     ) -> dict[str, Pubkey]:
@@ -258,6 +284,8 @@ class PumpFunAddressProvider(AddressProvider):
             "program": PumpFunAddresses.PROGRAM,
             "global_volume_accumulator": self.derive_global_volume_accumulator(),
             "user_volume_accumulator": self.derive_user_volume_accumulator(user),
+            "fee_config": self.derive_fee_config(),
+            "fee_program": PumpFunAddresses.FEE_PROGRAM,
         }
 
     def get_sell_instruction_accounts(
@@ -293,4 +321,6 @@ class PumpFunAddressProvider(AddressProvider):
             "token_program": SystemAddresses.TOKEN_PROGRAM,
             "event_authority": PumpFunAddresses.EVENT_AUTHORITY,
             "program": PumpFunAddresses.PROGRAM,
+            "fee_config": self.derive_fee_config(),
+            "fee_program": PumpFunAddresses.FEE_PROGRAM,
         }

@@ -66,6 +66,7 @@ SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
 PUMP_SWAP_EVENT_AUTHORITY = Pubkey.from_string(
     "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR"
 )
+PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 LAMPORTS_PER_SOL = 1_000_000_000
 COMPUTE_UNIT_PRICE = 10_000  # Price in micro-lamports per compute unit
 COMPUTE_UNIT_BUDGET = 200_000  # Maximum compute units to use
@@ -216,6 +217,19 @@ def find_user_volume_accumulator(user: Pubkey) -> Pubkey:
     return derived_address
 
 
+def find_fee_config() -> Pubkey:
+    """Derive the Program Derived Address (PDA) for the fee config.
+
+    Returns:
+        Pubkey of the derived fee config account
+    """
+    derived_address, _ = Pubkey.find_program_address(
+        [b"fee_config", bytes(PUMP_AMM_PROGRAM_ID)],
+        PUMP_FEE_PROGRAM,
+    )
+    return derived_address
+
+
 async def calculate_token_pool_price(
     client: AsyncClient,
     pool_base_token_account: Pubkey,
@@ -341,6 +355,10 @@ async def buy_pump_swap(
             pubkey=global_volume_accumulator, is_signer=False, is_writable=True
         ),
         AccountMeta(pubkey=user_volume_accumulator, is_signer=False, is_writable=True),
+        # Index 21: fee_config (readonly)
+        AccountMeta(pubkey=find_fee_config(), is_signer=False, is_writable=False),
+        # Index 22: fee_program (readonly)
+        AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
     ]
 
     data = (

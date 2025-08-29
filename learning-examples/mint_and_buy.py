@@ -43,6 +43,9 @@ PUMP_EVENT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
 PUMP_FEE: Final[Pubkey] = Pubkey.from_string(
     "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
 )
+PUMP_FEE_PROGRAM: Final[Pubkey] = Pubkey.from_string(
+    "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+)
 PUMP_MINT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
     "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
 )
@@ -125,6 +128,14 @@ def _find_user_volume_accumulator(user: Pubkey) -> Pubkey:
     derived_address, _ = Pubkey.find_program_address(
         [b"user_volume_accumulator", bytes(user)],
         PUMP_PROGRAM,
+    )
+    return derived_address
+
+
+def _find_fee_config() -> Pubkey:
+    derived_address, _ = Pubkey.find_program_address(
+        [b"fee_config", bytes(PUMP_PROGRAM)],
+        PUMP_FEE_PROGRAM,
     )
     return derived_address
 
@@ -216,6 +227,18 @@ def create_buy_instruction(
             pubkey=_find_user_volume_accumulator(user),
             is_signer=False,
             is_writable=True,
+        ),
+        # Index 14: fee_config (readonly)
+        AccountMeta(
+            pubkey=_find_fee_config(),
+            is_signer=False,
+            is_writable=False,
+        ),
+        # Index 15: fee_program (readonly)
+        AccountMeta(
+            pubkey=PUMP_FEE_PROGRAM,
+            is_signer=False,
+            is_writable=False,
         ),
     ]
 

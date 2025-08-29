@@ -130,6 +130,18 @@ class PumpFunInstructionBuilder(InstructionBuilder):
                 is_signer=False,
                 is_writable=True,
             ),
+            # Index 14: fee_config (readonly)
+            AccountMeta(
+                pubkey=accounts_info["fee_config"],
+                is_signer=False,
+                is_writable=False,
+            ),
+            # Index 15: fee_program (readonly)
+            AccountMeta(
+                pubkey=accounts_info["fee_program"],
+                is_signer=False,
+                is_writable=False,
+            ),
         ]
 
         # Build instruction data: discriminator + token_amount + max_sol_cost
@@ -217,6 +229,18 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             AccountMeta(
                 pubkey=accounts_info["program"], is_signer=False, is_writable=False
             ),
+            # Index 12: fee_config (readonly)
+            AccountMeta(
+                pubkey=accounts_info["fee_config"],
+                is_signer=False,
+                is_writable=False,
+            ),
+            # Index 13: fee_program (readonly)
+            AccountMeta(
+                pubkey=accounts_info["fee_program"],
+                is_signer=False,
+                is_writable=False,
+            ),
         ]
 
         # Build instruction data: discriminator + token_amount + min_sol_output
@@ -260,6 +284,8 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["global_volume_accumulator"],
             accounts_info["user_volume_accumulator"],
             accounts_info["program"],
+            accounts_info["fee_config"],
+            accounts_info["fee_program"],
         ]
 
     def get_required_accounts_for_sell(
@@ -285,6 +311,8 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["fee"],
             accounts_info["creator_vault"],
             accounts_info["program"],
+            accounts_info["fee_config"],
+            accounts_info["fee_program"],
         ]
 
     def calculate_token_amount_raw(self, token_amount_decimal: float) -> int:

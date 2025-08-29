@@ -38,6 +38,7 @@ PUMP_EVENT_AUTHORITY = Pubkey.from_string(
     "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
 )
 PUMP_FEE = Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
+PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 SYSTEM_TOKEN_2022_PROGRAM = Pubkey.from_string(
@@ -126,6 +127,14 @@ def _find_user_volume_accumulator(user: Pubkey) -> Pubkey:
     derived_address, _ = Pubkey.find_program_address(
         [b"user_volume_accumulator", bytes(user)],
         PUMP_PROGRAM,
+    )
+    return derived_address
+
+
+def _find_fee_config() -> Pubkey:
+    derived_address, _ = Pubkey.find_program_address(
+        [b"fee_config", bytes(PUMP_PROGRAM)],
+        PUMP_FEE_PROGRAM,
     )
     return derived_address
 
@@ -300,6 +309,18 @@ async def buy_token(
                 pubkey=_find_user_volume_accumulator(payer.pubkey()),
                 is_signer=False,
                 is_writable=True,
+            ),
+            # Index 14: fee_config (readonly)
+            AccountMeta(
+                pubkey=_find_fee_config(),
+                is_signer=False,
+                is_writable=False,
+            ),
+            # Index 15: fee_program (readonly)
+            AccountMeta(
+                pubkey=PUMP_FEE_PROGRAM,
+                is_signer=False,
+                is_writable=False,
             ),
         ]
 
