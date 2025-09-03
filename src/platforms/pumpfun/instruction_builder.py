@@ -336,3 +336,31 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             Token amount in decimal form
         """
         return token_amount_raw / 10**TOKEN_DECIMALS
+
+    def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Get the recommended compute unit limit for pump.fun buy operations.
+
+        Args:
+            config_override: Optional override from configuration
+
+        Returns:
+            Compute unit limit appropriate for buy operations
+        """
+        if config_override is not None:
+            return config_override
+        # Buy operations: ATA creation + buy instruction
+        return 100_000
+
+    def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Get the recommended compute unit limit for pump.fun sell operations.
+
+        Args:
+            config_override: Optional override from configuration
+
+        Returns:
+            Compute unit limit appropriate for sell operations
+        """
+        if config_override is not None:
+            return config_override
+        # Sell operations: typically just sell instruction (ATA exists)
+        return 60_000

@@ -145,15 +145,18 @@ class SolanaClient:
         skip_preflight: bool = True,
         max_retries: int = 3,
         priority_fee: int | None = None,
+        compute_unit_limit: int | None = None,
     ) -> str:
         """
-        Send a transaction with optional priority fee.
+        Send a transaction with optional priority fee and compute unit limit.
 
         Args:
             instructions: List of instructions to include in the transaction.
+            signer_keypair: Keypair to sign the transaction.
             skip_preflight: Whether to skip preflight checks.
             max_retries: Maximum number of retry attempts.
             priority_fee: Optional priority fee in microlamports.
+            compute_unit_limit: Optional compute unit limit. Defaults to 85,000 if not provided.
 
         Returns:
             Transaction signature.
@@ -164,12 +167,18 @@ class SolanaClient:
             f"Priority fee in microlamports: {priority_fee if priority_fee else 0}"
         )
 
-        # Add priority fee instructions if applicable
-        if priority_fee is not None:
-            fee_instructions = [
-                set_compute_unit_limit(85_000),  # Default compute unit limit
-                set_compute_unit_price(priority_fee),
-            ]
+        # Add compute budget instructions if applicable
+        if priority_fee is not None or compute_unit_limit is not None:
+            fee_instructions = []
+
+            # Set compute unit limit (use provided value or default to 85,000)
+            cu_limit = compute_unit_limit if compute_unit_limit is not None else 85_000
+            fee_instructions.append(set_compute_unit_limit(cu_limit))
+
+            # Set priority fee if provided
+            if priority_fee is not None:
+                fee_instructions.append(set_compute_unit_price(priority_fee))
+
             instructions = fee_instructions + instructions
 
         recent_blockhash = await self.get_cached_blockhash()

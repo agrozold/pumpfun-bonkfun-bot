@@ -460,3 +460,31 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
             Token amount in decimal form
         """
         return token_amount_raw / 10**TOKEN_DECIMALS
+
+    def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Get the recommended compute unit limit for LetsBonk buy operations.
+
+        Args:
+            config_override: Optional override from configuration
+
+        Returns:
+            Compute unit limit appropriate for buy operations
+        """
+        if config_override is not None:
+            return config_override
+        # Buy operations: ATA creation + WSOL creation/init/close + buy instruction
+        return 100_000
+
+    def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Get the recommended compute unit limit for LetsBonk sell operations.
+
+        Args:
+            config_override: Optional override from configuration
+
+        Returns:
+            Compute unit limit appropriate for sell operations
+        """
+        if config_override is not None:
+            return config_override
+        # Sell operations: WSOL creation/init/close + sell instruction
+        return 60_000

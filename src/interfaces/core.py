@@ -201,6 +201,30 @@ class InstructionBuilder(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Get the recommended compute unit limit for buy operations.
+
+        Args:
+            config_override: Optional override from configuration
+
+        Returns:
+            Compute unit limit appropriate for buy operations
+        """
+        pass
+
+    @abstractmethod
+    def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
+        """Get the recommended compute unit limit for sell operations.
+
+        Args:
+            config_override: Optional override from configuration
+
+        Returns:
+            Compute unit limit appropriate for sell operations
+        """
+        pass
+
 
 class CurveManager(ABC):
     """Abstract interface for platform-specific price calculations and pool state management."""

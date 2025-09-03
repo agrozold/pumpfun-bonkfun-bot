@@ -83,6 +83,8 @@ class UniversalTrader:
         bro_address: str | None = None,
         marry_mode: bool = False,
         yolo_mode: bool = False,
+        # Compute unit configuration
+        compute_units: dict | None = None,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -120,6 +122,9 @@ class UniversalTrader:
             self.platform, self.solana_client
         )
 
+        # Store compute unit configuration
+        self.compute_units = compute_units or {}
+
         # Create platform-aware traders
         self.buyer = PlatformAwareBuyer(
             self.solana_client,
@@ -130,6 +135,7 @@ class UniversalTrader:
             max_retries,
             extreme_fast_token_amount,
             extreme_fast_mode,
+            compute_units=self.compute_units,
         )
 
         self.seller = PlatformAwareSeller(
@@ -138,6 +144,7 @@ class UniversalTrader:
             self.priority_fee_manager,
             sell_slippage,
             max_retries,
+            compute_units=self.compute_units,
         )
 
         # Initialize the appropriate listener with platform filtering

@@ -174,7 +174,7 @@ def find_coin_creator_vault(coin_creator: Pubkey) -> Pubkey:
 
 def find_fee_config() -> Pubkey:
     """Derive the Program Derived Address (PDA) for the fee config.
-    
+
     Returns:
         Pubkey of the derived fee config account
     """

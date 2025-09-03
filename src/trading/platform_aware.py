@@ -30,6 +30,7 @@ class PlatformAwareBuyer(Trader):
         max_retries: int = 5,
         extreme_fast_token_amount: int = 0,
         extreme_fast_mode: bool = False,
+        compute_units: dict | None = None,
     ):
         """Initialize platform-aware token buyer."""
         self.client = client
@@ -40,6 +41,7 @@ class PlatformAwareBuyer(Trader):
         self.max_retries = max_retries
         self.extreme_fast_mode = extreme_fast_mode
         self.extreme_fast_token_amount = extreme_fast_token_amount
+        self.compute_units = compute_units or {}
 
     async def execute(self, token_info: TokenInfo) -> TradeResult:
         """Execute buy operation using platform-specific implementations."""
@@ -106,6 +108,9 @@ class PlatformAwareBuyer(Trader):
                 priority_fee=await self.priority_fee_manager.calculate_priority_fee(
                     priority_accounts
                 ),
+                compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
+                    self._get_cu_override("buy", token_info.platform)
+                ),
             )
 
             success = await self.client.confirm_transaction(tx_signature)
@@ -147,6 +152,22 @@ class PlatformAwareBuyer(Trader):
         # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)
 
+    def _get_cu_override(self, operation: str, platform: Platform) -> int | None:
+        """Get compute unit override from configuration.
+        
+        Args:
+            operation: "buy" or "sell"
+            platform: Trading platform (unused - each config is platform-specific)
+            
+        Returns:
+            CU override value if configured, None otherwise
+        """
+        if not self.compute_units:
+            return None
+            
+        # Just check for operation override (buy/sell)
+        return self.compute_units.get(operation)
+
 
 class PlatformAwareSeller(Trader):
     """Platform-aware token seller that works with any supported platform."""
@@ -158,6 +179,7 @@ class PlatformAwareSeller(Trader):
         priority_fee_manager: PriorityFeeManager,
         slippage: float = 0.25,
         max_retries: int = 5,
+        compute_units: dict | None = None,
     ):
         """Initialize platform-aware token seller."""
         self.client = client
@@ -165,6 +187,7 @@ class PlatformAwareSeller(Trader):
         self.priority_fee_manager = priority_fee_manager
         self.slippage = slippage
         self.max_retries = max_retries
+        self.compute_units = compute_units or {}
 
     async def execute(self, token_info: TokenInfo) -> TradeResult:
         """Execute sell operation using platform-specific implementations."""
@@ -203,18 +226,18 @@ class PlatformAwareSeller(Trader):
 
             logger.info(f"Price per Token: {token_price_sol:.8f} SOL")
 
-            # Calculate minimum SOL output with slippage
-            expected_sol_output = float(token_balance_decimal) * float(token_price_sol)
+            # Calculate expected SOL output
+            expected_sol_output = token_balance_decimal * token_price_sol
+
+            # Calculate minimum SOL output with slippage protection
             min_sol_output = int(
                 (expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL
             )
 
-            logger.info(
-                f"Selling {token_balance_decimal} tokens on {token_info.platform.value}"
-            )
+            logger.info(f"Selling {token_balance_decimal} tokens on {token_info.platform.value}")
             logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
             logger.info(
-                f"Minimum SOL output (with {self.slippage * 100}% slippage): {min_sol_output / LAMPORTS_PER_SOL:.8f} SOL"
+                f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {min_sol_output / LAMPORTS_PER_SOL:.8f} SOL"
             )
 
             # Build sell instructions using platform-specific builder
@@ -239,6 +262,9 @@ class PlatformAwareSeller(Trader):
                 max_retries=self.max_retries,
                 priority_fee=await self.priority_fee_manager.calculate_priority_fee(
                     priority_accounts
+                ),
+                compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
+                    self._get_cu_override("sell", token_info.platform)
                 ),
             )
 
@@ -280,3 +306,19 @@ class PlatformAwareSeller(Trader):
 
         # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)
+
+    def _get_cu_override(self, operation: str, platform: Platform) -> int | None:
+        """Get compute unit override from configuration.
+        
+        Args:
+            operation: "buy" or "sell"
+            platform: Trading platform (unused - each config is platform-specific)
+            
+        Returns:
+            CU override value if configured, None otherwise
+        """
+        if not self.compute_units:
+            return None
+            
+        # Just check for operation override (buy/sell)
+        return self.compute_units.get(operation)

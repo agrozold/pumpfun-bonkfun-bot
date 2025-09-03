@@ -8,7 +8,7 @@ rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
 wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-enabled: true # You can turn off the bot w/o removing its config
+enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
@@ -49,6 +49,13 @@ priority_fees:
   fixed_amount: 200_000 # Base fee in microlamports
   extra_percentage: 0.0 # Percentage increase on riority fee regardless of the calculation method (0.1 = 10%)
   hard_cap: 200_000 # Maximum allowable fee in microlamports to prevent excessive spending
+
+# Compute unit limits for transaction processing
+# Operation-specific defaults are used if not specified: buy=100K, sell=60K
+compute_units:
+  # Override default CU limits for this platform
+  # buy: 100_000    # Buy operations (ATA creation + trading)
+  # sell: 60_000    # Sell operations (just trading)
 
 # Filters for token selection
 filters:
