@@ -70,6 +70,9 @@ TOKEN_DECIMALS: Final[int] = 6
 # Discriminators
 CREATE_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 8576854823835016728)
 BUY_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 16927863322537952870)
+EXTEND_ACCOUNT_DISCRIMINATOR: Final[bytes] = bytes(
+    [234, 102, 194, 203, 150, 72, 62, 229]
+)
 
 # From environment
 RPC_ENDPOINT = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
@@ -194,6 +197,25 @@ def create_pump_create_instruction(
     return Instruction(PUMP_PROGRAM, data, accounts)
 
 
+def create_extend_account_instruction(
+    bonding_curve: Pubkey,
+    user: Pubkey,
+) -> Instruction:
+    """Create the extend_account instruction to expand bonding curve account size."""
+    accounts = [
+        AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
+        AccountMeta(pubkey=user, is_signer=True, is_writable=True),
+        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+    ]
+
+    # No arguments for extend_account instruction
+    data = EXTEND_ACCOUNT_DISCRIMINATOR
+
+    return Instruction(PUMP_PROGRAM, data, accounts)
+
+
 def create_buy_instruction(
     global_state: Pubkey,
     fee_recipient: Pubkey,
@@ -205,6 +227,7 @@ def create_buy_instruction(
     creator_vault: Pubkey,
     token_amount: int,
     max_sol_cost: int,
+    track_volume: bool = True,
 ) -> Instruction:
     """Create the buy instruction."""
     accounts = [
@@ -242,10 +265,15 @@ def create_buy_instruction(
         ),
     ]
 
+    # Encode OptionBool for track_volume
+    # OptionBool: [0] = None, [1, 0] = Some(false), [1, 1] = Some(true)
+    track_volume_bytes = bytes([1, 1 if track_volume else 0])
+
     data = (
         BUY_DISCRIMINATOR
         + struct.pack("<Q", token_amount)
         + struct.pack("<Q", max_sol_cost)
+        + track_volume_bytes
     )
 
     return Instruction(PUMP_PROGRAM, data, accounts)
@@ -317,6 +345,11 @@ async def main():
             symbol=TOKEN_SYMBOL,
             uri=TOKEN_URI,
         ),
+        # Extend bonding curve account (required for frontend visibility)
+        create_extend_account_instruction(
+            bonding_curve=bonding_curve,
+            user=payer.pubkey(),
+        ),
         # Create user ATA
         create_idempotent_associated_token_account(
             payer.pubkey(),
@@ -336,6 +369,7 @@ async def main():
             creator_vault=creator_vault,
             token_amount=expected_tokens,
             max_sol_cost=max_sol_cost,
+            track_volume=True,
         ),
     ]
 
