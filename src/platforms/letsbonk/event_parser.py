@@ -33,14 +33,23 @@ class LetsBonkEventParser(EventParser):
         self.address_provider = LetsBonkAddressProvider()
         self._idl_parser = idl_parser
 
-        # Get discriminators from injected IDL parser
+        # Get all initialize instruction discriminators from injected IDL parser
+        # LetsBonk has multiple initialize variants: initialize, initialize_v2, initialize_with_token_2022
         discriminators = self._idl_parser.get_instruction_discriminators()
-        self._initialize_discriminator_bytes = discriminators["initialize"]
-        self._initialize_discriminator = struct.unpack(
-            "<Q", self._initialize_discriminator_bytes
-        )[0]
+        self._initialize_discriminator_bytes_list = [
+            discriminators["initialize"],
+            discriminators["initialize_v2"],
+            discriminators["initialize_with_token_2022"],
+        ]
+        self._initialize_discriminators = {
+            struct.unpack("<Q", disc_bytes)[0]
+            for disc_bytes in self._initialize_discriminator_bytes_list
+        }
 
-        logger.info("LetsBonk event parser initialized with injected IDL parser")
+        logger.info(
+            f"LetsBonk event parser initialized with {len(self._initialize_discriminators)} "
+            f"initialize instruction variants"
+        )
 
     @property
     def platform(self) -> Platform:
@@ -76,7 +85,11 @@ class LetsBonkEventParser(EventParser):
         Returns:
             TokenInfo if token creation found, None otherwise
         """
-        if not instruction_data.startswith(self._initialize_discriminator_bytes):
+        # Check if instruction starts with any of the initialize discriminators
+        if not any(
+            instruction_data.startswith(disc_bytes)
+            for disc_bytes in self._initialize_discriminator_bytes_list
+        ):
             return None
 
         try:
@@ -93,7 +106,12 @@ class LetsBonkEventParser(EventParser):
             decoded = self._idl_parser.decode_instruction(
                 instruction_data, account_keys, accounts
             )
-            if not decoded or decoded["instruction_name"] != "initialize":
+            # Accept any of the initialize instruction variants
+            if not decoded or decoded["instruction_name"] not in {
+                "initialize",
+                "initialize_v2",
+                "initialize_with_token_2022",
+            }:
                 return None
 
             args = decoded.get("args", {})
@@ -118,15 +136,18 @@ class LetsBonkEventParser(EventParser):
             # ... other accounts
 
             creator = get_account_key(0)  # First signer account (creator)
+            global_config = get_account_key(2)  # global_config account
+            platform_config = get_account_key(3)  # platform_config account
             pool_state = get_account_key(5)  # pool_state account
             base_mint = get_account_key(6)  # base_mint account
             base_vault = get_account_key(8)  # base_vault account
             quote_vault = get_account_key(9)  # quote_vault account
 
-            if not all([creator, pool_state, base_mint, base_vault, quote_vault]):
+            if not all([creator, global_config, platform_config, pool_state, base_mint, base_vault, quote_vault]):
                 logger.debug(
-                    f"Missing required accounts: creator={creator}, pool_state={pool_state}, "
-                    f"base_mint={base_mint}, base_vault={base_vault}, quote_vault={quote_vault}"
+                    f"Missing required accounts: creator={creator}, global_config={global_config}, "
+                    f"platform_config={platform_config}, pool_state={pool_state}, base_mint={base_mint}, "
+                    f"base_vault={base_vault}, quote_vault={quote_vault}"
                 )
                 return None
 
@@ -139,6 +160,8 @@ class LetsBonkEventParser(EventParser):
                 pool_state=pool_state,
                 base_vault=base_vault,
                 quote_vault=quote_vault,
+                global_config=global_config,
+                platform_config=platform_config,
                 user=creator,
                 creator=creator,
                 creation_timestamp=monotonic(),
@@ -219,9 +242,9 @@ class LetsBonkEventParser(EventParser):
         """Get instruction discriminators for token creation.
 
         Returns:
-            List of discriminator bytes to match
+            List of discriminator bytes to match (all initialize variants)
         """
-        return [self._initialize_discriminator_bytes]
+        return self._initialize_discriminator_bytes_list
 
     def parse_token_creation_from_block(self, block_data: dict) -> TokenInfo | None:
         """Parse token creation from block data (for block listener).
@@ -259,11 +282,11 @@ class LetsBonkEventParser(EventParser):
 
                             ix_data = bytes(ix.data)
 
-                            # Check for initialize discriminator
+                            # Check for any initialize discriminator variant
                             if len(ix_data) >= 8:
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
-                                if discriminator == self._initialize_discriminator:
+                                if discriminator in self._initialize_discriminators:
                                     # Token creation should have substantial data and many accounts
                                     if len(ix_data) <= 8 or len(ix.accounts) < 10:
                                         continue
@@ -318,7 +341,7 @@ class LetsBonkEventParser(EventParser):
                             if len(ix_data) >= 8:
                                 discriminator = struct.unpack("<Q", ix_data[:8])[0]
 
-                                if discriminator == self._initialize_discriminator:
+                                if discriminator in self._initialize_discriminators:
                                     if len(ix_data) <= 8 or len(ix["accounts"]) < 10:
                                         continue
 
