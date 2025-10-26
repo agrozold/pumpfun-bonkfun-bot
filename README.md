@@ -18,6 +18,8 @@ For the full walkthrough, see [Solana: Creating a trading and sniping pump.fun b
 
 For near-instantaneous transaction propagation, you can use the [Chainstack Solana Trader nodes](https://docs.chainstack.com/docs/trader-nodes).
 
+For instant updates from the network, you can enable [Yellowstone gRPC Geyser plugin](https://docs.chainstack.com/docs/yellowstone-grpc-geyser-plugin) (Jito ShredStream enabled by default).
+
 The official maintainers are in the [MAINTAINERS.md](MAINTAINERS.md) file. Leave your feedback by opening **Issues**.
 
 ---
