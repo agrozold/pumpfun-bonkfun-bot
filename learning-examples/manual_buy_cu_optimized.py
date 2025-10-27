@@ -8,6 +8,13 @@ improve transaction priority.
 
 Key difference from manual_buy.py:
 - Adds set_loaded_accounts_data_size_limit(512_000) before other instructions
+
+NOTE: The CU savings from this optimization are NOT visible in transaction "consumed CU"
+metrics, which only show execution CU. The 16k CU loaded accounts overhead is counted
+separately for transaction priority/cost calculation. This makes the real impact hard
+to measure directly, but it improves priority.
+
+Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
 """
 
 import asyncio
