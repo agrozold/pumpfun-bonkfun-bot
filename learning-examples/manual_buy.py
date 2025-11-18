@@ -7,7 +7,7 @@ import struct
 
 import base58
 import websockets
-from construct import Bytes, Flag, Int64ul, Struct
+from construct import Flag, Int64ul, Struct
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import TxOpts
@@ -36,6 +36,7 @@ PUMP_FEE = Pubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+TOKEN_2022_PROGRAM = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 )
@@ -48,27 +49,59 @@ RPC_WEBSOCKET = os.environ.get("SOLANA_NODE_WSS_ENDPOINT")
 
 
 class BondingCurveState:
-    _STRUCT = Struct(
+    """Bonding curve state parser with progressive field parsing.
+
+    Parses bonding curve account data progressively based on available bytes,
+    making it forward-compatible with future schema versions.
+    """
+
+    # Base struct present in all versions
+    _BASE_STRUCT = Struct(
         "virtual_token_reserves" / Int64ul,
         "virtual_sol_reserves" / Int64ul,
         "real_token_reserves" / Int64ul,
         "real_sol_reserves" / Int64ul,
         "token_total_supply" / Int64ul,
         "complete" / Flag,
-        "creator" / Bytes(32),  # Added new creator field - 32 bytes for Pubkey
     )
 
     def __init__(self, data: bytes) -> None:
-        """Parse bonding curve data."""
+        """Parse bonding curve data progressively based on available bytes.
+
+        Args:
+            data: Raw account data including discriminator
+
+        Raises:
+            ValueError: If discriminator is invalid or data is too short
+        """
+        if len(data) < 8:
+            raise ValueError("Data too short to contain discriminator")
+
         if data[:8] != EXPECTED_DISCRIMINATOR:
             raise ValueError("Invalid curve state discriminator")
 
-        parsed = self._STRUCT.parse(data[8:])
+        # Parse base fields (always present)
+        offset = 8
+        base_data = data[offset:]
+        parsed = self._BASE_STRUCT.parse(base_data)
         self.__dict__.update(parsed)
 
-        # Convert raw bytes to Pubkey for creator field
-        if hasattr(self, "creator") and isinstance(self.creator, bytes):
-            self.creator = Pubkey.from_bytes(self.creator)
+        # Calculate offset after base struct
+        offset += self._BASE_STRUCT.sizeof()
+
+        # Parse creator if bytes remaining (added in V2)
+        if len(data) >= offset + 32:
+            creator_bytes = data[offset : offset + 32]
+            self.creator = Pubkey.from_bytes(creator_bytes)
+            offset += 32
+        else:
+            self.creator = None
+
+        # Parse mayhem mode flag if bytes remaining (added in V3)
+        if len(data) >= offset + 1:
+            self.is_mayhem_mode = bool(data[offset])
+        else:
+            self.is_mayhem_mode = False
 
 
 async def get_pump_curve_state(
@@ -126,11 +159,59 @@ def _find_fee_config() -> Pubkey:
     return derived_address
 
 
+async def get_fee_recipient(
+    client: AsyncClient, curve_state: BondingCurveState
+) -> Pubkey:
+    """Determine the correct fee recipient based on mayhem mode.
+
+    Mayhem mode tokens use a different fee recipient (reserved_fee_recipient from Global account)
+    instead of the standard fee recipient. This function checks the bonding curve state
+    and returns the appropriate fee recipient.
+
+    Args:
+        client: Solana RPC client to fetch Global account data
+        curve_state: Parsed bonding curve state containing is_mayhem_mode flag
+
+    Returns:
+        Appropriate fee recipient pubkey (mayhem or standard)
+    """
+    if not curve_state.is_mayhem_mode:
+        return PUMP_FEE
+
+    # Fetch Global account to get reserved_fee_recipient for mayhem mode tokens
+    response = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
+    if not response.value or not response.value.data:
+        # Fallback to standard fee if Global account cannot be fetched
+        return PUMP_FEE
+
+    data = response.value.data
+
+    # Parse reserved_fee_recipient from Global account
+    # Offset calculation based on pump_fun_idl.json Global struct:
+    # discriminator(8) + initialized(1) + authority(32) + fee_recipient(32) +
+    # initial_virtual_token_reserves(8) + initial_virtual_sol_reserves(8) +
+    # initial_real_token_reserves(8) + token_total_supply(8) + fee_basis_points(8) +
+    # withdraw_authority(32) + enable_migrate(1) + pool_migration_fee(8) +
+    # creator_fee_basis_points(8) + fee_recipients[7](224) + set_creator_authority(32) +
+    # admin_set_creator_authority(32) + create_v2_enabled(1) + whitelist_pda(32) = 483
+    RESERVED_FEE_RECIPIENT_OFFSET = 483
+
+    if len(data) < RESERVED_FEE_RECIPIENT_OFFSET + 32:
+        # Fallback if account data is too short
+        return PUMP_FEE
+
+    reserved_fee_recipient_bytes = data[
+        RESERVED_FEE_RECIPIENT_OFFSET : RESERVED_FEE_RECIPIENT_OFFSET + 32
+    ]
+    return Pubkey.from_bytes(reserved_fee_recipient_bytes)
+
+
 async def buy_token(
     mint: Pubkey,
     bonding_curve: Pubkey,
     associated_bonding_curve: Pubkey,
     creator_vault: Pubkey,
+    token_program: Pubkey,
     amount: float,
     slippage: float = 0.25,
     max_retries=5,
@@ -139,10 +220,12 @@ async def buy_token(
     payer = Keypair.from_bytes(private_key)
 
     async with AsyncClient(RPC_ENDPOINT) as client:
-        associated_token_account = get_associated_token_address(payer.pubkey(), mint)
+        associated_token_account = get_associated_token_address(
+            payer.pubkey(), mint, token_program_id=token_program
+        )
         amount_lamports = int(amount * LAMPORTS_PER_SOL)
 
-        # Fetch the token price
+        # Fetch bonding curve state to calculate price and determine fee recipient
         curve_state = await get_pump_curve_state(client, bonding_curve)
         token_price_sol = calculate_pump_curve_price(curve_state)
         token_amount = amount / token_price_sol
@@ -150,9 +233,12 @@ async def buy_token(
         # Calculate maximum SOL to spend with slippage
         max_amount_lamports = int(amount_lamports * (1 + slippage))
 
+        # Determine fee recipient based on whether token uses mayhem mode
+        fee_recipient = await get_fee_recipient(client, curve_state)
+
         accounts = [
             AccountMeta(pubkey=PUMP_GLOBAL, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=PUMP_FEE, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=True),
             AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
             AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
             AccountMeta(
@@ -168,7 +254,7 @@ async def buy_token(
             AccountMeta(pubkey=payer.pubkey(), is_signer=True, is_writable=True),
             AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
             AccountMeta(
-                pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False
+                pubkey=token_program, is_signer=False, is_writable=False
             ),
             AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
             AccountMeta(
@@ -178,7 +264,7 @@ async def buy_token(
             AccountMeta(
                 pubkey=_find_global_volume_accumulator(),
                 is_signer=False,
-                is_writable=True,
+                is_writable=False,
             ),
             AccountMeta(
                 pubkey=_find_user_volume_accumulator(payer.pubkey()),
@@ -200,14 +286,17 @@ async def buy_token(
         ]
 
         discriminator = struct.pack("<Q", 16927863322537952870)
+        # Encode OptionBool for track_volume: [1, 1] = Some(true)
+        track_volume_bytes = bytes([1, 1])
         data = (
             discriminator
             + struct.pack("<Q", int(token_amount * 10**6))
             + struct.pack("<Q", max_amount_lamports)
+            + track_volume_bytes
         )
         buy_ix = Instruction(PUMP_PROGRAM, data, accounts)
         idempotent_ata_ix = create_idempotent_associated_token_account(
-            payer.pubkey(), payer.pubkey(), mint
+            payer.pubkey(), payer.pubkey(), mint, token_program_id=token_program
         )
         msg = Message(
             [set_compute_unit_price(1_000), idempotent_ata_ix, buy_ix], payer.pubkey()
@@ -284,6 +373,7 @@ async def listen_for_create_transaction():
     idl_path = os.path.join(os.path.dirname(__file__), "..", "idl", "pump_fun_idl.json")
     idl = load_idl(idl_path)
     create_discriminator = calculate_discriminator("global:create")
+    create_v2_discriminator = calculate_discriminator("global:create_v2")
 
     async with websockets.connect(RPC_WEBSOCKET) as websocket:
         subscription_message = json.dumps(
@@ -336,11 +426,22 @@ async def listen_for_create_transaction():
                                                 "<Q", ix_data[:8]
                                             )[0]
 
+                                            # Check which create instruction was used
+                                            instruction_name = None
+                                            token_program = None
+
                                             if discriminator == create_discriminator:
+                                                instruction_name = "create"
+                                                token_program = SYSTEM_TOKEN_PROGRAM
+                                            elif discriminator == create_v2_discriminator:
+                                                instruction_name = "create_v2"
+                                                token_program = TOKEN_2022_PROGRAM
+
+                                            if instruction_name:
                                                 create_ix = next(
                                                     instr
                                                     for instr in idl["instructions"]
-                                                    if instr["name"] == "create"
+                                                    if instr["name"] == instruction_name
                                                 )
                                                 account_keys = [
                                                     str(
@@ -355,6 +456,9 @@ async def listen_for_create_transaction():
                                                         ix_data, create_ix, account_keys
                                                     )
                                                 )
+                                                # Add token program info to decoded args
+                                                decoded_args["token_program"] = str(token_program)
+                                                decoded_args["is_token_2022"] = (token_program == TOKEN_2022_PROGRAM)
                                                 return decoded_args
 
 
@@ -372,6 +476,7 @@ async def main():
     bonding_curve = Pubkey.from_string(token_data["bondingCurve"])
     associated_bonding_curve = Pubkey.from_string(token_data["associatedBondingCurve"])
     creator_vault = _find_creator_vault(Pubkey.from_string(token_data["creator"]))
+    token_program = Pubkey.from_string(token_data["token_program"])
 
     # Fetch the token price
     async with AsyncClient(RPC_ENDPOINT) as client:
@@ -383,12 +488,13 @@ async def main():
     slippage = 0.3  # 30% slippage tolerance
 
     print(f"Bonding curve address: {bonding_curve}")
+    print(f"Token Program: {token_program} ({'Token2022' if token_data['is_token_2022'] else 'Standard Token'})")
     print(f"Token price: {token_price_sol:.10f} SOL")
     print(
         f"Buying {amount:.6f} SOL worth of the new token with {slippage * 100:.1f}% slippage tolerance..."
     )
     await buy_token(
-        mint, bonding_curve, associated_bonding_curve, creator_vault, amount, slippage
+        mint, bonding_curve, associated_bonding_curve, creator_vault, token_program, amount, slippage
     )
 
 

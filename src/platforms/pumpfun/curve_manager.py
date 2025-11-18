@@ -190,20 +190,28 @@ class PumpFunCurveManager(CurveManager):
             "token_total_supply": decoded_curve_state.get("token_total_supply", 0),
             "complete": decoded_curve_state.get("complete", False),
             "creator": decoded_curve_state.get("creator", ""),
+            "is_mayhem_mode": decoded_curve_state.get("is_mayhem_mode", False),
         }
 
         # Calculate additional metrics
-        if curve_data["virtual_token_reserves"] > 0:
-            curve_data["price_per_token"] = (
-                (
-                    curve_data["virtual_sol_reserves"]
-                    / curve_data["virtual_token_reserves"]
-                )
-                * (10**TOKEN_DECIMALS)
-                / LAMPORTS_PER_SOL
+        # Validate reserves are positive before calculating price
+        if curve_data["virtual_token_reserves"] <= 0:
+            raise ValueError(
+                f"Invalid virtual_token_reserves: {curve_data['virtual_token_reserves']} - cannot calculate price"
             )
-        else:
-            curve_data["price_per_token"] = 0
+        if curve_data["virtual_sol_reserves"] <= 0:
+            raise ValueError(
+                f"Invalid virtual_sol_reserves: {curve_data['virtual_sol_reserves']} - cannot calculate price"
+            )
+
+        curve_data["price_per_token"] = (
+            (
+                curve_data["virtual_sol_reserves"]
+                / curve_data["virtual_token_reserves"]
+            )
+            * (10**TOKEN_DECIMALS)
+            / LAMPORTS_PER_SOL
+        )
 
         # Add convenience decimal fields
         curve_data["token_reserves_decimal"] = (

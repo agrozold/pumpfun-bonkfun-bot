@@ -20,13 +20,14 @@ from spl.token.instructions import (
 )
 
 # Configuration for the token to be created
-TOKEN_NAME = "Test Token"
-TOKEN_SYMBOL = "TEST"
-TOKEN_URI = "https://example.com/token.json"
-BUY_AMOUNT_SOL = 0.001  # Amount of SOL to spend on buying
+TOKEN_NAME = "Test Token V2"
+TOKEN_SYMBOL = "TEST2"
+TOKEN_URI = "https://example.com/token-v2.json"
+BUY_AMOUNT_SOL = 0.0001  # Amount of SOL to spend on buying
 MAX_SLIPPAGE = 0.3  # 30% slippage
 PRIORITY_FEE_MICROLAMPORTS = 37_037  # Priority fee in microlamports
-COMPUTE_UNIT_LIMIT = 250_000  # Compute unit limit for the transaction
+COMPUTE_UNIT_LIMIT = 350_000  # Compute unit limit for the transaction
+ENABLE_MAYHEM_MODE = True  # Set to True to enable mayhem mode
 
 load_dotenv()
 
@@ -50,25 +51,30 @@ PUMP_MINT_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
     "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
 )
 
-SYSTEM_PROGRAM: Final[Pubkey] = Pubkey.from_string("11111111111111111111111111111111")
-SYSTEM_TOKEN_PROGRAM: Final[Pubkey] = Pubkey.from_string(
-    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+# Token2022 and Mayhem constants
+TOKEN_2022_PROGRAM: Final[Pubkey] = Pubkey.from_string(
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 )
+MAYHEM_PROGRAM_ID: Final[Pubkey] = Pubkey.from_string(
+    "MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e"
+)
+GLOBAL_PARAMS: Final[Pubkey] = Pubkey.from_string(
+    "13ec7XdrjF3h3YcqBTFDSReRcUFwbCnJaAQspM4j6DDJ"
+)
+SOL_VAULT: Final[Pubkey] = Pubkey.from_string(
+    "BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"
+)
+
+SYSTEM_PROGRAM: Final[Pubkey] = Pubkey.from_string("11111111111111111111111111111111")
 SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM: Final[Pubkey] = Pubkey.from_string(
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-)
-SYSTEM_RENT: Final[Pubkey] = Pubkey.from_string(
-    "SysvarRent111111111111111111111111111111111"
-)
-METAPLEX_TOKEN_METADATA: Final[Pubkey] = Pubkey.from_string(
-    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 )
 
 LAMPORTS_PER_SOL: Final[int] = 1_000_000_000
 TOKEN_DECIMALS: Final[int] = 6
 
 # Discriminators
-CREATE_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 8576854823835016728)
+CREATE_V2_DISCRIMINATOR: Final[bytes] = bytes([214, 144, 76, 236, 95, 139, 49, 180])
 BUY_DISCRIMINATOR: Final[bytes] = struct.pack("<Q", 16927863322537952870)
 EXTEND_ACCOUNT_DISCRIMINATOR: Final[bytes] = bytes(
     [234, 102, 194, 203, 150, 72, 62, 229]
@@ -89,23 +95,10 @@ def find_associated_bonding_curve(mint: Pubkey, bonding_curve: Pubkey) -> Pubkey
     derived_address, _ = Pubkey.find_program_address(
         [
             bytes(bonding_curve),
-            bytes(SYSTEM_TOKEN_PROGRAM),
+            bytes(TOKEN_2022_PROGRAM),
             bytes(mint),
         ],
         SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM,
-    )
-    return derived_address
-
-
-def find_metadata_address(mint: Pubkey) -> Pubkey:
-    """Find the metadata PDA for a mint."""
-    derived_address, _ = Pubkey.find_program_address(
-        [
-            b"metadata",
-            bytes(METAPLEX_TOKEN_METADATA),
-            bytes(mint),
-        ],
-        METAPLEX_TOKEN_METADATA,
     )
     return derived_address
 
@@ -117,6 +110,29 @@ def find_creator_vault(creator: Pubkey) -> Pubkey:
         PUMP_PROGRAM,
     )
     return derived_address
+
+
+def find_mayhem_state(mint: Pubkey) -> Pubkey:
+    """Find the mayhem state PDA for a mint.
+
+    Seeds: ["mayhem-state", mint] (note: hyphen, not underscore)
+    """
+    derived_address, _ = Pubkey.find_program_address(
+        [b"mayhem-state", bytes(mint)],
+        MAYHEM_PROGRAM_ID,
+    )
+    return derived_address
+
+
+def find_mayhem_token_vault(mint: Pubkey) -> Pubkey:
+    """Find the mayhem token vault - this is an ATA for sol_vault.
+
+    This is derived as an Associated Token Account with:
+    - Owner: SOL_VAULT
+    - Mint: mint
+    - Token Program: TOKEN_2022_PROGRAM
+    """
+    return get_associated_token_address(SOL_VAULT, mint, TOKEN_2022_PROGRAM)
 
 
 def _find_global_volume_accumulator() -> Pubkey:
@@ -143,40 +159,67 @@ def _find_fee_config() -> Pubkey:
     return derived_address
 
 
-def create_pump_create_instruction(
+def create_pump_create_v2_instruction(
     mint: Pubkey,
     mint_authority: Pubkey,
     bonding_curve: Pubkey,
     associated_bonding_curve: Pubkey,
     global_state: Pubkey,
-    metadata: Pubkey,
     user: Pubkey,
     creator: Pubkey,
     name: str,
     symbol: str,
     uri: str,
+    is_mayhem_mode: bool = False,
 ) -> Instruction:
-    """Create the pump.fun create instruction."""
+    """Create the pump.fun create_v2 instruction for Token2022.
+
+    Account order matches pump_fun_idl.json create_v2 instruction.
+    """
     accounts = [
         AccountMeta(pubkey=mint, is_signer=True, is_writable=True),
         AccountMeta(pubkey=mint_authority, is_signer=False, is_writable=False),
         AccountMeta(pubkey=bonding_curve, is_signer=False, is_writable=True),
         AccountMeta(pubkey=associated_bonding_curve, is_signer=False, is_writable=True),
         AccountMeta(pubkey=global_state, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=METAPLEX_TOKEN_METADATA, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=metadata, is_signer=False, is_writable=True),
         AccountMeta(pubkey=user, is_signer=True, is_writable=True),
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=TOKEN_2022_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(
             pubkey=SYSTEM_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM,
             is_signer=False,
             is_writable=False,
         ),
-        AccountMeta(pubkey=SYSTEM_RENT, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
     ]
+
+    # Add mayhem accounts if enabled (must come before event_authority and program)
+    if is_mayhem_mode:
+        mayhem_state = find_mayhem_state(mint)
+        mayhem_token_vault = find_mayhem_token_vault(mint)
+
+        accounts.extend(
+            [
+                AccountMeta(
+                    pubkey=MAYHEM_PROGRAM_ID, is_signer=False, is_writable=True
+                ),
+                AccountMeta(pubkey=GLOBAL_PARAMS, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=SOL_VAULT, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=mayhem_state, is_signer=False, is_writable=True),
+                AccountMeta(
+                    pubkey=mayhem_token_vault, is_signer=False, is_writable=True
+                ),
+            ]
+        )
+
+    # Event authority and program come last
+    accounts.extend(
+        [
+            AccountMeta(
+                pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False
+            ),
+            AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
+        ]
+    )
 
     # Encode string as length-prefixed
     def encode_string(s: str) -> bytes:
@@ -187,11 +230,12 @@ def create_pump_create_instruction(
         return bytes(pubkey)
 
     data = (
-        CREATE_DISCRIMINATOR
+        CREATE_V2_DISCRIMINATOR
         + encode_string(name)
         + encode_string(symbol)
         + encode_string(uri)
         + encode_pubkey(creator)
+        + struct.pack("<?", is_mayhem_mode)  # OptionBool for is_mayhem_mode
     )
 
     return Instruction(PUMP_PROGRAM, data, accounts)
@@ -239,7 +283,7 @@ def create_buy_instruction(
         AccountMeta(pubkey=associated_user, is_signer=False, is_writable=True),
         AccountMeta(pubkey=user, is_signer=True, is_writable=True),
         AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-        AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+        AccountMeta(pubkey=TOKEN_2022_PROGRAM, is_signer=False, is_writable=False),
         AccountMeta(pubkey=creator_vault, is_signer=False, is_writable=True),
         AccountMeta(pubkey=PUMP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
         AccountMeta(pubkey=PUMP_PROGRAM, is_signer=False, is_writable=False),
@@ -279,33 +323,73 @@ def create_buy_instruction(
     return Instruction(PUMP_PROGRAM, data, accounts)
 
 
+async def get_fee_recipient_for_mayhem(client: AsyncClient, is_mayhem: bool) -> Pubkey:
+    """Get the appropriate fee recipient based on mayhem mode.
+
+    For mayhem tokens, we need to use reserved_fee_recipient from Global account.
+    For standard tokens, we use the standard PUMP_FEE.
+    """
+    if not is_mayhem:
+        return PUMP_FEE
+
+    # Fetch Global account to get reserved_fee_recipient for mayhem mode
+    response = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
+    if not response.value or not response.value.data:
+        print("Warning: Could not fetch Global account, using standard fee recipient")
+        return PUMP_FEE
+
+    data = response.value.data
+
+    # Parse reserved_fee_recipient from Global account at offset 483
+    RESERVED_FEE_RECIPIENT_OFFSET = 483
+
+    if len(data) < RESERVED_FEE_RECIPIENT_OFFSET + 32:
+        print("Warning: Global account data too short, using standard fee recipient")
+        return PUMP_FEE
+
+    reserved_fee_recipient_bytes = data[
+        RESERVED_FEE_RECIPIENT_OFFSET : RESERVED_FEE_RECIPIENT_OFFSET + 32
+    ]
+    reserved_fee_recipient = Pubkey.from_bytes(reserved_fee_recipient_bytes)
+
+    print(f"Using mayhem mode fee recipient: {reserved_fee_recipient}")
+    return reserved_fee_recipient
+
+
 async def main():
-    """Create and buy pump.fun token in a single transaction."""
+    """Create and buy pump.fun token (Token2022) in a single transaction."""
     private_key_bytes = base58.b58decode(PRIVATE_KEY)
     payer = Keypair.from_bytes(private_key_bytes)
     mint_keypair = Keypair()
 
-    print("Creating token with:")
+    print("Creating Token2022 token with:")
     print(f"  Name: {TOKEN_NAME}")
     print(f"  Symbol: {TOKEN_SYMBOL}")
     print(f"  Mint: {mint_keypair.pubkey()}")
     print(f"  Creator: {payer.pubkey()}")
+    print(f"  Mayhem mode: {'Enabled' if ENABLE_MAYHEM_MODE else 'Disabled'}")
 
     # Derive PDAs
     bonding_curve, _ = find_bonding_curve_address(mint_keypair.pubkey())
     associated_bonding_curve = find_associated_bonding_curve(
         mint_keypair.pubkey(), bonding_curve
     )
-    metadata = find_metadata_address(mint_keypair.pubkey())
-    user_ata = get_associated_token_address(payer.pubkey(), mint_keypair.pubkey())
+    user_ata = get_associated_token_address(
+        payer.pubkey(), mint_keypair.pubkey(), TOKEN_2022_PROGRAM
+    )
     creator_vault = find_creator_vault(payer.pubkey())
 
     print("\nDerived addresses:")
     print(f"  Bonding curve: {bonding_curve}")
     print(f"  Associated bonding curve: {associated_bonding_curve}")
-    print(f"  Metadata: {metadata}")
     print(f"  User ATA: {user_ata}")
     print(f"  Creator vault: {creator_vault}")
+
+    if ENABLE_MAYHEM_MODE:
+        mayhem_state = find_mayhem_state(mint_keypair.pubkey())
+        mayhem_token_vault = find_mayhem_token_vault(mint_keypair.pubkey())
+        print(f"  Mayhem state: {mayhem_state}")
+        print(f"  Mayhem token vault: {mayhem_token_vault}")
 
     # Calculate buy parameters
     # For pump.fun, we need to calculate expected tokens based on initial curve state
@@ -327,54 +411,57 @@ async def main():
     print(f"  Expected tokens: {expected_tokens / 10**TOKEN_DECIMALS:.6f}")
     print(f"  Max SOL cost: {max_sol_cost / LAMPORTS_PER_SOL:.6f} SOL")
 
-    instructions = [
-        # Priority fee instructions
-        set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
-        set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
-        # Create token with pump.fun (this will handle mint account, metadata, etc.)
-        create_pump_create_instruction(
-            mint=mint_keypair.pubkey(),
-            mint_authority=PUMP_MINT_AUTHORITY,
-            bonding_curve=bonding_curve,
-            associated_bonding_curve=associated_bonding_curve,
-            global_state=PUMP_GLOBAL,
-            metadata=metadata,
-            user=payer.pubkey(),
-            creator=payer.pubkey(),
-            name=TOKEN_NAME,
-            symbol=TOKEN_SYMBOL,
-            uri=TOKEN_URI,
-        ),
-        # Extend bonding curve account (required for frontend visibility)
-        create_extend_account_instruction(
-            bonding_curve=bonding_curve,
-            user=payer.pubkey(),
-        ),
-        # Create user ATA
-        create_idempotent_associated_token_account(
-            payer.pubkey(),
-            payer.pubkey(),
-            mint_keypair.pubkey(),
-            SYSTEM_TOKEN_PROGRAM,
-        ),
-        # Buy tokens
-        create_buy_instruction(
-            global_state=PUMP_GLOBAL,
-            fee_recipient=PUMP_FEE,
-            mint=mint_keypair.pubkey(),
-            bonding_curve=bonding_curve,
-            associated_bonding_curve=associated_bonding_curve,
-            associated_user=user_ata,
-            user=payer.pubkey(),
-            creator_vault=creator_vault,
-            token_amount=expected_tokens,
-            max_sol_cost=max_sol_cost,
-            track_volume=True,
-        ),
-    ]
-
     # Send transaction
     async with AsyncClient(RPC_ENDPOINT) as client:
+        # Get correct fee recipient based on mayhem mode
+        fee_recipient = await get_fee_recipient_for_mayhem(client, ENABLE_MAYHEM_MODE)
+
+        instructions = [
+            # Priority fee instructions
+            set_compute_unit_limit(COMPUTE_UNIT_LIMIT),
+            set_compute_unit_price(PRIORITY_FEE_MICROLAMPORTS),
+            # Create token with pump.fun create_v2 (Token2022)
+            create_pump_create_v2_instruction(
+                mint=mint_keypair.pubkey(),
+                mint_authority=PUMP_MINT_AUTHORITY,
+                bonding_curve=bonding_curve,
+                associated_bonding_curve=associated_bonding_curve,
+                global_state=PUMP_GLOBAL,
+                user=payer.pubkey(),
+                creator=payer.pubkey(),
+                name=TOKEN_NAME,
+                symbol=TOKEN_SYMBOL,
+                uri=TOKEN_URI,
+                is_mayhem_mode=ENABLE_MAYHEM_MODE,
+            ),
+            # Extend bonding curve account (required for frontend visibility)
+            create_extend_account_instruction(
+                bonding_curve=bonding_curve,
+                user=payer.pubkey(),
+            ),
+            # Create user ATA
+            create_idempotent_associated_token_account(
+                payer.pubkey(),
+                payer.pubkey(),
+                mint_keypair.pubkey(),
+                TOKEN_2022_PROGRAM,
+            ),
+            # Buy tokens
+            create_buy_instruction(
+                global_state=PUMP_GLOBAL,
+                fee_recipient=fee_recipient,
+                mint=mint_keypair.pubkey(),
+                bonding_curve=bonding_curve,
+                associated_bonding_curve=associated_bonding_curve,
+                associated_user=user_ata,
+                user=payer.pubkey(),
+                creator_vault=creator_vault,
+                token_amount=expected_tokens,
+                max_sol_cost=max_sol_cost,
+                track_volume=True,
+            ),
+        ]
+
         recent_blockhash = await client.get_latest_blockhash()
         message = Message(instructions, payer.pubkey())
         transaction = Transaction(
