@@ -271,6 +271,152 @@ class SolanaClient:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False
 
+    async def get_transaction_token_balance(
+        self, signature: str, user_pubkey: Pubkey, mint: Pubkey
+    ) -> int | None:
+        """Get the user's token balance after a transaction from postTokenBalances.
+
+        Args:
+            signature: Transaction signature
+            user_pubkey: User's wallet public key
+            mint: Token mint address
+
+        Returns:
+            Token balance (raw amount) after transaction, or None if not found
+        """
+        result = await self._get_transaction_result(signature)
+        if not result:
+            return None
+
+        meta = result.get("meta", {})
+        post_token_balances = meta.get("postTokenBalances", [])
+
+        user_str = str(user_pubkey)
+        mint_str = str(mint)
+
+        for balance in post_token_balances:
+            if balance.get("owner") == user_str and balance.get("mint") == mint_str:
+                ui_amount = balance.get("uiTokenAmount", {})
+                amount_str = ui_amount.get("amount")
+                if amount_str:
+                    return int(amount_str)
+
+        return None
+
+    async def get_buy_transaction_details(
+        self, signature: str, mint: Pubkey, sol_destination: Pubkey
+    ) -> tuple[int | None, int | None]:
+        """Get actual tokens received and SOL spent from a buy transaction.
+
+        Uses preBalances/postBalances to find exact SOL transferred to the
+        pool/curve and pre/post token balance diff to find tokens received.
+
+        Args:
+            signature: Transaction signature
+            mint: Token mint address
+            sol_destination: Address where SOL is sent (bonding curve for pump.fun,
+                           quote_vault for letsbonk)
+
+        Returns:
+            Tuple of (tokens_received_raw, sol_spent_lamports), or (None, None)
+        """
+        result = await self._get_transaction_result(signature)
+        if not result:
+            return None, None
+
+        meta = result.get("meta", {})
+        mint_str = str(mint)
+
+        # Get tokens received from pre/post token balance diff
+        # This works for Token2022 where owner might be different
+        tokens_received = None
+        pre_token_balances = meta.get("preTokenBalances", [])
+        post_token_balances = meta.get("postTokenBalances", [])
+
+        # Build lookup by account index
+        pre_by_idx = {b.get("accountIndex"): b for b in pre_token_balances}
+        post_by_idx = {b.get("accountIndex"): b for b in post_token_balances}
+
+        # Find positive token diff for our mint (user receiving tokens)
+        all_indices = set(pre_by_idx.keys()) | set(post_by_idx.keys())
+        for idx in all_indices:
+            pre = pre_by_idx.get(idx)
+            post = post_by_idx.get(idx)
+
+            # Check if this is our mint
+            balance_mint = (post or pre).get("mint", "")
+            if balance_mint != mint_str:
+                continue
+
+            pre_amount = (
+                int(pre.get("uiTokenAmount", {}).get("amount", 0)) if pre else 0
+            )
+            post_amount = (
+                int(post.get("uiTokenAmount", {}).get("amount", 0)) if post else 0
+            )
+            diff = post_amount - pre_amount
+
+            # Positive diff means tokens received (not the bonding curve's negative)
+            if diff > 0:
+                tokens_received = diff
+                logger.info(f"Tokens received from tx: {tokens_received}")
+                break
+
+        # Get SOL spent from preBalances/postBalances at sol_destination
+        sol_destination_str = str(sol_destination)
+        sol_spent = None
+        pre_balances = meta.get("preBalances", [])
+        post_balances = meta.get("postBalances", [])
+        account_keys = (
+            result.get("transaction", {}).get("message", {}).get("accountKeys", [])
+        )
+
+        for i, key in enumerate(account_keys):
+            key_str = key if isinstance(key, str) else key.get("pubkey", "")
+            if key_str == sol_destination_str:
+                if i < len(pre_balances) and i < len(post_balances):
+                    sol_spent = post_balances[i] - pre_balances[i]
+                    if sol_spent > 0:
+                        logger.info(f"SOL to pool/curve: {sol_spent} lamports")
+                    else:
+                        logger.warning(
+                            f"SOL destination balance change not positive: {sol_spent}"
+                        )
+                        sol_spent = None
+                break
+
+        return tokens_received, sol_spent
+
+    async def _get_transaction_result(self, signature: str) -> dict | None:
+        """Fetch transaction result from RPC.
+
+        Args:
+            signature: Transaction signature
+
+        Returns:
+            Transaction result dict or None
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {"encoding": "jsonParsed", "commitment": "confirmed"},
+            ],
+        }
+
+        response = await self.post_rpc(body)
+        if not response or "result" not in response:
+            logger.warning(f"Failed to get transaction {signature}")
+            return None
+
+        result = response["result"]
+        if not result or "meta" not in result:
+            return None
+
+        return result
+
     async def post_rpc(self, body: dict[str, Any]) -> dict[str, Any] | None:
         """
         Send a raw RPC request to the Solana node.

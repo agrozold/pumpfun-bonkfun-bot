@@ -29,7 +29,7 @@ trade:
   exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
   take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
   stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
-  max_hold_time: 600 # Maximum hold time in seconds (600 = 10 minutes)
+  max_hold_time: 15 # Maximum hold time in seconds for TP/SL strategy, for time_based - see wait_after_buy
   price_check_interval: 2 # Check price every 2 seconds
 
   # EXTREME FAST mode configuration
@@ -59,8 +59,9 @@ compute_units:
   # Reduces CU cost from 16k to ~128 CU by limiting loaded account data.
   # Default is 64MB (16k CU). Setting to 512KB significantly reduces overhead.
   # Note: Savings don't show in "consumed CU" but improve tx priority/cost.
+  # Note (Nov 23, 2025): with data size set to 512KB, transactions fail - increasing to 12.5MB resolves the issue.
   # Reference: https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
-  account_data_size: 512_000 # 512KB limit
+  account_data_size: 12_500_000
 
 # Filters for token selection
 filters:

@@ -130,6 +130,35 @@ class PlatformAwareBuyer(Trader):
 
             if success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
+
+                # Fetch actual tokens and SOL spent from transaction
+                # Uses preBalances/postBalances to get exact amounts
+                sol_destination = self._get_sol_destination(
+                    token_info, address_provider
+                )
+                tokens_raw, sol_spent = await self.client.get_buy_transaction_details(
+                    str(tx_signature), token_info.mint, sol_destination
+                )
+
+                if tokens_raw is not None and sol_spent is not None:
+                    actual_amount = tokens_raw / 10**TOKEN_DECIMALS
+                    actual_price = (sol_spent / LAMPORTS_PER_SOL) / actual_amount
+                    logger.info(
+                        f"Actual tokens received: {actual_amount:.6f} "
+                        f"(expected: {token_amount:.6f})"
+                    )
+                    logger.info(
+                        f"Actual SOL spent: {sol_spent / LAMPORTS_PER_SOL:.10f} SOL"
+                    )
+                    logger.info(f"Actual price: {actual_price:.10f} SOL/token")
+                    token_amount = actual_amount
+                    token_price_sol = actual_price
+                else:
+                    raise ValueError(
+                        f"Failed to parse transaction details: tokens={tokens_raw}, "
+                        f"sol_spent={sol_spent}"
+                    )
+
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
@@ -164,6 +193,42 @@ class PlatformAwareBuyer(Trader):
 
         # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)
+
+    def _get_sol_destination(
+        self, token_info: TokenInfo, address_provider: AddressProvider
+    ) -> Pubkey:
+        """Get the address where SOL is sent during a buy transaction.
+
+        For pump.fun: SOL goes to the bonding curve
+        For letsbonk: SOL goes to the quote_vault (WSOL vault)
+
+        Args:
+            token_info: Token information
+            address_provider: Platform-specific address provider
+
+        Returns:
+            Address where SOL is transferred during buy
+
+        Raises:
+            NotImplementedError: If platform SOL destination is not implemented
+        """
+        if token_info.platform == Platform.PUMP_FUN:
+            # For pump.fun, SOL goes directly to bonding curve
+            if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
+                return token_info.bonding_curve
+            return address_provider.derive_pool_address(token_info.mint)
+        elif token_info.platform == Platform.LETS_BONK:
+            # For letsbonk, SOL goes to quote_vault (WSOL vault)
+            if hasattr(token_info, "quote_vault") and token_info.quote_vault:
+                return token_info.quote_vault
+            # Derive quote_vault if not available
+            return address_provider.derive_quote_vault(token_info.mint)
+
+        raise NotImplementedError(
+            f"SOL destination not implemented for platform {token_info.platform.value}. "
+            f"Add platform-specific logic to _get_sol_destination() to specify where "
+            f"SOL is transferred during buy transactions for this platform."
+        )
 
     def _get_cu_override(self, operation: str, platform: Platform) -> int | None:
         """Get compute unit override from configuration.
@@ -202,8 +267,35 @@ class PlatformAwareSeller(Trader):
         self.max_retries = max_retries
         self.compute_units = compute_units or {}
 
-    async def execute(self, token_info: TokenInfo) -> TradeResult:
-        """Execute sell operation using platform-specific implementations."""
+    async def execute(
+        self, token_info: TokenInfo, token_amount: float, token_price: float
+    ) -> TradeResult:
+        """Execute sell operation using platform-specific implementations.
+
+        Args:
+            token_info: Token information for the sell operation
+            token_amount: Token amount to sell (from buy result). Required to avoid
+                         RPC balance query delays.
+            token_price: Token price in SOL (from buy result). Required to avoid
+                        RPC pool state query delays.
+
+        Returns:
+            TradeResult with operation outcome
+
+        Raises:
+            ValueError: If required parameters are not provided
+        """
+        if token_amount is None:
+            raise ValueError(
+                "token_amount is required for sell operation. "
+                "Pass the amount from buy result to avoid RPC delays."
+            )
+        if token_price is None or token_price <= 0:
+            raise ValueError(
+                "token_price is required for sell operation and must be positive. "
+                "Pass the price from buy result to avoid RPC delays."
+            )
+
         try:
             # Get platform-specific implementations
             implementations = get_platform_implementations(
@@ -211,19 +303,14 @@ class PlatformAwareSeller(Trader):
             )
             address_provider = implementations.address_provider
             instruction_builder = implementations.instruction_builder
-            curve_manager = implementations.curve_manager
 
-            # Get user's token account and balance
-            user_token_account = address_provider.derive_user_token_account(
-                self.wallet.pubkey, token_info.mint
-            )
+            # Use pre-known amount and price (no RPC delay)
+            token_balance_decimal = token_amount
+            token_balance = int(token_amount * 10**TOKEN_DECIMALS)
+            token_price_sol = token_price
 
-            token_balance = await self.client.get_token_account_balance(
-                user_token_account
-            )
-            token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
-
-            logger.info(f"Token balance: {token_balance_decimal}")
+            logger.info(f"Token balance: {token_balance_decimal:.6f}")
+            logger.info(f"Price per Token (from buy): {token_price_sol:.8f} SOL")
 
             if token_balance == 0:
                 logger.info("No tokens to sell.")
@@ -233,38 +320,19 @@ class PlatformAwareSeller(Trader):
                     error_message="No tokens to sell",
                 )
 
-            # Get pool address and current price using platform-agnostic method
-            pool_address = self._get_pool_address(token_info, address_provider)
-            # Fetch pool state to get price and mayhem mode status
-            pool_state = await curve_manager.get_pool_state(pool_address)
-            token_price_sol = pool_state.get("price_per_token")
-
-            # Validate price_per_token is present and positive
-            if token_price_sol is None or token_price_sol <= 0:
-                raise ValueError(
-                    f"Invalid price_per_token: {token_price_sol} for pool {pool_address} "
-                    f"(mint: {token_info.mint}) - cannot execute sell with zero/invalid price"
-                )
-
-            # Set is_mayhem_mode from bonding curve state
-            token_info.is_mayhem_mode = pool_state.get("is_mayhem_mode", False)
-
-            logger.info(f"Price per Token: {token_price_sol:.8f} SOL")
-
-            # Calculate expected SOL output
+            # Calculate expected SOL output with slippage protection
             expected_sol_output = token_balance_decimal * token_price_sol
-
-            # Calculate minimum SOL output with slippage protection
-            min_sol_output = int(
-                (expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL
+            min_sol_output = max(
+                1,
+                int((expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL),
             )
-
             logger.info(
                 f"Selling {token_balance_decimal} tokens on {token_info.platform.value}"
             )
-            logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
+            logger.info(f"Expected SOL output: {expected_sol_output:.10f} SOL")
             logger.info(
-                f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {min_sol_output / LAMPORTS_PER_SOL:.8f} SOL"
+                f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): "
+                f"{min_sol_output / LAMPORTS_PER_SOL:.10f} SOL ({min_sol_output} lamports)"
             )
 
             # Build sell instructions using platform-specific builder
