@@ -109,24 +109,33 @@ class PlatformAwareBuyer(Trader):
                 f"Total cost: {self.amount:.6f} SOL (max: {max_amount_lamports / LAMPORTS_PER_SOL:.6f} SOL)"
             )
 
-            # Send transaction
-            tx_signature = await self.client.build_and_send_transaction(
-                instructions,
-                self.wallet.keypair,
-                skip_preflight=True,
-                max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
-                compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
-                    self._get_cu_override("buy", token_info.platform)
-                ),
-                account_data_size_limit=self._get_cu_override(
-                    "account_data_size", token_info.platform
-                ),
-            )
+            # Send transaction with preflight checks enabled for reliability
+            try:
+                tx_signature = await self.client.build_and_send_transaction(
+                    instructions,
+                    self.wallet.keypair,
+                    skip_preflight=False,  # Enable preflight for better error detection
+                    max_retries=self.max_retries,
+                    priority_fee=await self.priority_fee_manager.calculate_priority_fee(
+                        priority_accounts
+                    ),
+                    compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
+                        self._get_cu_override("buy", token_info.platform)
+                    ),
+                    account_data_size_limit=self._get_cu_override(
+                        "account_data_size", token_info.platform
+                    ),
+                )
+            except ValueError as e:
+                # Insufficient funds - don't retry
+                logger.error(f"Buy failed - insufficient funds: {e}")
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=f"Insufficient funds: {e}",
+                )
 
-            success = await self.client.confirm_transaction(tx_signature)
+            success = await self.client.confirm_transaction(tx_signature, timeout=45.0)
 
             if success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
@@ -347,24 +356,33 @@ class PlatformAwareSeller(Trader):
                 token_info, self.wallet.pubkey, address_provider
             )
 
-            # Send transaction
-            tx_signature = await self.client.build_and_send_transaction(
-                instructions,
-                self.wallet.keypair,
-                skip_preflight=True,
-                max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
-                compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
-                    self._get_cu_override("sell", token_info.platform)
-                ),
-                account_data_size_limit=self._get_cu_override(
-                    "account_data_size", token_info.platform
-                ),
-            )
+            # Send transaction with preflight checks enabled for reliability
+            try:
+                tx_signature = await self.client.build_and_send_transaction(
+                    instructions,
+                    self.wallet.keypair,
+                    skip_preflight=False,  # Enable preflight for better error detection
+                    max_retries=self.max_retries,
+                    priority_fee=await self.priority_fee_manager.calculate_priority_fee(
+                        priority_accounts
+                    ),
+                    compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
+                        self._get_cu_override("sell", token_info.platform)
+                    ),
+                    account_data_size_limit=self._get_cu_override(
+                        "account_data_size", token_info.platform
+                    ),
+                )
+            except ValueError as e:
+                # Insufficient funds - don't retry
+                logger.error(f"Sell failed - insufficient funds: {e}")
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=f"Insufficient funds: {e}",
+                )
 
-            success = await self.client.confirm_transaction(tx_signature)
+            success = await self.client.confirm_transaction(tx_signature, timeout=45.0)
 
             if success:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")

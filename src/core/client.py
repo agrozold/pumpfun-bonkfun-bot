@@ -172,8 +172,8 @@ class SolanaClient:
         self,
         instructions: list[Instruction],
         signer_keypair: Keypair,
-        skip_preflight: bool = True,
-        max_retries: int = 3,
+        skip_preflight: bool = False,
+        max_retries: int = 5,
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
@@ -184,8 +184,8 @@ class SolanaClient:
         Args:
             instructions: List of instructions to include in the transaction.
             signer_keypair: Keypair to sign the transaction.
-            skip_preflight: Whether to skip preflight checks.
-            max_retries: Maximum number of retry attempts.
+            skip_preflight: Whether to skip preflight checks (default: False for reliability).
+            max_retries: Maximum number of retry attempts (default: 5).
             priority_fee: Optional priority fee in microlamports.
             compute_unit_limit: Optional compute unit limit. Defaults to 85,000 if not provided.
             account_data_size_limit: Optional account data size limit in bytes (e.g., 512_000).
@@ -193,6 +193,10 @@ class SolanaClient:
 
         Returns:
             Transaction signature.
+
+        Raises:
+            ValueError: If insufficient funds detected
+            RuntimeError: If all retry attempts fail
         """
         client = await self.get_client()
 
@@ -224,49 +228,90 @@ class SolanaClient:
 
             instructions = fee_instructions + instructions
 
-        recent_blockhash = await self.get_cached_blockhash()
-        message = Message(instructions, signer_keypair.pubkey())
-        transaction = Transaction([signer_keypair], message, recent_blockhash)
+        last_error = None
 
         for attempt in range(max_retries):
             try:
+                # Get fresh blockhash for each attempt to avoid BlockhashNotFound
+                try:
+                    recent_blockhash = await self.get_cached_blockhash()
+                except RuntimeError:
+                    # Fallback to direct fetch if cache not ready
+                    recent_blockhash = await self.get_latest_blockhash()
+
+                message = Message(instructions, signer_keypair.pubkey())
+                transaction = Transaction([signer_keypair], message, recent_blockhash)
+
                 tx_opts = TxOpts(
                     skip_preflight=skip_preflight, preflight_commitment=Processed
                 )
+
+                logger.info(f"Sending transaction attempt {attempt + 1}/{max_retries}...")
                 response = await client.send_transaction(transaction, tx_opts)
+                logger.info(f"Transaction sent successfully: {response.value}")
                 return response.value
 
             except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+
+                # Handle specific error types
+                if "insufficient" in error_str or "not enough" in error_str:
+                    logger.error(f"Insufficient funds detected: {e}")
+                    raise ValueError(f"Insufficient funds: {e}") from e
+
+                if "blockhash not found" in error_str or "blockhashnotfound" in error_str:
+                    logger.warning(f"Blockhash expired, fetching new one (attempt {attempt + 1})")
+                    # Force refresh blockhash
+                    try:
+                        fresh_blockhash = await self.get_latest_blockhash()
+                        async with self._blockhash_lock:
+                            self._cached_blockhash = fresh_blockhash
+                    except Exception as bh_err:
+                        logger.warning(f"Failed to refresh blockhash: {bh_err}")
+
                 if attempt == max_retries - 1:
                     logger.exception(
                         f"Failed to send transaction after {max_retries} attempts"
                     )
-                    raise
+                    raise RuntimeError(
+                        f"Transaction failed after {max_retries} attempts: {last_error}"
+                    ) from last_error
 
-                wait_time = 2**attempt
+                # Exponential backoff with jitter: 0.5s, 1s, 2s, 4s...
+                base_wait = min(2 ** attempt, 8)  # Cap at 8 seconds
+                wait_time = base_wait * (0.5 + 0.5 * (attempt / max_retries))
                 logger.warning(
-                    f"Transaction attempt {attempt + 1} failed: {e!s}, retrying in {wait_time}s"
+                    f"Transaction attempt {attempt + 1} failed: {e!s}, retrying in {wait_time:.1f}s"
                 )
                 await asyncio.sleep(wait_time)
 
     async def confirm_transaction(
-        self, signature: str, commitment: str = "confirmed"
+        self, signature: str, commitment: str = "confirmed", timeout: float = 45.0
     ) -> bool:
-        """Wait for transaction confirmation.
+        """Wait for transaction confirmation with timeout.
 
         Args:
             signature: Transaction signature
             commitment: Confirmation commitment level
+            timeout: Maximum time to wait for confirmation (default: 45s)
 
         Returns:
             Whether transaction was confirmed
         """
         client = await self.get_client()
         try:
-            await client.confirm_transaction(
-                signature, commitment=commitment, sleep_seconds=1
+            logger.info(f"Waiting for confirmation (timeout: {timeout}s)...")
+            await asyncio.wait_for(
+                client.confirm_transaction(
+                    signature, commitment=commitment, sleep_seconds=0.5
+                ),
+                timeout=timeout,
             )
             return True
+        except TimeoutError:
+            logger.warning(f"Transaction confirmation timed out after {timeout}s: {signature}")
+            return False
         except Exception:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False
