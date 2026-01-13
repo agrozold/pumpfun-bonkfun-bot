@@ -73,6 +73,7 @@ class UniversalTrader:
         wait_time_after_buy: int = 15,
         wait_time_before_new_token: int = 15,
         max_token_age: int | float = 0.001,
+        moon_bag_percentage: float = 0.0,
         token_wait_timeout: int = 30,
         # Cleanup settings
         cleanup_mode: str = "disabled",
@@ -178,6 +179,7 @@ class UniversalTrader:
         self.wait_time_after_buy = wait_time_after_buy
         self.wait_time_before_new_token = wait_time_before_new_token
         self.max_token_age = max_token_age
+        self.moon_bag_percentage = moon_bag_percentage
         self.token_wait_timeout = token_wait_timeout
 
         # Cleanup parameters
@@ -586,10 +588,17 @@ class UniversalTrader:
                         f"Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
                     )
 
+                    # Handle moon_bag exit strategy
+                    if exit_reason.value == "TAKE_PROFIT" and self.moon_bag_percentage > 0:
+                        sell_quantity = position.quantity * (1 - self.moon_bag_percentage / 100)
+                        logger.info(f"TP reached! Selling 80%, keeping 20% moon bag 🌙")
+                    else:
+                        sell_quantity = position.quantity
+
                     # Execute sell with position quantity and entry price to avoid RPC delays
                     sell_result = await self.seller.execute(
                         token_info,
-                        token_amount=position.quantity,
+                        token_amount=sell_quantity,
                         token_price=position.entry_price,
                     )
 
