@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import sys
+
 import multiprocessing
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +9,27 @@ from pathlib import Path
 import uvloop
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+# Disable verbose httpx logging
+# Disable verbose httpx logging
+logging.getLogger("httpx").setLevel(logging.CRITICAL)
+logging.getLogger("httpx").propagate = False
+logging.getLogger("httpcore").setLevel(logging.CRITICAL)
+
+# Suppress httpx verbose output
+import io
+class FilteredStream:
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, msg):
+        if "httpx" not in msg.lower() and "http request" not in msg.lower():
+            self.stream.write(msg)
+    def flush(self):
+        self.stream.flush()
+
+sys.stderr = FilteredStream(sys.stderr)
+
+logging.getLogger("httpcore").propagate = False
+
 
 from config_loader import (
     get_platform_from_config,
@@ -247,6 +270,8 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     # Log supported platforms and listeners
     try:
         from platforms import platform_factory
