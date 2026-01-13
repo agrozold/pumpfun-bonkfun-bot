@@ -154,9 +154,11 @@ class PlatformAwareBuyer(Trader):
                     token_amount = actual_amount
                     token_price_sol = actual_price
                 else:
-                    logger.warning(f"Balance parse delayed, trusting tx: tokens={tokens_raw}, sol_spent={sol_spent}")
-                    token_amount = 20
-                    token_price_sol = 0.000005
+                    raise ValueError(
+                        f"Failed to parse transaction details: tokens={tokens_raw}, "
+                        f"sol_spent={sol_spent}"
+                    )
+
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
