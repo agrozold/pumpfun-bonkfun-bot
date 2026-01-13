@@ -1,0 +1,128 @@
+{
+  "whales": [
+    {
+      "wallet": "JBVpuKD4cEVUjZ7conFwKZKzdpY92C1hzwCHYr99L54z",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "gmgn",
+      "added_date": "2026-01-13T14:03:00Z"
+    },
+    {
+      "wallet": "EwTNPYTuwxMzrvL19nzBsSLXdAoEmVBKkisN87csKgtt",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "gmgn",
+      "added_date": "2026-01-13T14:03:00Z"
+    },
+    {
+      "wallet": "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "gmgn",
+      "added_date": "2026-01-13T14:03:00Z"
+    },
+    {
+      "wallet": "4BdKaxN8G6ka4GYtQQWk4G4dZRUTX2vQH9GcXdBREFUk",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "gmgn",
+      "added_date": "2026-01-13T14:03:00Z"
+    },
+    {
+      "wallet": "UUAhspPgUdGuXUnokmxERH1VvNGNh1ouN3mfcbfV8yd",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "gmgn",
+      "added_date": "2026-01-13T14:03:00Z"
+    },
+    {
+      "wallet": "CyaE1VxvBrahnPWkqm5VsdCvyS2QmNht2UFrKJHga54o",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "gmgn",
+      "added_date": "2026-01-13T14:03:00Z"
+    },
+    {
+      "wallet": "BCrTEXmWutwPz8qv6w1S5gDbaLnSLpXKM5kSGVWyyfxu",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "gmgn",
+      "added_date": "2026-01-13T14:03:00Z"
+    },
+    {
+      "wallet": "4Be9CvxqHW6BYiRAxW9Q3xu1ycTMWaL5z8NX4HR3ha7t",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568136Z"
+    },
+    {
+      "wallet": "8zFZHuSRuDpuAR7J6FzwyF3vKNx4CVW3DFHJerQhc7Zd",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568177Z"
+    },
+    {
+      "wallet": "7qT4fKLKT7kLThgRAq6Lnmq4UPFSq8M3ZeroktMpmBPe",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568182Z"
+    },
+    {
+      "wallet": "3wi8waD5A64D7PLutUYJdhMcrYvDBTqeh3CRFgv1hFtY",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568188Z"
+    },
+    {
+      "wallet": "BDe7kU3VqgW2hYkjx8kJFCdw1tNunJUxhAcRM1FN9amz",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568191Z"
+    },
+    {
+      "wallet": "7LgPQcGNBuCbnKq278qSXKbEcUZYzyKYRwkvF3SFup6v",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568194Z"
+    },
+    {
+      "wallet": "GNrmKZCxYyNiSUsjduwwPJzhed3LATjciiKVuSGrsHEC",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568197Z"
+    },
+    {
+      "wallet": "J1TXeEWQso9vg1bPC5cRZAXUNvXAWaQCixBQEFxw4JtX",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-13T12:15:23.568200Z"
+    }
+  ],
+  "min_buy_amount_sol": 0.5,
+  "min_win_rate_threshold": 0.65,
+  "tracking_enabled": true,
+  "last_updated": "2026-01-13T14:03:00Z"
+}
