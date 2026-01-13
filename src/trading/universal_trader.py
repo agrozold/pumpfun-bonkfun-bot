@@ -591,7 +591,7 @@ class UniversalTrader:
                     # Handle moon_bag exit strategy
                     if exit_reason.value == "TAKE_PROFIT" and self.moon_bag_percentage > 0:
                         sell_quantity = position.quantity * (1 - self.moon_bag_percentage / 100)
-                        logger.info(f"TP reached! Selling 80%, keeping 20% moon bag 🌙")
+                        logger.info(f"TP reached! Selling {100 - self.moon_bag_percentage:.0f}%, keeping {self.moon_bag_percentage:.0f}% moon bag 🌙")
                     else:
                         sell_quantity = position.quantity
 
