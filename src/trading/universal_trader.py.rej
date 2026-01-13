@@ -1,0 +1,10 @@
+--- src/trading/universal_trader.py
++++ src/trading/universal_trader.py.fixed
+@@ -470,7 +470,6 @@
+         if not self.extreme_fast_mode:
+             await self._save_token_info(token_info)
+             logger.info(f"Waiting for {self.wait_time_after_creation} seconds...")
+             await asyncio.sleep(self.wait_time_after_creation)
+-            # Buy token
+             logger.info(f"Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol}...")
+             buy_result: TradeResult = await self.buyer.execute(token_info)
