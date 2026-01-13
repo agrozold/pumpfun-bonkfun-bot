@@ -1,0 +1,31 @@
+compute_units:
+  account_data_size: 12500000
+enabled: true
+env_file: .env
+filters:
+  bro_address: null
+  listener_type: pumpportal
+  match_string: null
+  max_token_age: 15
+name: bot-sniper-pump
+platform: pump_fun
+priority_fees:
+  enable_dynamic: false
+  enable_fixed: true
+  fixed_amount: 300000
+private_key: ${SOLANA_PRIVATE_KEY}
+pumpportal:
+  url: wss://pumpportal.fun/api/data
+rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
+separate_process: true
+trade:
+  buy_amount: 0.01
+  buy_slippage: 0.3
+  exit_strategy: tp_sl
+  max_hold_time: 600
+  moon_bag_percentage: 20
+  price_check_interval: 2
+  sell_slippage: 0.3
+  stop_loss_percentage: 0.7
+  take_profit_percentage: 1.0
+wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
