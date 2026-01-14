@@ -130,7 +130,7 @@ def find_coin_creator_vault(coin_creator: Pubkey) -> Pubkey:
 
 async def get_token_program_id(client: AsyncClient, mint: Pubkey) -> Pubkey:
     """Determine if mint uses TokenProgram or Token2022Program."""
-    mint_info = await client.get_account_info(mint)
+    mint_info = await retry_rpc_call(client.get_account_info, mint)
     if not mint_info.value:
         raise ValueError(f"Could not fetch mint info for {mint}")
     owner = mint_info.value.owner
@@ -143,7 +143,7 @@ async def get_token_program_id(client: AsyncClient, mint: Pubkey) -> Pubkey:
 
 async def get_curve_state(client: AsyncClient, curve: Pubkey) -> BondingCurveState | None:
     """Get bonding curve state, returns None if not found (migrated)."""
-    response = await client.get_account_info(curve, encoding="base64")
+    response = await retry_rpc_call(client.get_account_info, curve, encoding="base64")
     if not response.value or not response.value.data:
         return None
     try:
@@ -199,7 +199,7 @@ def calculate_price(curve_state: BondingCurveState) -> float:
 async def get_market_address_by_base_mint(client: AsyncClient, base_mint: Pubkey) -> Pubkey | None:
     """Find the AMM pool address for a token."""
     filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(base_mint))]
-    response = await client.get_program_accounts(PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
+    response = await retry_rpc_call(client.get_program_accounts, PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
     if response.value:
         return response.value[0].pubkey
     return None
@@ -207,7 +207,7 @@ async def get_market_address_by_base_mint(client: AsyncClient, base_mint: Pubkey
 
 async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
     """Parse pool account data."""
-    response = await client.get_account_info(market_address, encoding="base64")
+    response = await retry_rpc_call(client.get_account_info, market_address, encoding="base64")
     data = response.value.data
     parsed_data: dict = {}
     offset = 8  # Skip discriminator
@@ -238,7 +238,7 @@ async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
 
 async def get_reserved_fee_recipient_pumpswap(client: AsyncClient) -> Pubkey:
     """Fetch mayhem mode fee recipient from GlobalConfig."""
-    response = await client.get_account_info(PUMP_SWAP_GLOBAL_CONFIG, encoding="base64")
+    response = await retry_rpc_call(client.get_account_info, PUMP_SWAP_GLOBAL_CONFIG, encoding="base64")
     if not response.value or not response.value.data:
         return STANDARD_PUMPSWAP_FEE_RECIPIENT
     data = response.value.data
@@ -247,7 +247,7 @@ async def get_reserved_fee_recipient_pumpswap(client: AsyncClient) -> Pubkey:
 
 async def get_pumpswap_fee_recipients(client: AsyncClient, pool: Pubkey) -> tuple[Pubkey, Pubkey]:
     """Get fee recipient based on pool's mayhem mode status."""
-    response = await client.get_account_info(pool, encoding="base64")
+    response = await retry_rpc_call(client.get_account_info, pool, encoding="base64")
     if not response.value or not response.value.data:
         fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
     else:
@@ -261,8 +261,8 @@ async def get_pumpswap_fee_recipients(client: AsyncClient, pool: Pubkey) -> tupl
 
 async def calculate_pool_price(client: AsyncClient, pool_base_ata: Pubkey, pool_quote_ata: Pubkey) -> float:
     """Calculate token price from AMM pool balances."""
-    base_resp = await client.get_token_account_balance(pool_base_ata)
-    quote_resp = await client.get_token_account_balance(pool_quote_ata)
+    base_resp = await retry_rpc_call(client.get_token_account_balance, pool_base_ata)
+    quote_resp = await retry_rpc_call(client.get_token_account_balance, pool_quote_ata)
     base_amount = float(base_resp.value.ui_amount)
     quote_amount = float(quote_resp.value.ui_amount)
     return quote_amount / base_amount
@@ -386,7 +386,7 @@ async def sell_via_pumpswap(
     
     for attempt in range(max_retries):
         try:
-            blockhash = await client.get_latest_blockhash()
+            blockhash = await retry_rpc_call(client.get_latest_blockhash)
             msg = Message.new_with_blockhash(
                 [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
                 payer.pubkey(),
@@ -395,20 +395,26 @@ async def sell_via_pumpswap(
             tx = VersionedTransaction(message=msg, keypairs=[payer])
             
             print(f"🚀 Sending PumpSwap transaction (attempt {attempt + 1}/{max_retries})...")
-            result = await client.send_transaction(tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed))
+            result = await retry_rpc_call(client.send_transaction, tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed))
             sig = result.value
             
             print(f"📤 Signature: {sig}")
             print(f"🔗 https://solscan.io/tx/{sig}")
             
-            await client.confirm_transaction(sig, commitment="confirmed", sleep_seconds=0.5)
+            await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             return True
             
         except Exception as e:
-            print(f"❌ Attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1)
+            error_str = str(e).lower()
+            if "429" in error_str or "too many requests" in error_str:
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                print(f"⏳ Rate limited, waiting {wait_time:.1f}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                print(f"❌ Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
     
     print("❌ All PumpSwap attempts failed")
     return False
@@ -494,25 +500,31 @@ async def sell_via_pumpfun(
     
     for attempt in range(max_retries):
         try:
-            blockhash = await client.get_latest_blockhash()
+            blockhash = await retry_rpc_call(client.get_latest_blockhash)
             tx = Transaction([payer], msg, blockhash.value.blockhash)
             opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             
             print(f"🚀 Sending Pump.fun transaction (attempt {attempt + 1}/{max_retries})...")
-            result = await client.send_transaction(tx, opts=opts)
+            result = await retry_rpc_call(client.send_transaction, tx, opts=opts)
             sig = result.value
             
             print(f"📤 Signature: {sig}")
             print(f"🔗 https://solscan.io/tx/{sig}")
             
-            await client.confirm_transaction(sig, commitment="confirmed", sleep_seconds=0.5)
+            await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             return True
             
         except Exception as e:
-            print(f"❌ Attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1)
+            error_str = str(e).lower()
+            if "429" in error_str or "too many requests" in error_str:
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                print(f"⏳ Rate limited, waiting {wait_time:.1f}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                print(f"❌ Attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
     
     print("❌ All Pump.fun attempts failed")
     return False
