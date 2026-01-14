@@ -26,7 +26,7 @@ trade:
   max_hold_time: 86400  # 24 hours
   moon_bag_percentage: 20
   price_check_interval: 2
-  sell_slippage: 0.3
+  sell_slippage: 0.7
   stop_loss_percentage: 0.7
   take_profit_percentage: 1.0
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}

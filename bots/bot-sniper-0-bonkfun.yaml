@@ -11,7 +11,7 @@ pumpportal:
 trade:
   buy_amount: 0.01
   buy_slippage: 0.3
-  sell_slippage: 0.3
+  sell_slippage: 0.7
   exit_strategy: tp_sl
   take_profit_percentage: 1.0
   stop_loss_percentage: 0.7
