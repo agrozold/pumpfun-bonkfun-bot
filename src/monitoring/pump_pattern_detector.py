@@ -1,11 +1,11 @@
 """
 Pump Pattern Detector - отслеживает паттерны перед пампами токенов.
 
-Использует Birdeye API для получения реальных данных:
-- Цена и объём торговли
-- Buy/Sell ratio
-- Количество трейдов
-- Top holders
+Использует несколько API для получения реальных данных:
+- Birdeye API (основной)
+- DexCheck API (fallback)
+- Codex API (fallback)
+- GoldRush/Covalent API (fallback)
 
 Паттерны:
 1. Volume Spike - резкий рост объёма (3x+)
@@ -17,6 +17,7 @@ Pump Pattern Detector - отслеживает паттерны перед па�
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
@@ -25,7 +26,11 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# API URLs
 BIRDEYE_API_URL = "https://public-api.birdeye.so"
+DEXCHECK_API_URL = "https://api.dexcheck.ai"
+CODEX_API_URL = "https://graph.codex.io/graphql"
+GOLDRUSH_API_URL = "https://api.covalenthq.com/v1"
 
 
 @dataclass
@@ -71,11 +76,14 @@ class PatternSignal:
 
 
 class PumpPatternDetector:
-    """Детектор паттернов с Birdeye API."""
+    """Детектор паттернов с несколькими API источниками."""
 
     def __init__(
         self,
         birdeye_api_key: str | None = None,
+        dexcheck_api_key: str | None = None,
+        codex_api_key: str | None = None,
+        goldrush_api_key: str | None = None,
         # Thresholds
         volume_spike_threshold: float = 3.0,
         buy_pressure_threshold: float = 0.7,  # 70% buys
@@ -92,7 +100,16 @@ class PumpPatternDetector:
         holder_growth_threshold: float = 0.5,
         holder_window_seconds: int = 60,
     ):
-        self.birdeye_api_key = birdeye_api_key
+        # API keys - try env vars as fallback
+        self.birdeye_api_key = birdeye_api_key or os.getenv("BIRDEYE_API_KEY")
+        self.dexcheck_api_key = dexcheck_api_key or os.getenv("DEXCHECK_API_KEY")
+        self.codex_api_key = codex_api_key or os.getenv("CODEX_API_KEY")
+        self.goldrush_api_key = goldrush_api_key or os.getenv("GOLDRUSH_API_KEY")
+        
+        # Track API failures for fallback logic
+        self._birdeye_failures = 0
+        self._current_api = "birdeye"  # birdeye, dexcheck, codex
+        
         self.volume_spike_threshold = volume_spike_threshold
         self.buy_pressure_threshold = buy_pressure_threshold
         self.trade_velocity_threshold = trade_velocity_threshold
@@ -109,10 +126,21 @@ class PumpPatternDetector:
         self._update_task: asyncio.Task | None = None
         self._running = False
 
-        if birdeye_api_key:
-            logger.info("PumpPatternDetector initialized with Birdeye API")
+        # Log available APIs
+        apis = []
+        if self.birdeye_api_key:
+            apis.append("Birdeye")
+        if self.dexcheck_api_key:
+            apis.append("DexCheck")
+        if self.codex_api_key:
+            apis.append("Codex")
+        if self.goldrush_api_key:
+            apis.append("GoldRush")
+        
+        if apis:
+            logger.info(f"PumpPatternDetector initialized with APIs: {', '.join(apis)}")
         else:
-            logger.warning("PumpPatternDetector: No Birdeye API key - limited functionality")
+            logger.warning("PumpPatternDetector: No API keys - limited functionality")
 
     def set_pump_signal_callback(self, callback: Callable):
         """Установить callback для сигналов."""
@@ -189,49 +217,165 @@ class PumpPatternDetector:
             await self._session.close()
 
     async def _update_token_data(self, mint: str):
-        """Обновить данные токена из Birdeye."""
+        """Обновить данные токена из доступных API."""
         if mint not in self.tokens:
             return
         
         metrics = self.tokens[mint]
         
+        # Try APIs in order of preference
+        data = None
+        
+        # 1. Try Birdeye (if not too many failures)
+        if self.birdeye_api_key and self._birdeye_failures < 5:
+            data = await self._fetch_from_birdeye(mint)
+            if data:
+                self._birdeye_failures = 0
+            else:
+                self._birdeye_failures += 1
+                if self._birdeye_failures >= 5:
+                    logger.warning("Birdeye API failing, switching to fallback")
+        
+        # 2. Try DexCheck as fallback
+        if not data and self.dexcheck_api_key:
+            data = await self._fetch_from_dexcheck(mint)
+        
+        # 3. Try Codex as fallback
+        if not data and self.codex_api_key:
+            data = await self._fetch_from_codex(mint)
+        
+        if not data:
+            return
+        
+        # Update metrics from data
+        old_price = metrics.price
+        metrics.price = data.get("price", 0) or 0
+        metrics.volume_24h = data.get("volume_24h", 0) or 0
+        metrics.price_change_5m = data.get("price_change_5m", 0) or 0
+        metrics.price_change_1h = data.get("price_change_1h", 0) or 0
+        
+        # Buy/sell data
+        metrics.buys_5m = data.get("buys_5m", 0) or 0
+        metrics.sells_5m = data.get("sells_5m", 0) or 0
+        metrics.buy_volume_5m = data.get("buy_volume_5m", 0) or 0
+        metrics.sell_volume_5m = data.get("sell_volume_5m", 0) or 0
+        
+        # Record history
+        now = datetime.utcnow()
+        if metrics.price > 0:
+            metrics.price_history.append((now, metrics.price))
+        if metrics.volume_24h > 0:
+            metrics.volume_history.append((now, metrics.buy_volume_5m + metrics.sell_volume_5m))
+        
+        # Cleanup old history
+        cutoff = now - timedelta(minutes=10)
+        metrics.price_history = [(t, p) for t, p in metrics.price_history if t > cutoff][-50:]
+        metrics.volume_history = [(t, v) for t, v in metrics.volume_history if t > cutoff][-50:]
+        
+        metrics.last_update = now
+        
+        # Check patterns
+        await self._check_patterns(mint)
+
+    async def _fetch_from_birdeye(self, mint: str) -> dict | None:
+        """Получить данные из Birdeye API."""
         try:
-            # Get token overview
             data = await self._birdeye_request(f"/defi/token_overview?address={mint}")
             if data and data.get("success"):
                 info = data.get("data", {})
-                
-                old_price = metrics.price
-                metrics.price = info.get("price", 0) or 0
-                metrics.volume_24h = info.get("v24hUSD", 0) or 0
-                metrics.price_change_5m = info.get("priceChange5mPercent", 0) or 0
-                metrics.price_change_1h = info.get("priceChange1hPercent", 0) or 0
-                
-                # Buy/sell data
-                metrics.buys_5m = info.get("buy5m", 0) or 0
-                metrics.sells_5m = info.get("sell5m", 0) or 0
-                metrics.buy_volume_5m = info.get("vBuy5mUSD", 0) or 0
-                metrics.sell_volume_5m = info.get("vSell5mUSD", 0) or 0
-                
-                # Record history
-                now = datetime.utcnow()
-                if metrics.price > 0:
-                    metrics.price_history.append((now, metrics.price))
-                if metrics.volume_24h > 0:
-                    metrics.volume_history.append((now, metrics.buy_volume_5m + metrics.sell_volume_5m))
-                
-                # Cleanup old history
-                cutoff = now - timedelta(minutes=10)
-                metrics.price_history = [(t, p) for t, p in metrics.price_history if t > cutoff][-50:]
-                metrics.volume_history = [(t, v) for t, v in metrics.volume_history if t > cutoff][-50:]
-                
-                metrics.last_update = now
-                
-                # Check patterns
-                await self._check_patterns(mint)
-                
+                return {
+                    "price": info.get("price", 0),
+                    "volume_24h": info.get("v24hUSD", 0),
+                    "price_change_5m": info.get("priceChange5mPercent", 0),
+                    "price_change_1h": info.get("priceChange1hPercent", 0),
+                    "buys_5m": info.get("buy5m", 0),
+                    "sells_5m": info.get("sell5m", 0),
+                    "buy_volume_5m": info.get("vBuy5mUSD", 0),
+                    "sell_volume_5m": info.get("vSell5mUSD", 0),
+                }
         except Exception as e:
-            logger.debug(f"Error updating {mint[:8]}...: {e}")
+            logger.debug(f"Birdeye error for {mint[:8]}...: {e}")
+        return None
+
+    async def _fetch_from_dexcheck(self, mint: str) -> dict | None:
+        """Получить данные из DexCheck API."""
+        if not self._session or not self.dexcheck_api_key:
+            return None
+        
+        try:
+            url = f"{DEXCHECK_API_URL}/v1/tokens/solana/{mint}"
+            headers = {"X-API-KEY": self.dexcheck_api_key}
+            
+            async with self._session.get(
+                url, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    # Map DexCheck response to our format
+                    return {
+                        "price": data.get("price", 0),
+                        "volume_24h": data.get("volume24h", 0),
+                        "price_change_5m": data.get("priceChange5m", 0),
+                        "price_change_1h": data.get("priceChange1h", 0),
+                        "buys_5m": data.get("buys5m", 0),
+                        "sells_5m": data.get("sells5m", 0),
+                        "buy_volume_5m": data.get("buyVolume5m", 0),
+                        "sell_volume_5m": data.get("sellVolume5m", 0),
+                    }
+        except Exception as e:
+            logger.debug(f"DexCheck error for {mint[:8]}...: {e}")
+        return None
+
+    async def _fetch_from_codex(self, mint: str) -> dict | None:
+        """Получить данные из Codex API."""
+        if not self._session or not self.codex_api_key:
+            return None
+        
+        try:
+            # Codex uses GraphQL
+            query = """
+            query GetToken($address: String!) {
+                token(input: {address: $address, networkId: 1399811149}) {
+                    price
+                    volume24h
+                    priceChange5m
+                    priceChange1h
+                    txnCount5m
+                    buyCount5m
+                    sellCount5m
+                }
+            }
+            """
+            
+            headers = {
+                "Authorization": self.codex_api_key,
+                "Content-Type": "application/json",
+            }
+            
+            async with self._session.post(
+                CODEX_API_URL,
+                headers=headers,
+                json={"query": query, "variables": {"address": mint}},
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    data = result.get("data", {}).get("token", {})
+                    if data:
+                        return {
+                            "price": data.get("price", 0),
+                            "volume_24h": data.get("volume24h", 0),
+                            "price_change_5m": data.get("priceChange5m", 0),
+                            "price_change_1h": data.get("priceChange1h", 0),
+                            "buys_5m": data.get("buyCount5m", 0),
+                            "sells_5m": data.get("sellCount5m", 0),
+                            "buy_volume_5m": 0,  # Not available in Codex
+                            "sell_volume_5m": 0,
+                        }
+        except Exception as e:
+            logger.debug(f"Codex error for {mint[:8]}...: {e}")
+        return None
 
     async def _birdeye_request(self, endpoint: str) -> dict | None:
         """Сделать запрос к Birdeye API."""
