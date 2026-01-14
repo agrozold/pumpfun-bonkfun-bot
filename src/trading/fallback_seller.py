@@ -116,6 +116,9 @@ class FallbackSeller:
             
             # Get market data
             market_response = await rpc_client.get_account_info(market, encoding="base64")
+            if not market_response.value:
+                return False, None, f"Market account {market} not found on chain"
+            
             data = market_response.value.data
             market_data = self._parse_market_data(data)
             
