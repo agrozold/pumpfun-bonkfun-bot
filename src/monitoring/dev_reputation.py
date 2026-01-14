@@ -85,7 +85,8 @@ class DevReputationChecker:
     async def _analyze_dev(self, creator_address: str) -> dict:
         """Анализ истории дева через Helius API."""
         url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
-        params = {"api-key": self.api_key, "limit": 100}
+        # Увеличиваем лимит до 1000 чтобы видеть больше истории серийных скамеров
+        params = {"api-key": self.api_key, "limit": 1000}
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as resp:
