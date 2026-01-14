@@ -22,6 +22,7 @@ from core.priority_fee.manager import PriorityFeeManager
 from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
+from monitoring.pump_pattern_detector import PumpPatternDetector
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
@@ -86,6 +87,13 @@ class UniversalTrader:
         yolo_mode: bool = False,
         # Compute unit configuration
         compute_units: dict | None = None,
+        # Pattern detection settings
+        enable_pattern_detection: bool = False,
+        pattern_volume_spike_threshold: float = 3.0,
+        pattern_holder_growth_threshold: float = 0.5,
+        pattern_min_whale_buys: int = 2,
+        pattern_min_patterns_to_buy: int = 2,
+        pattern_only_mode: bool = False,  # Only buy when patterns detected
     ):
         """Initialize the universal trader."""
         # Core components
@@ -117,6 +125,26 @@ class UniversalTrader:
         except Exception:
             logger.exception("Platform validation failed")
             raise
+
+        # Pattern detection setup
+        self.enable_pattern_detection = enable_pattern_detection
+        self.pattern_only_mode = pattern_only_mode
+        self.pattern_detector: PumpPatternDetector | None = None
+
+        if enable_pattern_detection:
+            self.pattern_detector = PumpPatternDetector(
+                volume_spike_threshold=pattern_volume_spike_threshold,
+                holder_growth_threshold=pattern_holder_growth_threshold,
+                min_whale_buys=pattern_min_whale_buys,
+                min_patterns_to_signal=pattern_min_patterns_to_buy,
+            )
+            self.pattern_detector.set_pump_signal_callback(self._on_pump_signal)
+            logger.info(
+                f"Pattern detection enabled: volume_spike={pattern_volume_spike_threshold}x, "
+                f"holder_growth={pattern_holder_growth_threshold * 100}%, "
+                f"min_whale_buys={pattern_min_whale_buys}, "
+                f"pattern_only_mode={pattern_only_mode}"
+            )
 
         # Get platform-specific implementations
         self.platform_implementations = get_platform_implementations(
@@ -202,6 +230,21 @@ class UniversalTrader:
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
+        self.pump_signals: dict[str, list] = {}  # mint -> detected patterns
+
+    async def _on_pump_signal(
+        self, mint: str, symbol: str, patterns: list, strength: float
+    ):
+        """Callback when pump pattern is detected."""
+        logger.warning(
+            f"🚀 PUMP SIGNAL: {symbol} ({mint[:8]}...) - "
+            f"{len(patterns)} patterns, strength: {strength:.2f}"
+        )
+        self.pump_signals[mint] = patterns
+
+    def _has_pump_signal(self, mint: str) -> bool:
+        """Check if token has pump signal."""
+        return mint in self.pump_signals and len(self.pump_signals[mint]) > 0
 
     async def start(self) -> None:
         """Start the trading bot and listen for new tokens."""
@@ -215,6 +258,11 @@ class UniversalTrader:
         logger.info(f"Marry mode: {self.marry_mode}")
         logger.info(f"YOLO mode: {self.yolo_mode}")
         logger.info(f"Exit strategy: {self.exit_strategy}")
+        logger.info(
+            f"Pattern detection: {'enabled' if self.enable_pattern_detection else 'disabled'}"
+        )
+        if self.enable_pattern_detection:
+            logger.info(f"Pattern only mode: {self.pattern_only_mode}")
 
         if self.exit_strategy == "tp_sl":
             logger.info(
@@ -411,6 +459,19 @@ class UniversalTrader:
             if token_info.platform != self.platform:
                 logger.warning(
                     f"Token platform mismatch: expected {self.platform.value}, got {token_info.platform.value}"
+                )
+                return
+
+            mint_str = str(token_info.mint)
+
+            # Start pattern tracking if enabled
+            if self.pattern_detector:
+                self.pattern_detector.start_tracking(mint_str, token_info.symbol)
+
+            # Check pattern_only_mode - skip if no pump signal detected
+            if self.pattern_only_mode and not self._has_pump_signal(mint_str):
+                logger.info(
+                    f"Pattern only mode: skipping {token_info.symbol} - no pump signal detected"
                 )
                 return
 

@@ -15,14 +15,14 @@ trade:
   exit_strategy: tp_sl
   take_profit_percentage: 1.0
   stop_loss_percentage: 0.7
-  max_hold_time: 600
+  max_hold_time: 86400  # 24 hours
   price_check_interval: 2
 priority_fees:
   enable_dynamic: false
   enable_fixed: true
   fixed_amount: 200000
-compute_units:
-  account_data_size: 12500000
+# compute_units:
+#   account_data_size: 512000  # Commented out - causes "max loaded accounts data size cap" error
 filters:
   match_string: null
   bro_address: null
@@ -41,3 +41,12 @@ cleanup:
   mode: post_session
 node:
   max_rps: 50
+
+# Pattern Detection (optional - disabled by default)
+# pattern_detection:
+#   enabled: true
+#   volume_spike_threshold: 3.0
+#   holder_growth_threshold: 0.5
+#   min_whale_buys: 2
+#   min_patterns_to_buy: 2
+#   pattern_only_mode: false
