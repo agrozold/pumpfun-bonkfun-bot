@@ -371,6 +371,17 @@ class PlatformAwareSeller(Trader):
                         platform=token_info.platform,
                         error_message="Missing bonding_curve - position data corrupted",
                     )
+                # Also check creator_vault - required for pump.fun sells
+                if not token_info.creator_vault:
+                    logger.error(
+                        f"Cannot sell {token_info.symbol}: missing creator_vault address. "
+                        "Position data may be corrupted - removing position."
+                    )
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        error_message="Missing creator_vault - position data corrupted",
+                    )
 
             # Build sell instructions using platform-specific builder
             instructions = await instruction_builder.build_sell_instruction(
