@@ -1209,6 +1209,7 @@ class UniversalTrader:
             creator = None
             creator_vault = None
             bonding_curve = None
+            token_migrated = False
             
             if position.bonding_curve:
                 bonding_curve = Pubkey.from_string(position.bonding_curve)
@@ -1216,14 +1217,37 @@ class UniversalTrader:
                     # Fetch curve state to get creator
                     curve_manager = self.platform_implementations.curve_manager
                     curve_state = await curve_manager.get_curve_state(bonding_curve)
-                    if curve_state and hasattr(curve_state, "creator") and curve_state.creator:
+                    
+                    # Check if token migrated to Raydium
+                    if curve_state is None:
+                        logger.warning(
+                            f"⚠️ Position {position.symbol}: bonding curve not found - "
+                            "token may have migrated to Raydium. Removing corrupted position."
+                        )
+                        token_migrated = True
+                    elif hasattr(curve_state, "complete") and curve_state.complete:
+                        logger.warning(
+                            f"⚠️ Position {position.symbol}: token migrated to Raydium. "
+                            "Cannot sell via bonding curve - removing position."
+                        )
+                        token_migrated = True
+                    elif hasattr(curve_state, "creator") and curve_state.creator:
                         creator = curve_state.creator
                         # Derive creator vault
                         address_provider = self.platform_implementations.address_provider
                         creator_vault = address_provider.derive_creator_vault(creator)
                         logger.info(f"Got creator {str(creator)[:8]}... from curve state")
                 except Exception as e:
-                    logger.warning(f"Failed to get creator from curve: {e}")
+                    logger.warning(f"Failed to get creator from curve: {e} - removing position")
+                    token_migrated = True
+            else:
+                logger.warning(f"Position {position.symbol} has no bonding_curve - removing")
+                token_migrated = True
+            
+            # Skip and remove corrupted/migrated positions
+            if token_migrated:
+                remove_position(position.mint)
+                continue
             
             # Create TokenInfo with creator info for proper sell
             token_info = TokenInfo(
