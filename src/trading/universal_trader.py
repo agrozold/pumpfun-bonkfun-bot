@@ -551,21 +551,67 @@ class UniversalTrader:
             )
             
             # Check if migrated
+            is_migrated = False
+            pool_state = None
+            creator = None
+            
             try:
                 curve_manager = self.platform_implementations.curve_manager
                 pool_state = await curve_manager.get_pool_state(bonding_curve)
                 if pool_state.get("complete", False):
-                    logger.info(f"🔥 {token.symbol} migrated to Raydium, skipping")
-                    return
+                    is_migrated = True
+                    logger.info(f"🔥 {token.symbol} migrated to Raydium - using Jupiter")
                 creator = pool_state.get("creator")
                 if creator and isinstance(creator, str):
                     creator = Pubkey.from_string(creator)
                 elif not isinstance(creator, Pubkey):
                     creator = None
             except Exception as e:
-                logger.warning(f"🔥 Cannot get curve for {token.symbol}: {e}")
+                # Bonding curve invalid = migrated
+                is_migrated = True
+                logger.info(f"🔥 {token.symbol} bonding curve unavailable - using Jupiter")
+            
+            # Mark as processed
+            self.processed_tokens.add(mint_str)
+            
+            # If migrated - buy via Jupiter directly
+            if is_migrated:
+                from trading.fallback_seller import FallbackSeller
+                
+                fallback = FallbackSeller(
+                    client=self.solana_client,
+                    wallet=self.wallet,
+                    slippage=self.buy_slippage,
+                    priority_fee=self.priority_fee_manager.fixed_fee,
+                    max_retries=self.max_retries,
+                )
+                
+                success, sig, error = await fallback.buy_via_jupiter(
+                    mint=mint,
+                    sol_amount=self.buy_amount,
+                    symbol=token.symbol,
+                )
+                
+                if success:
+                    logger.warning(f"✅ TRENDING Jupiter BUY: {token.symbol} - {sig}")
+                    # Save position for tracking
+                    from trading.position import Position, save_positions
+                    position = Position(
+                        mint=mint_str,
+                        symbol=token.symbol,
+                        buy_price=0,  # Unknown for Jupiter
+                        buy_amount=self.buy_amount,
+                        token_amount=0,  # Will be updated on sell
+                        buy_signature=sig,
+                        platform=self.platform.value,
+                    )
+                    self.active_positions.append(position)
+                    save_positions(self.active_positions)
+                else:
+                    logger.error(f"❌ TRENDING Jupiter BUY failed: {token.symbol} - {error}")
                 return
             
+            # Not migrated - use normal flow
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
             
             associated_bonding_curve, _ = Pubkey.find_program_address(
@@ -597,8 +643,6 @@ class UniversalTrader:
                 token_program_id=token_program_id,
                 creation_timestamp=int(token.created_at.timestamp()) if token.created_at else 0,
             )
-            
-            self.processed_tokens.add(mint_str)
             
             # Покупаем! skip_checks=True - trending scanner уже проверил метрики
             await self._handle_token(token_info, skip_checks=True)
