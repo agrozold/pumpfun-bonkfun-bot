@@ -22,6 +22,7 @@ import asyncio
 import os
 import struct
 import sys
+import random
 
 import base58
 from construct import Flag, Int64ul, Struct
@@ -43,6 +44,7 @@ load_dotenv()
 EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 TOKEN_DECIMALS = 6
 LAMPORTS_PER_SOL = 1_000_000_000
+MAX_RETRIES = 5
 
 # Pump.fun constants
 PUMP_PROGRAM = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
@@ -150,10 +152,26 @@ async def get_curve_state(client: AsyncClient, curve: Pubkey) -> BondingCurveSta
         return None
 
 
+async def retry_rpc_call(func, *args, max_retries=MAX_RETRIES, **kwargs):
+    """Retry RPC call with exponential backoff on rate limit errors."""
+    for attempt in range(max_retries):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            error_str = str(e).lower()
+            if "429" in error_str or "too many requests" in error_str or "rate limit" in error_str:
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                print(f"⏳ Rate limited, waiting {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...")
+                await asyncio.sleep(wait_time)
+            else:
+                raise
+    raise Exception(f"Max retries ({max_retries}) exceeded for RPC call")
+
+
 async def get_fee_recipient(client: AsyncClient, curve_state: BondingCurveState) -> Pubkey:
     if not curve_state.is_mayhem_mode:
         return PUMP_FEE
-    response = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
+    response = await retry_rpc_call(client.get_account_info, PUMP_GLOBAL, encoding="base64")
     if not response.value or not response.value.data:
         return PUMP_FEE
     data = response.value.data
@@ -164,7 +182,7 @@ async def get_fee_recipient(client: AsyncClient, curve_state: BondingCurveState)
 
 
 async def get_token_balance(client: AsyncClient, ata: Pubkey) -> int:
-    response = await client.get_token_account_balance(ata)
+    response = await retry_rpc_call(client.get_token_account_balance, ata)
     return int(response.value.amount) if response.value else 0
 
 
