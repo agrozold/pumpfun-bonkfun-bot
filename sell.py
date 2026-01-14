@@ -2,12 +2,15 @@
 """Quick sell script - продажа токена по адресу контракта.
 
 Usage:
-    uv run sell.py <TOKEN_ADDRESS> [--slippage 0.25] [--priority-fee 1000]
+    sell <TOKEN_ADDRESS> <PERCENT>
+    
+    PERCENT: 100 = продать всё, 50 = половину, 10 = 10%
     
 Examples:
-    uv run sell.py 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
-    uv run sell.py 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU --slippage 0.3
-    uv run sell.py 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU --priority-fee 5000
+    sell 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 100      # продать всё
+    sell 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 50       # продать половину
+    sell 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 10       # продать 10%
+    sell 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 100 --slippage 0.5
 """
 
 import argparse
@@ -144,11 +147,20 @@ def calculate_price(curve_state: BondingCurveState) -> float:
 
 async def sell_token(
     mint: Pubkey,
+    percent: float = 100.0,
     slippage: float = 0.25,
     priority_fee: int = 1000,
     max_retries: int = 3,
 ) -> bool:
-    """Sell all tokens for given mint address."""
+    """Sell tokens for given mint address.
+    
+    Args:
+        mint: Token mint address
+        percent: Percentage to sell (100 = all, 50 = half, etc.)
+        slippage: Slippage tolerance
+        priority_fee: Priority fee in microlamports
+        max_retries: Max retry attempts
+    """
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
     rpc_endpoint = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     
@@ -175,20 +187,29 @@ async def sell_token(
         
         # Get token balance
         ata = get_associated_token_address(payer.pubkey(), mint, token_program_id)
-        balance = await get_token_balance(client, ata)
-        balance_decimal = balance / 10**TOKEN_DECIMALS
+        total_balance = await get_token_balance(client, ata)
+        total_balance_decimal = total_balance / 10**TOKEN_DECIMALS
         
-        if balance == 0:
+        if total_balance == 0:
             print("❌ No tokens to sell")
+            return False
+        
+        # Calculate amount to sell based on percentage
+        sell_amount = int(total_balance * (percent / 100.0))
+        sell_amount_decimal = sell_amount / 10**TOKEN_DECIMALS
+        
+        if sell_amount == 0:
+            print("❌ Sell amount too small")
             return False
         
         # Calculate price and min output
         price = calculate_price(curve_state)
-        sol_value = balance_decimal * price
+        sol_value = sell_amount_decimal * price
         min_sol_output = int(sol_value * (1 - slippage) * LAMPORTS_PER_SOL)
         
-        print(f"💰 Balance: {balance_decimal:,.2f} tokens")
-        print(f"📊 Price: {price:.10f} SOL per token")
+        print(f"💰 Total balance: {total_balance_decimal:,.2f} tokens")
+        print(f"📊 Selling: {percent:.0f}% = {sell_amount_decimal:,.2f} tokens")
+        print(f"💵 Price: {price:.10f} SOL per token")
         print(f"💵 Value: ~{sol_value:.6f} SOL")
         print(f"📉 Min output (with {slippage*100:.0f}% slippage): {min_sol_output/LAMPORTS_PER_SOL:.6f} SOL")
         print(f"⚡ Priority fee: {priority_fee} microlamports")
@@ -219,7 +240,7 @@ async def sell_token(
         # Build instruction
         discriminator = struct.pack("<Q", 12502976635542562355)
         track_volume = bytes([1, 1])
-        data = discriminator + struct.pack("<Q", balance) + struct.pack("<Q", min_sol_output) + track_volume
+        data = discriminator + struct.pack("<Q", sell_amount) + struct.pack("<Q", min_sol_output) + track_volume
         sell_ix = Instruction(PUMP_PROGRAM, data, accounts)
         
         # Send transaction
@@ -254,8 +275,9 @@ async def sell_token(
 def main():
     parser = argparse.ArgumentParser(description="Quick sell token by contract address")
     parser.add_argument("token", help="Token mint address")
-    parser.add_argument("--slippage", type=float, default=0.25, help="Slippage tolerance (default: 0.25 = 25%%)")
-    parser.add_argument("--priority-fee", type=int, default=1000, help="Priority fee in microlamports (default: 1000)")
+    parser.add_argument("percent", type=float, help="Percentage to sell (100=all, 50=half, 10=10%%)")
+    parser.add_argument("--slippage", type=float, default=0.5, help="Slippage tolerance (default: 0.5 = 50%%)")
+    parser.add_argument("--priority-fee", type=int, default=100000, help="Priority fee in microlamports (default: 100000)")
     args = parser.parse_args()
     
     try:
@@ -264,10 +286,14 @@ def main():
         print(f"❌ Invalid token address: {args.token}")
         sys.exit(1)
     
-    print(f"🎯 Selling token: {mint}")
+    if args.percent <= 0 or args.percent > 100:
+        print(f"❌ Invalid percent: {args.percent}. Must be between 1 and 100")
+        sys.exit(1)
+    
+    print(f"🎯 Selling {args.percent:.0f}% of token: {mint}")
     print(f"=" * 50)
     
-    success = asyncio.run(sell_token(mint, args.slippage, args.priority_fee))
+    success = asyncio.run(sell_token(mint, args.percent, args.slippage, args.priority_fee))
     sys.exit(0 if success else 1)
 
 
