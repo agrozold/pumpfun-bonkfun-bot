@@ -267,13 +267,8 @@ class TrendingScanner:
                 pairs = data.get("pairs", [])
                 
                 for pair in pairs:
-                    # Filter pump.fun on Solana with PumpSwap DEX
+                    # Filter pump.fun on Solana
                     if pair.get("chainId") != "solana":
-                        continue
-                    
-                    # Only PumpSwap pairs (pumpswap or pump_amm)
-                    dex_id = pair.get("dexId", "").lower()
-                    if dex_id not in ("pumpswap", "pump_amm", "pump"):
                         continue
                     
                     base = pair.get("baseToken", {})
