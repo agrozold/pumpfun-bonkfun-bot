@@ -198,11 +198,17 @@ def calculate_price(curve_state: BondingCurveState) -> float:
 # ============================================================================
 
 async def get_market_address_by_base_mint(client: AsyncClient, base_mint: Pubkey) -> Pubkey | None:
-    """Find the AMM pool address for a token."""
-    filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(base_mint))]
-    response = await client.get_program_accounts(PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
+    """Find the AMM pool address for a token using PDA derivation."""
+    # PumpSwap pool PDA: seeds = ["pool", base_mint, quote_mint (SOL)]
+    pool_pda, _ = Pubkey.find_program_address(
+        [b"pool", bytes(base_mint), bytes(SOL)],
+        PUMP_AMM_PROGRAM_ID
+    )
+    
+    # Verify pool exists
+    response = await client.get_account_info(pool_pda)
     if response.value:
-        return response.value[0].pubkey
+        return pool_pda
     return None
 
 
