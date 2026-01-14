@@ -27,7 +27,7 @@ trade:
   min_sol_balance: 0.03  # Stop buying if balance drops below this (reserve for sells)
   moon_bag_percentage: 20
   price_check_interval: 2
-  sell_slippage: 0.7
+  sell_slippage: 0.25
   stop_loss_percentage: 0.7
   take_profit_percentage: 1.0
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}

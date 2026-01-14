@@ -542,7 +542,7 @@ def main():
     parser = argparse.ArgumentParser(description="Quick sell token by contract address")
     parser.add_argument("token", help="Token mint address")
     parser.add_argument("percent", type=float, help="Percentage to sell (100=all, 50=half, 10=10%%)")
-    parser.add_argument("--slippage", type=float, default=0.5, help="Slippage tolerance (default: 0.5 = 50%%)")
+    parser.add_argument("--slippage", type=float, default=0.25, help="Slippage tolerance (default: 0.25 = 25%%)")
     parser.add_argument("--priority-fee", type=int, default=100000, help="Priority fee in microlamports (default: 100000)")
     args = parser.parse_args()
     

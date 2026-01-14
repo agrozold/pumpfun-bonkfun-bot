@@ -435,7 +435,7 @@ class UniversalTrader:
 
                 try:
                     await self.token_listener.listen_for_tokens(
-                        lambda token: self._queue_token(token),
+                        self._queue_token,
                         self.match_string,
                         self.bro_address,
                     )
