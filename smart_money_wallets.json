@@ -119,6 +119,14 @@
       "label": "whale",
       "source": "manual",
       "added_date": "2026-01-13T12:15:23.568200Z"
+    },
+    {
+      "wallet": "DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-14T12:00:00Z"
     }
   ],
   "min_buy_amount_sol": 0.5,
