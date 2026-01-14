@@ -162,7 +162,10 @@ class TrendingScanner:
         # Get trending tokens from DexScreener
         tokens = await self._fetch_pump_tokens()
         if not tokens:
+            logger.debug("No tokens fetched from DexScreener")
             return
+        
+        logger.info(f"🔍 Scanned {len(tokens)} pump.fun tokens from DexScreener")
         
         # Filter and score tokens
         candidates = []
@@ -173,6 +176,9 @@ class TrendingScanner:
             score, reasons = self._evaluate_token(token)
             if score > 0:
                 candidates.append((token, score, reasons))
+        
+        if candidates:
+            logger.info(f"📊 Found {len(candidates)} candidates passing filters")
         
         # Sort by score and take top candidates
         candidates.sort(key=lambda x: x[1], reverse=True)
