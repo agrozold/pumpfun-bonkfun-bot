@@ -29,7 +29,7 @@ from monitoring.dev_reputation import DevReputationChecker
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.position import Position
+from trading.position import Position, save_positions, load_positions, remove_position
 from utils.logger import get_logger
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -300,6 +300,7 @@ class UniversalTrader:
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
         self.pump_signals: dict[str, list] = {}  # mint -> detected patterns
+        self.active_positions: list[Position] = []  # Active positions for persistence
 
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
@@ -391,6 +392,9 @@ class UniversalTrader:
             )
 
         logger.info(f"Max token age: {self.max_token_age} seconds")
+
+        # Restore saved positions from previous run
+        await self._restore_positions()
 
         try:
             health_resp = await self.solana_client.get_health()
@@ -738,7 +742,13 @@ class UniversalTrader:
         self, token_info: TokenInfo, buy_result: TradeResult
     ) -> None:
         """Handle take profit/stop loss exit strategy."""
-        # Create position
+        # Create position with platform info for restoration
+        bonding_curve_str = None
+        if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
+            bonding_curve_str = str(token_info.bonding_curve)
+        elif hasattr(token_info, "pool_state") and token_info.pool_state:
+            bonding_curve_str = str(token_info.pool_state)
+            
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
@@ -747,6 +757,8 @@ class UniversalTrader:
             take_profit_percentage=self.take_profit_percentage,
             stop_loss_percentage=self.stop_loss_percentage,
             max_hold_time=self.max_hold_time,
+            platform=self.platform.value,
+            bonding_curve=bonding_curve_str,
         )
 
         logger.info(f"Created position: {position}")
@@ -754,6 +766,9 @@ class UniversalTrader:
             logger.info(f"Take profit target: {position.take_profit_price:.8f} SOL")
         if position.stop_loss_price:
             logger.info(f"Stop loss target: {position.stop_loss_price:.8f} SOL")
+
+        # Save position to file for recovery after restart
+        self._save_position(position)
 
         # Monitor position until exit condition is met
         await self._monitor_position_until_exit(token_info, position)
@@ -865,6 +880,9 @@ class UniversalTrader:
                         logger.info(
                             f"Final PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
                         )
+
+                        # Remove position from saved file
+                        self._remove_position(str(token_info.mint))
 
                         # Close ATA if enabled
                         await handle_cleanup_after_sell(
@@ -981,6 +999,50 @@ class UniversalTrader:
                 log_file.write(json.dumps(log_entry) + "\n")
         except OSError:
             logger.exception("Failed to log trade information")
+
+    def _save_position(self, position: Position) -> None:
+        """Save position to active positions list and persist to file."""
+        self.active_positions.append(position)
+        save_positions(self.active_positions)
+
+    def _remove_position(self, mint: str) -> None:
+        """Remove position from active list and file."""
+        self.active_positions = [p for p in self.active_positions if str(p.mint) != mint]
+        save_positions(self.active_positions)
+
+    async def _restore_positions(self) -> None:
+        """Restore and resume monitoring of saved positions on startup."""
+        positions = load_positions()
+        if not positions:
+            return
+
+        logger.info(f"Found {len(positions)} saved positions to restore")
+        
+        for position in positions:
+            # Only restore positions for our platform
+            if position.platform != self.platform.value:
+                logger.info(f"Skipping position {position.symbol} - different platform")
+                continue
+                
+            if not position.is_active:
+                logger.info(f"Skipping closed position {position.symbol}")
+                continue
+
+            logger.info(f"Restoring position: {position}")
+            self.active_positions.append(position)
+            
+            # Create minimal TokenInfo for monitoring
+            token_info = TokenInfo(
+                name=position.symbol,
+                symbol=position.symbol,
+                uri="",
+                mint=position.mint,
+                platform=self.platform,
+                bonding_curve=Pubkey.from_string(position.bonding_curve) if position.bonding_curve else None,
+            )
+            
+            # Start monitoring in background
+            asyncio.create_task(self._monitor_position_until_exit(token_info, position))
 
 
 # Backward compatibility alias
