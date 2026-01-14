@@ -336,21 +336,27 @@ class UniversalTrader:
             logger.info(f"🐋 Already processed {whale_buy.token_symbol}, skipping duplicate")
             return
         
+        # Только pump.fun поддерживается для whale copy
+        if self.platform != Platform.PUMP_FUN:
+            logger.warning(f"🐋 Whale copy only supported for pump_fun, skipping")
+            return
+        
         # Создаём TokenInfo для покупки
         try:
             from interfaces.core import TokenInfo
+            from platforms.pumpfun.addresses import SystemAddresses, PumpFunAddresses
             
             mint = Pubkey.from_string(mint_str)
             
-            # Получаем bonding_curve и другие адреса
-            address_provider = self.platform_implementations.address_provider
-            curve_manager = self.platform_implementations.curve_manager
-            
-            # Derive bonding curve from mint
-            bonding_curve = address_provider.derive_bonding_curve(mint)
+            # Derive bonding curve from mint (PDA)
+            bonding_curve, _ = Pubkey.find_program_address(
+                [b"bonding-curve", bytes(mint)],
+                PumpFunAddresses.PUMP_PROGRAM
+            )
             
             # Проверяем что токен ещё на bonding curve (не мигрировал)
             try:
+                curve_manager = self.platform_implementations.curve_manager
                 pool_state = await curve_manager.get_pool_state(bonding_curve)
                 if pool_state.get("complete", False):
                     logger.warning(
@@ -363,11 +369,12 @@ class UniversalTrader:
                 return
             
             # Для pump.fun используем Token2022 по умолчанию
-            from platforms.pumpfun.addresses import SystemAddresses
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
             
-            associated_bonding_curve = address_provider.derive_associated_bonding_curve(
-                mint, bonding_curve, token_program_id
+            # Derive associated bonding curve
+            associated_bonding_curve, _ = Pubkey.find_program_address(
+                [bytes(bonding_curve), bytes(token_program_id), bytes(mint)],
+                SystemAddresses.ASSOCIATED_TOKEN_PROGRAM
             )
             
             token_info = TokenInfo(
