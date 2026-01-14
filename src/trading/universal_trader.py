@@ -117,6 +117,10 @@ class UniversalTrader:
         min_sol_balance: float = 0.03,
     ):
         """Initialize the universal trader."""
+        # Store endpoints for later use
+        self.rpc_endpoint = rpc_endpoint
+        self.wss_endpoint = wss_endpoint
+        
         # Core components
         self.solana_client = SolanaClient(rpc_endpoint)
         self.wallet = Wallet(private_key)
@@ -196,6 +200,8 @@ class UniversalTrader:
                 wallets_file=whale_wallets_file,
                 min_buy_amount=whale_min_buy_amount,
                 helius_api_key=helius_api_key,
+                rpc_endpoint=rpc_endpoint,
+                wss_endpoint=wss_endpoint,
             )
             self.whale_tracker.set_callback(self._on_whale_buy)
             logger.info(
