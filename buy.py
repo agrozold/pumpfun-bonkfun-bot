@@ -198,17 +198,11 @@ def calculate_price(curve_state: BondingCurveState) -> float:
 # ============================================================================
 
 async def get_market_address_by_base_mint(client: AsyncClient, base_mint: Pubkey) -> Pubkey | None:
-    """Find the AMM pool address for a token using PDA derivation."""
-    # PumpSwap pool PDA: seeds = ["pool", base_mint, quote_mint (SOL)]
-    pool_pda, _ = Pubkey.find_program_address(
-        [b"pool", bytes(base_mint), bytes(SOL)],
-        PUMP_AMM_PROGRAM_ID
-    )
-    
-    # Verify pool exists
-    response = await client.get_account_info(pool_pda)
+    """Find the AMM pool address for a token using get_program_accounts."""
+    filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(base_mint))]
+    response = await client.get_program_accounts(PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
     if response.value:
-        return pool_pda
+        return response.value[0].pubkey
     return None
 
 
@@ -508,11 +502,13 @@ async def buy_token(
 ) -> bool:
     """Buy tokens - автоматически выбирает Pump.fun или PumpSwap."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
-    # Публичный RPC Solana - без лимитов на get_program_accounts
-    rpc_endpoint = "https://api.mainnet-beta.solana.com"
+    rpc_endpoint = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
+        return False
+    if not rpc_endpoint:
+        print("❌ SOLANA_NODE_RPC_ENDPOINT not set in .env")
         return False
 
     payer = Keypair.from_bytes(base58.b58decode(private_key))
