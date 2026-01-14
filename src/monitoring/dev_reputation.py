@@ -133,14 +133,27 @@ class DevReputationChecker:
                         pump_txs += 1
                         break
 
-        # Делим на 2 т.к. считаем и accountData и instructions
-        # Примерная оценка - каждый токен = ~2-3 транзакции (create + buy)
-        tokens_created = pump_txs // 3
+        # Примерная оценка токенов
+        # Если почти все транзакции связаны с pump.fun - это серийный скамер
+        # API возвращает только 100 транзакций, так что если 50+ из них pump.fun - это красный флаг
+        total_txs = len(transactions)
+        pump_ratio = pump_txs / total_txs if total_txs > 0 else 0
         
-        # Если много транзакций к pump.fun - это серийный скамер
-        if pump_txs > 100:
-            tokens_created = max(tokens_created, pump_txs // 2)
-            logger.warning(f"Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - likely serial scammer")
+        if pump_ratio > 0.5 and pump_txs >= 50:
+            # Больше половины транзакций = pump.fun, и их много
+            # Это серийный скамер, реальное число токенов намного больше
+            tokens_created = pump_txs * 10  # Экстраполируем - реально токенов в 10+ раз больше
+            logger.warning(
+                f"Dev {creator_address[:8]}... has {pump_txs}/{total_txs} pump.fun txs "
+                f"({pump_ratio*100:.0f}%) - SERIAL SCAMMER, estimated {tokens_created}+ tokens"
+            )
+        elif pump_txs > 30:
+            # Много pump транзакций
+            tokens_created = pump_txs * 3
+            logger.warning(f"Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - likely scammer")
+        else:
+            # Нормальный дев - примерно 1 токен на 2-3 транзакции
+            tokens_created = pump_txs // 2
 
         if tokens_created == 0 and oldest_tx_time is None:
             return {
