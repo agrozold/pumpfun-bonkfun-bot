@@ -502,11 +502,8 @@ async def buy_token(
 ) -> bool:
     """Buy tokens - автоматически выбирает Pump.fun или PumpSwap."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
-    # Используем Alchemy напрямую - Helius постоянно в rate limit
-    rpc_endpoint = os.environ.get(
-        "SOLANA_RPC_FALLBACK",
-        "https://solana-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY"
-    )
+    # Публичный RPC Solana - без лимитов на get_program_accounts
+    rpc_endpoint = "https://api.mainnet-beta.solana.com"
     
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
