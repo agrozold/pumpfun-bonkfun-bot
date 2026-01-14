@@ -586,10 +586,20 @@ class UniversalTrader:
                     max_retries=self.max_retries,
                 )
                 
+                # Use pair_address from DexScreener if available (avoids expensive RPC call)
+                market_address = None
+                if token.pair_address:
+                    try:
+                        market_address = Pubkey.from_string(token.pair_address)
+                        logger.info(f"🔥 Using DexScreener pair address: {token.pair_address}")
+                    except Exception:
+                        pass
+                
                 success, sig, error = await fallback.buy_via_pumpswap(
                     mint=mint,
                     sol_amount=self.buy_amount,
                     symbol=token.symbol,
+                    market_address=market_address,
                 )
                 
                 if success:

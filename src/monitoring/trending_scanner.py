@@ -38,6 +38,7 @@ class TrendingToken:
     sells_1h: int
     liquidity: float
     created_at: datetime | None
+    pair_address: str | None = None  # Pool/AMM address from DexScreener
     
     @property
     def buy_pressure_5m(self) -> float:
@@ -342,6 +343,7 @@ class TrendingScanner:
                 sells_1h=h1.get("sells", 0),
                 liquidity=float(pair.get("liquidity", {}).get("usd", 0) or 0),
                 created_at=created_at,
+                pair_address=pair.get("pairAddress"),  # Pool address from DexScreener
             )
         except Exception as e:
             logger.debug(f"Parse error: {e}")

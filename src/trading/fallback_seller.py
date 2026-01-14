@@ -74,6 +74,7 @@ class FallbackSeller:
         mint: Pubkey,
         sol_amount: float,
         symbol: str = "TOKEN",
+        market_address: Pubkey | None = None,  # Optional - skip lookup if provided
     ) -> tuple[bool, str | None, str | None]:
         """Buy token via PumpSwap AMM - for migrated tokens.
         
@@ -81,6 +82,7 @@ class FallbackSeller:
             mint: Token mint address
             sol_amount: Amount of SOL to spend
             symbol: Token symbol for logging
+            market_address: Optional pool address (skip lookup if provided)
             
         Returns:
             Tuple of (success, tx_signature, error_message)
@@ -95,17 +97,22 @@ class FallbackSeller:
         try:
             rpc_client = await self.client.get_client()
             
-            # Find market
-            filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
-            response = await rpc_client.get_program_accounts(
-                PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters
-            )
-            
-            if not response.value:
-                return False, None, "PumpSwap market not found"
-            
-            market = response.value[0].pubkey
-            logger.info(f"📍 Found PumpSwap market: {market}")
+            # Use provided market or find it
+            if market_address:
+                market = market_address
+                logger.info(f"📍 Using provided PumpSwap market: {market}")
+            else:
+                # Find market via get_program_accounts (expensive!)
+                filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
+                response = await rpc_client.get_program_accounts(
+                    PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters
+                )
+                
+                if not response.value:
+                    return False, None, "PumpSwap market not found"
+                
+                market = response.value[0].pubkey
+                logger.info(f"📍 Found PumpSwap market: {market}")
             
             # Get market data
             market_response = await rpc_client.get_account_info(market, encoding="base64")
