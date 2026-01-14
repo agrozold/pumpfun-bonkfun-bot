@@ -12,6 +12,7 @@ from core.wallet import Wallet
 from interfaces.core import AddressProvider, Platform, TokenInfo
 from platforms import get_platform_implementations
 from trading.base import Trader, TradeResult
+from trading.fallback_seller import FallbackSeller
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -361,26 +362,14 @@ class PlatformAwareSeller(Trader):
 
             # Validate required token_info fields for sell
             if token_info.platform == Platform.PUMP_FUN:
-                if not token_info.bonding_curve:
-                    logger.error(
-                        f"Cannot sell {token_info.symbol}: missing bonding_curve address. "
-                        "Position data may be corrupted or token already sold."
+                if not token_info.bonding_curve or not token_info.creator_vault:
+                    # Token may have migrated - try fallback methods
+                    logger.warning(
+                        f"⚠️ {token_info.symbol}: missing bonding_curve or creator_vault - "
+                        "trying fallback sell methods (PumpSwap/Jupiter)"
                     )
-                    return TradeResult(
-                        success=False,
-                        platform=token_info.platform,
-                        error_message="Missing bonding_curve - position data corrupted",
-                    )
-                # Also check creator_vault - required for pump.fun sells
-                if not token_info.creator_vault:
-                    logger.error(
-                        f"Cannot sell {token_info.symbol}: missing creator_vault address. "
-                        "Position data may be corrupted - removing position."
-                    )
-                    return TradeResult(
-                        success=False,
-                        platform=token_info.platform,
-                        error_message="Missing creator_vault - position data corrupted",
+                    return await self._fallback_sell(
+                        token_info, token_balance_decimal, token_price_sol
                     )
 
             # Build sell instructions using platform-specific builder
@@ -477,3 +466,59 @@ class PlatformAwareSeller(Trader):
 
         # Just check for operation override (buy/sell)
         return self.compute_units.get(operation)
+
+    async def _fallback_sell(
+        self,
+        token_info: TokenInfo,
+        token_amount: float,
+        token_price: float,
+    ) -> TradeResult:
+        """Try to sell via PumpSwap or Jupiter when bonding curve unavailable.
+        
+        Args:
+            token_info: Token information
+            token_amount: Amount of tokens to sell
+            token_price: Price per token in SOL
+            
+        Returns:
+            TradeResult with success/failure status
+        """
+        try:
+            fallback_seller = FallbackSeller(
+                client=self.client,
+                wallet=self.wallet,
+                slippage=self.slippage,
+                priority_fee=100_000,  # Default priority fee for fallback
+                max_retries=self.max_retries,
+            )
+            
+            success, tx_signature, error = await fallback_seller.sell(
+                mint=token_info.mint,
+                token_amount=token_amount,
+                symbol=token_info.symbol,
+            )
+            
+            if success:
+                logger.info(f"✅ Fallback sell successful: {tx_signature}")
+                return TradeResult(
+                    success=True,
+                    platform=token_info.platform,
+                    tx_signature=tx_signature,
+                    amount=token_amount,
+                    price=token_price,
+                )
+            else:
+                logger.error(f"❌ All fallback sell methods failed: {error}")
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=f"Fallback sell failed: {error}",
+                )
+                
+        except Exception as e:
+            logger.exception("Fallback sell operation failed")
+            return TradeResult(
+                success=False,
+                platform=token_info.platform,
+                error_message=f"Fallback sell error: {e}",
+            )
