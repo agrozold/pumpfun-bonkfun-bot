@@ -83,48 +83,67 @@ class DevReputationChecker:
             }
 
     async def _analyze_dev(self, creator_address: str) -> dict:
-        """Анализ истории дева через Helius API."""
-        url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
-        # Увеличиваем лимит до 1000 чтобы видеть больше истории серийных скамеров
-        params = {"api-key": self.api_key, "limit": 1000}
-
+        """Анализ истории дева через Helius API с пагинацией."""
+        base_url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
+        
+        tokens_created = 0
+        oldest_tx_time = None
+        newest_tx_time = None
+        before_signature = None
+        max_pages = 10  # До 10000 транзакций (10 * 1000)
+        
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as resp:
-                if resp.status != 200:
-                    raise ValueError(f"Helius API error: {resp.status}")
-                transactions = await resp.json()
+            for page in range(max_pages):
+                params = {"api-key": self.api_key, "limit": 1000}
+                if before_signature:
+                    params["before"] = before_signature
+                
+                async with session.get(base_url, params=params) as resp:
+                    if resp.status != 200:
+                        raise ValueError(f"Helius API error: {resp.status}")
+                    transactions = await resp.json()
+                
+                if not transactions:
+                    break  # Нет больше транзакций
+                
+                # Обрабатываем транзакции
+                for tx in transactions:
+                    tx_time = tx.get("timestamp")
+                    if tx_time:
+                        if oldest_tx_time is None or tx_time < oldest_tx_time:
+                            oldest_tx_time = tx_time
+                        if newest_tx_time is None or tx_time > newest_tx_time:
+                            newest_tx_time = tx_time
 
-        if not transactions:
+                    instructions = tx.get("instructions", [])
+                    for ix in instructions:
+                        program_id = ix.get("programId", "")
+                        if program_id == PUMP_PROGRAM:
+                            ix_type = ix.get("type", "").lower()
+                            if "create" in ix_type:
+                                tokens_created += 1
+                
+                # Если уже нашли много токенов - сразу скипаем, не тратим время
+                if tokens_created > self.max_tokens_created:
+                    logger.info(f"Dev {creator_address[:8]}... already has {tokens_created} tokens, skipping further pages")
+                    break
+                
+                # Если меньше 1000 транзакций - это последняя страница
+                if len(transactions) < 1000:
+                    break
+                
+                # Берём signature последней транзакции для пагинации
+                before_signature = transactions[-1].get("signature")
+                if not before_signature:
+                    break
+
+        if tokens_created == 0 and oldest_tx_time is None:
             return {
                 "is_safe": True,
                 "reason": "New wallet, no history",
                 "tokens_created": 0,
                 "risk_score": 30,
             }
-
-        # Считаем создания токенов на pump.fun
-        tokens_created = 0
-        oldest_tx_time = None
-        newest_tx_time = None
-
-        for tx in transactions:
-            # Проверяем время транзакции
-            tx_time = tx.get("timestamp")
-            if tx_time:
-                if oldest_tx_time is None or tx_time < oldest_tx_time:
-                    oldest_tx_time = tx_time
-                if newest_tx_time is None or tx_time > newest_tx_time:
-                    newest_tx_time = tx_time
-
-            # Проверяем инструкции на создание токенов
-            instructions = tx.get("instructions", [])
-            for ix in instructions:
-                program_id = ix.get("programId", "")
-                if program_id == PUMP_PROGRAM:
-                    # Проверяем тип инструкции (create/create_v2)
-                    ix_type = ix.get("type", "").lower()
-                    if "create" in ix_type:
-                        tokens_created += 1
 
         # Вычисляем возраст аккаунта
         account_age_days = 0
