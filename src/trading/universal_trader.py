@@ -109,6 +109,7 @@ class UniversalTrader:
         whale_wallets_file: str = "smart_money_wallets.json",
         whale_min_buy_amount: float = 0.5,
         helius_api_key: str | None = None,
+        birdeye_api_key: str | None = None,
         # Dev reputation settings
         enable_dev_check: bool = False,
         dev_max_tokens_created: int = 50,
@@ -159,6 +160,7 @@ class UniversalTrader:
 
         if enable_pattern_detection:
             self.pattern_detector = PumpPatternDetector(
+                birdeye_api_key=birdeye_api_key,
                 volume_spike_threshold=pattern_volume_spike_threshold,
                 holder_growth_threshold=pattern_holder_growth_threshold,
                 min_whale_buys=pattern_min_whale_buys,
