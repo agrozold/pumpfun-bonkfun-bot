@@ -87,8 +87,9 @@ class DevReputationChecker:
     async def _analyze_dev(self, creator_address: str) -> dict:
         """Анализ истории дева через Helius API."""
         url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
-        # Helius лимит - пробуем 100 (безопасный лимит)
-        params = {"api-key": self.api_key, "limit": 100}
+        # Уменьшаем лимит до 20 для экономии запросов
+        # 20 транзакций достаточно чтобы определить серийного скамера
+        params = {"api-key": self.api_key, "limit": 20}
         
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as resp:
@@ -135,30 +136,29 @@ class DevReputationChecker:
 
         # Примерная оценка токенов
         # Если почти все транзакции связаны с pump.fun - это серийный скамер
-        # API возвращает только 100 транзакций, так что если много из них pump.fun - это красный флаг
+        # API возвращает только 20 транзакций, так что если много из них pump.fun - это красный флаг
         total_txs = len(transactions)
         pump_ratio = pump_txs / total_txs if total_txs > 0 else 0
         
-        # Агрессивная детекция скамеров
-        if pump_txs >= 30:
-            # 30+ pump транзакций из 100 = серийный скамер
-            # Экстраполируем реальное число токенов
+        # Агрессивная детекция скамеров (адаптировано для 20 транзакций)
+        if pump_txs >= 15:
+            # 15+ pump транзакций из 20 = серийный скамер
             if pump_ratio > 0.7:
-                tokens_created = pump_txs * 20  # Очень высокая концентрация
+                tokens_created = pump_txs * 50  # Очень высокая концентрация
             elif pump_ratio > 0.5:
-                tokens_created = pump_txs * 10
+                tokens_created = pump_txs * 30
             else:
-                tokens_created = pump_txs * 5
+                tokens_created = pump_txs * 15
             logger.warning(
                 f"🚨 SCAMMER DETECTED: {creator_address[:8]}... has {pump_txs}/{total_txs} pump.fun txs "
                 f"({pump_ratio*100:.0f}%) - estimated {tokens_created}+ tokens created"
             )
-        elif pump_txs > 10:
-            # Подозрительно много pump транзакций
-            tokens_created = pump_txs * 3
+        elif pump_txs >= 8:
+            # 8+ pump транзакций из 20 = подозрительно
+            tokens_created = pump_txs * 10
             logger.warning(f"⚠️ Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - suspicious")
         else:
-            # Нормальный дев - примерно 1 токен на 2-3 транзакции
+            # Нормальный дев
             tokens_created = max(pump_txs // 2, pump_txs - 2) if pump_txs > 0 else 0
 
         if tokens_created == 0 and oldest_tx_time is None:

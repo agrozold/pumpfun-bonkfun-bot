@@ -238,18 +238,19 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        # Получаем детали через Helius (быстрее и удобнее)
+        # Используем стандартный RPC вместо Helius для экономии запросов
+        if self.rpc_endpoint:
+            tx = await self._get_tx_rpc(signature)
+            if tx:
+                await self._process_rpc_tx(tx, signature)
+                return
+        
+        # Fallback на Helius только если RPC не сработал
         if self.helius_api_key:
             tx = await self._get_tx_helius(signature)
             if tx:
                 await self._process_helius_tx(tx)
                 return
-        
-        # Fallback на стандартный RPC
-        if self.rpc_endpoint:
-            tx = await self._get_tx_rpc(signature)
-            if tx:
-                await self._process_rpc_tx(tx, signature)
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""

@@ -70,8 +70,11 @@ class SolanaClient:
             self.start_blockhash_updater()
         )
 
-    async def start_blockhash_updater(self, interval: float = 5.0):
-        """Start background task to update recent blockhash."""
+    async def start_blockhash_updater(self, interval: float = 30.0):
+        """Start background task to update recent blockhash.
+        
+        Blockhash is valid for ~60-90 seconds, so 30s interval is safe.
+        """
         while True:
             try:
                 blockhash = await self.get_latest_blockhash()
