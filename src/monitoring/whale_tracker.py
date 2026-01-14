@@ -110,10 +110,10 @@ class WhaleTracker:
         self.running = True
         self._session = aiohttp.ClientSession()
         
-        logger.info(f"Starting whale tracker WebSocket for {len(self.whale_wallets)} wallets")
+        logger.info(f"Starting whale tracker for {len(self.whale_wallets)} wallets (fast polling mode)")
         
-        # Запускаем WebSocket подключение
-        await self._track_with_websocket()
+        # Используем быстрый polling (WebSocket требует платный план)
+        await self._track_with_fast_polling()
 
     async def stop(self):
         """Остановить отслеживание."""
@@ -126,168 +126,107 @@ class WhaleTracker:
             self._session = None
         logger.info("Whale tracker stopped")
 
-    async def _track_with_websocket(self):
-        """Real-time отслеживание через Helius WebSocket."""
-        ws_url = f"wss://atlas-mainnet.helius-rpc.com/?api-key={self.helius_api_key}"
+    async def _track_with_fast_polling(self):
+        """Fast polling через Helius API (1 секунда интервал)."""
+        logger.info(f"Using Helius fast polling for whale tracking")
+        logger.info(f"Tracked wallets: {list(self.whale_wallets.keys())[:3]}...")
+        logger.info(f"Min buy amount to copy: {self.min_buy_amount} SOL")
+        
+        base_url = "https://api.helius.xyz/v0"
         
         while self.running:
             try:
-                logger.info("Connecting to Helius WebSocket...")
+                for wallet in list(self.whale_wallets.keys()):
+                    if not self.running:
+                        break
+                    
+                    # Получить последние транзакции кошелька
+                    url = f"{base_url}/addresses/{wallet}/transactions"
+                    params = {
+                        "api-key": self.helius_api_key,
+                        "limit": 3,  # Только последние 3 транзакции
+                        "type": "SWAP",
+                    }
+                    
+                    try:
+                        async with self._session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=2)) as resp:
+                            if resp.status == 200:
+                                txs = await resp.json()
+                                await self._process_helius_transactions(wallet, txs)
+                            elif resp.status == 429:
+                                logger.debug("Helius rate limit, waiting...")
+                                await asyncio.sleep(2)
+                            else:
+                                logger.debug(f"Helius API error {resp.status}")
+                    except asyncio.TimeoutError:
+                        pass  # Ignore timeouts, continue polling
+                    except Exception as e:
+                        logger.debug(f"Polling error for {wallet[:8]}...: {e}")
+                    
+                    await asyncio.sleep(0.1)  # 100ms между кошельками
                 
-                async with self._session.ws_connect(ws_url) as ws:
-                    self._ws = ws
-                    logger.info("Connected to Helius WebSocket")
-                    
-                    # Подписываемся на транзакции всех whale кошельков
-                    for wallet in self.whale_wallets.keys():
-                        subscribe_msg = {
-                            "jsonrpc": "2.0",
-                            "id": f"whale_{wallet[:8]}",
-                            "method": "transactionSubscribe",
-                            "params": [
-                                {
-                                    "accountInclude": [wallet],
-                                },
-                                {
-                                    "commitment": "confirmed",
-                                    "encoding": "jsonParsed",
-                                    "transactionDetails": "full",
-                                    "maxSupportedTransactionVersion": 0,
-                                }
-                            ]
-                        }
-                        await ws.send_json(subscribe_msg)
-                        logger.info(f"Subscribed to whale: {wallet[:8]}...")
-                    
-                    # Слушаем сообщения
-                    async for msg in ws:
-                        if not self.running:
-                            break
-                        
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            try:
-                                data = json.loads(msg.data)
-                                await self._process_ws_message(data)
-                            except json.JSONDecodeError:
-                                logger.warning(f"Invalid JSON from WebSocket: {msg.data[:100]}")
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            logger.error(f"WebSocket error: {ws.exception()}")
-                            break
-                        elif msg.type == aiohttp.WSMsgType.CLOSED:
-                            logger.warning("WebSocket closed")
-                            break
+                await asyncio.sleep(1)  # 1 секунда между циклами
                 
             except Exception as e:
-                logger.exception(f"WebSocket error: {e}")
-            
-            if self.running:
-                logger.info("Reconnecting WebSocket in 3 seconds...")
-                await asyncio.sleep(3)
+                logger.exception(f"Polling error: {e}")
+                await asyncio.sleep(2)
 
-    async def _process_ws_message(self, data: dict):
-        """Обработать сообщение от WebSocket."""
-        # Проверяем что это уведомление о транзакции
-        if data.get("method") != "transactionNotification":
-            return
-        
-        params = data.get("params", {})
-        result = params.get("result", {})
-        
-        tx_sig = result.get("signature", "")
-        if not tx_sig or tx_sig in self._processed_txs:
-            return
-        
-        # Помечаем как обработанную
-        self._processed_txs.add(tx_sig)
-        if len(self._processed_txs) > 1000:
-            self._processed_txs = set(list(self._processed_txs)[-500:])
-        
-        # Парсим транзакцию
-        tx = result.get("transaction", {})
-        meta = tx.get("meta", {})
-        
-        if meta.get("err"):
-            return  # Пропускаем failed транзакции
-        
-        # Ищем какой whale сделал транзакцию
-        account_keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
-        whale_wallet = None
-        whale_info = None
-        
-        for acc in account_keys:
-            pubkey = acc.get("pubkey") if isinstance(acc, dict) else acc
-            if pubkey in self.whale_wallets:
-                whale_wallet = pubkey
-                whale_info = self.whale_wallets[pubkey]
-                break
-        
-        if not whale_wallet:
-            return
-        
-        # Анализируем баланс изменения
-        pre_balances = meta.get("preBalances", [])
-        post_balances = meta.get("postBalances", [])
-        pre_token_balances = meta.get("preTokenBalances", [])
-        post_token_balances = meta.get("postTokenBalances", [])
-        
-        # Находим индекс whale кошелька
-        whale_index = None
-        for i, acc in enumerate(account_keys):
-            pubkey = acc.get("pubkey") if isinstance(acc, dict) else acc
-            if pubkey == whale_wallet:
-                whale_index = i
-                break
-        
-        if whale_index is None:
-            return
-        
-        # Считаем потраченный SOL
-        sol_spent = 0
-        if whale_index < len(pre_balances) and whale_index < len(post_balances):
-            sol_diff = (pre_balances[whale_index] - post_balances[whale_index]) / 1e9
-            if sol_diff > 0:
-                sol_spent = sol_diff
-        
-        # Находим полученный токен
-        token_mint = None
-        token_received = 0
-        
-        for post_bal in post_token_balances:
-            if post_bal.get("owner") == whale_wallet:
-                mint = post_bal.get("mint")
-                post_amount = float(post_bal.get("uiTokenAmount", {}).get("uiAmount", 0) or 0)
+    async def _process_helius_transactions(self, wallet: str, transactions: list):
+        """Обработать транзакции от Helius."""
+        for tx in transactions:
+            try:
+                tx_sig = tx.get("signature", "")
                 
-                # Проверяем был ли токен до транзакции
-                pre_amount = 0
-                for pre_bal in pre_token_balances:
-                    if pre_bal.get("owner") == whale_wallet and pre_bal.get("mint") == mint:
-                        pre_amount = float(pre_bal.get("uiTokenAmount", {}).get("uiAmount", 0) or 0)
-                        break
+                # Пропускаем уже обработанные
+                if tx_sig in self._processed_txs:
+                    continue
                 
-                received = post_amount - pre_amount
-                if received > 0 and received > token_received:
-                    token_mint = mint
-                    token_received = received
-        
-        # Проверяем минимальную сумму покупки
-        if sol_spent >= self.min_buy_amount and token_mint:
-            whale_buy = WhaleBuy(
-                whale_wallet=whale_wallet,
-                token_mint=token_mint,
-                token_symbol="Fungible",  # Helius не даёт символ в WS
-                amount_sol=sol_spent,
-                timestamp=datetime.utcnow(),
-                tx_signature=tx_sig,
-                whale_label=whale_info.get("label", "whale"),
-            )
-            
-            logger.warning(
-                f"🐋 WHALE BUY DETECTED: {whale_buy.whale_label} ({whale_wallet[:8]}...) "
-                f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL"
-            )
-            
-            if self.on_whale_buy:
-                await self.on_whale_buy(whale_buy)
+                # Проверить что это SWAP
+                if tx.get("type") != "SWAP":
+                    continue
+                
+                # Извлечь информацию
+                token_transfers = tx.get("tokenTransfers", [])
+                native_transfers = tx.get("nativeTransfers", [])
+                
+                sol_spent = 0
+                token_mint = None
+                
+                for transfer in native_transfers:
+                    if transfer.get("fromUserAccount") == wallet:
+                        sol_spent += transfer.get("amount", 0) / 1e9
+                
+                for transfer in token_transfers:
+                    if transfer.get("toUserAccount") == wallet:
+                        token_mint = transfer.get("mint")
+                
+                if sol_spent >= self.min_buy_amount and token_mint:
+                    self._processed_txs.add(tx_sig)
+                    
+                    # Ограничиваем кэш
+                    if len(self._processed_txs) > 1000:
+                        self._processed_txs = set(list(self._processed_txs)[-500:])
+                    
+                    whale_buy = WhaleBuy(
+                        whale_wallet=wallet,
+                        token_mint=token_mint,
+                        token_symbol="Fungible",
+                        amount_sol=sol_spent,
+                        timestamp=datetime.utcnow(),
+                        tx_signature=tx_sig,
+                        whale_label=self.whale_wallets[wallet].get("label", "whale"),
+                    )
+                    
+                    logger.warning(
+                        f"🐋 WHALE BUY DETECTED: {whale_buy.whale_label} ({wallet[:8]}...) "
+                        f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL"
+                    )
+                    
+                    if self.on_whale_buy:
+                        await self.on_whale_buy(whale_buy)
+                        
+            except Exception as e:
+                logger.debug(f"Error processing tx: {e}")
 
     async def check_wallet_activity(self, wallet: str) -> list[WhaleBuy]:
         """Проверить последнюю активность кошелька (для ручной проверки)."""
