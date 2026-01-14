@@ -195,6 +195,10 @@ async def start_bot(config_path: str):
             ),
             whale_min_buy_amount=cfg.get("whale_copy", {}).get("min_buy_amount", 0.5),
             helius_api_key=cfg.get("whale_copy", {}).get("helius_api_key"),
+            # Dev reputation check configuration
+            enable_dev_check=cfg.get("dev_check", {}).get("enabled", False),
+            dev_max_tokens_created=cfg.get("dev_check", {}).get("max_tokens_created", 50),
+            dev_min_account_age_days=cfg.get("dev_check", {}).get("min_account_age_days", 1),
         )
 
         await trader.start()

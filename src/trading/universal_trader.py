@@ -25,6 +25,7 @@ from monitoring.listener_factory import ListenerFactory
 from monitoring.pump_pattern_detector import PumpPatternDetector
 from monitoring.token_scorer import TokenScorer
 from monitoring.whale_tracker import WhaleTracker, WhaleBuy
+from monitoring.dev_reputation import DevReputationChecker
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
@@ -108,6 +109,10 @@ class UniversalTrader:
         whale_wallets_file: str = "smart_money_wallets.json",
         whale_min_buy_amount: float = 0.5,
         helius_api_key: str | None = None,
+        # Dev reputation settings
+        enable_dev_check: bool = False,
+        dev_max_tokens_created: int = 50,
+        dev_min_account_age_days: int = 1,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -193,6 +198,21 @@ class UniversalTrader:
             logger.info(
                 f"Whale copy trading enabled: wallets_file={whale_wallets_file}, "
                 f"min_buy={whale_min_buy_amount} SOL"
+            )
+
+        # Dev reputation checker setup
+        self.enable_dev_check = enable_dev_check
+        self.dev_checker: DevReputationChecker | None = None
+
+        if enable_dev_check:
+            self.dev_checker = DevReputationChecker(
+                helius_api_key=helius_api_key,
+                max_tokens_created=dev_max_tokens_created,
+                min_account_age_days=dev_min_account_age_days,
+            )
+            logger.info(
+                f"Dev reputation check enabled: max_tokens={dev_max_tokens_created}, "
+                f"min_age={dev_min_account_age_days} days"
             )
 
         # Get platform-specific implementations
@@ -583,6 +603,13 @@ class UniversalTrader:
                     self.token_scorer.should_buy(mint_str, token_info.symbol)
                 )
 
+            # Dev reputation check (runs in parallel)
+            dev_check_task = None
+            if self.dev_checker and token_info.creator:
+                dev_check_task = asyncio.create_task(
+                    self.dev_checker.check_dev(str(token_info.creator))
+                )
+
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
             if not self.extreme_fast_mode:
                 await self._save_token_info(token_info)
@@ -605,6 +632,24 @@ class UniversalTrader:
                         return
                 except Exception as e:
                     logger.warning(f"Scoring failed, proceeding anyway: {e}")
+
+            # Check dev reputation result if enabled
+            if dev_check_task:
+                try:
+                    dev_result = await dev_check_task
+                    logger.info(
+                        f"👤 Dev check for {token_info.symbol}: "
+                        f"tokens={dev_result.get('tokens_created', '?')}, "
+                        f"risk={dev_result.get('risk_score', '?')}, "
+                        f"safe={dev_result.get('is_safe', True)}"
+                    )
+                    if not dev_result.get("is_safe", True):
+                        logger.warning(
+                            f"⚠️ Skipping {token_info.symbol} - {dev_result.get('reason', 'bad dev')}"
+                        )
+                        return
+                except Exception as e:
+                    logger.warning(f"Dev check failed, proceeding anyway: {e}")
 
             # Buy token
             logger.info(
