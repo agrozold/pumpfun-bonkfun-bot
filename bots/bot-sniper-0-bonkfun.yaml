@@ -28,7 +28,7 @@ filters:
   match_string: null
   bro_address: null
   listener_type: pumpportal
-  max_token_age: 15
+  max_token_age: 0  # Без ограничения - покупаем по паттернам
   marry_mode: false
   yolo_mode: true
   monitored_pools:
@@ -50,7 +50,7 @@ pattern_detection:
   holder_growth_threshold: 0.5
   min_whale_buys: 2
   min_patterns_to_buy: 1
-  pattern_only_mode: false
+  pattern_only_mode: true  # ТОЛЬКО по паттернам!
 
 # Token Scoring
 scoring:
