@@ -7,6 +7,7 @@ filters:
   listener_type: pumpportal
   match_string: null
   max_token_age: 15
+  yolo_mode: true
 name: bot-sniper-pump
 platform: pump_fun
 priority_fees:
