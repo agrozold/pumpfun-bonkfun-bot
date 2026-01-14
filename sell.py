@@ -152,18 +152,34 @@ async def get_curve_state(client: AsyncClient, curve: Pubkey) -> BondingCurveSta
         return None
 
 
+def _is_rate_limit_error(e: Exception) -> bool:
+    """Check if exception is a rate limit error (429), including wrapped exceptions."""
+    # Check the exception chain
+    current = e
+    while current is not None:
+        error_str = str(current).lower()
+        if "429" in error_str or "too many requests" in error_str or "rate limit" in error_str:
+            return True
+        # Check type name for HTTPStatusError
+        if "httpstatuserror" in type(current).__name__.lower():
+            if hasattr(current, 'response') and hasattr(current.response, 'status_code'):
+                if current.response.status_code == 429:
+                    return True
+        # Move to next in chain
+        next_exc = current.__cause__ or current.__context__
+        if next_exc is current:
+            break
+        current = next_exc
+    return False
+
+
 async def retry_rpc_call(func, *args, max_retries=MAX_RETRIES, **kwargs):
     """Retry RPC call with exponential backoff on rate limit errors."""
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
-            # Check both the exception and its cause for rate limit errors
-            error_str = str(e).lower()
-            cause_str = str(e.__cause__).lower() if e.__cause__ else ""
-            full_error = error_str + " " + cause_str
-            
-            if "429" in full_error or "too many requests" in full_error or "rate limit" in full_error:
+            if _is_rate_limit_error(e):
                 wait_time = (2 ** attempt) + random.uniform(0, 1)
                 print(f"⏳ Rate limited, waiting {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...")
                 await asyncio.sleep(wait_time)

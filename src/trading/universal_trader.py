@@ -344,14 +344,15 @@ class UniversalTrader:
         # Создаём TokenInfo для покупки
         try:
             from interfaces.core import TokenInfo
-            from platforms.pumpfun.addresses import SystemAddresses, PumpFunAddresses
+            from platforms.pumpfun.address_provider import PumpFunAddresses
+            from core.pubkeys import SystemAddresses
             
             mint = Pubkey.from_string(mint_str)
             
             # Derive bonding curve from mint (PDA)
             bonding_curve, _ = Pubkey.find_program_address(
                 [b"bonding-curve", bytes(mint)],
-                PumpFunAddresses.PUMP_PROGRAM
+                PumpFunAddresses.PROGRAM
             )
             
             # Проверяем что токен ещё на bonding curve (не мигрировал)
