@@ -136,18 +136,22 @@ class DevReputationChecker:
         risk_score = self._calculate_risk_score(tokens_created, account_age_days)
 
         # Определяем безопасность
+        # ВАЖНО: Новые аккаунты (0 дней, 0 токенов) = ХОРОШО, возможно гем!
+        # Много токенов создано = ПЛОХО, серийный скамер
         is_safe = True
         reason = "Dev looks OK"
 
         if tokens_created > self.max_tokens_created:
             is_safe = False
             reason = f"Serial token creator: {tokens_created} tokens"
-        elif account_age_days < self.min_account_age_days:
-            is_safe = False
-            reason = f"New account: {account_age_days} days old"
-        elif risk_score > 70:
+        elif risk_score > 80:
+            # Только очень высокий риск (много токенов за короткое время)
             is_safe = False
             reason = f"High risk score: {risk_score}"
+        elif tokens_created == 0 and account_age_days < 1:
+            # Новый аккаунт с первым токеном = потенциальный гем!
+            is_safe = True
+            reason = "Fresh dev, first token - potential gem!"
 
         result = {
             "is_safe": is_safe,
@@ -165,38 +169,37 @@ class DevReputationChecker:
         return result
 
     def _calculate_risk_score(self, tokens_created: int, account_age_days: int) -> int:
-        """Вычислить оценку риска 0-100."""
+        """Вычислить оценку риска 0-100.
+        
+        Новый аккаунт с первым токеном = низкий риск (потенциальный гем).
+        Много токенов = высокий риск (серийный скамер).
+        """
         score = 0
 
-        # Много токенов = высокий риск
+        # Много токенов = высокий риск (серийный скамер)
         if tokens_created > 100:
-            score += 50
+            score += 60
         elif tokens_created > 50:
-            score += 40
+            score += 50
         elif tokens_created > 20:
-            score += 30
+            score += 40
         elif tokens_created > 10:
-            score += 20
-        elif tokens_created > 5:
-            score += 10
-
-        # Новый аккаунт = риск
-        if account_age_days < 1:
             score += 30
-        elif account_age_days < 7:
+        elif tokens_created > 5:
             score += 20
-        elif account_age_days < 30:
+        elif tokens_created > 2:
             score += 10
 
-        # Много токенов за короткое время = очень плохо
-        if account_age_days > 0:
+        # Новый аккаунт с первым токеном = НЕ штрафуем (потенциальный гем)
+        # Штрафуем только если много токенов за короткое время
+        if account_age_days > 0 and tokens_created > 0:
             tokens_per_day = tokens_created / account_age_days
             if tokens_per_day > 10:
-                score += 30
+                score += 40  # Очень много токенов в день = скамер
             elif tokens_per_day > 5:
+                score += 30
+            elif tokens_per_day > 2:
                 score += 20
-            elif tokens_per_day > 1:
-                score += 10
 
         return min(score, 100)
 
