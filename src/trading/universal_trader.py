@@ -113,11 +113,14 @@ class UniversalTrader:
         enable_dev_check: bool = False,
         dev_max_tokens_created: int = 50,
         dev_min_account_age_days: int = 1,
+        # Balance protection
+        min_sol_balance: float = 0.03,
     ):
         """Initialize the universal trader."""
         # Core components
         self.solana_client = SolanaClient(rpc_endpoint)
         self.wallet = Wallet(private_key)
+        self.min_sol_balance = min_sol_balance
         self.priority_fee_manager = PriorityFeeManager(
             client=self.solana_client,
             enable_dynamic_fee=enable_dynamic_priority_fee,
@@ -664,6 +667,11 @@ class UniversalTrader:
                 except Exception as e:
                     logger.warning(f"Dev check failed, proceeding anyway: {e}")
 
+            # Check wallet balance before buying
+            balance_ok = await self._check_balance_before_buy()
+            if not balance_ok:
+                return
+
             # Buy token
             if skip_checks:
                 logger.info(
@@ -689,6 +697,36 @@ class UniversalTrader:
 
         except Exception:
             logger.exception(f"Error handling token {token_info.symbol}")
+
+    async def _check_balance_before_buy(self) -> bool:
+        """Check if wallet has enough SOL to continue trading.
+        
+        Returns:
+            True if balance is sufficient, False if bot should stop buying.
+        """
+        try:
+            balance_resp = await self.solana_client.client.get_balance(
+                self.wallet.pubkey
+            )
+            balance_sol = balance_resp.value / 1_000_000_000  # LAMPORTS_PER_SOL
+            
+            # Check if we have enough for buy + reserve for sells
+            required = self.buy_amount + self.min_sol_balance
+            
+            if balance_sol < required:
+                logger.warning(
+                    f"💰 LOW BALANCE: {balance_sol:.4f} SOL < {required:.4f} SOL required "
+                    f"(buy: {self.buy_amount}, reserve: {self.min_sol_balance})"
+                )
+                logger.warning("⛔ Skipping buy to preserve SOL for selling positions")
+                return False
+            
+            logger.debug(f"Balance OK: {balance_sol:.4f} SOL")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Failed to check balance: {e} - proceeding anyway")
+            return True  # Don't block on balance check errors
 
     async def _handle_successful_buy(
         self, token_info: TokenInfo, buy_result: TradeResult

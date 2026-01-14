@@ -16,6 +16,7 @@ trade:
   take_profit_percentage: 1.0
   stop_loss_percentage: 0.7
   max_hold_time: 86400  # 24 hours
+  min_sol_balance: 0.03  # Stop buying if balance drops below this (reserve for sells)
   price_check_interval: 2
 priority_fees:
   enable_dynamic: false
