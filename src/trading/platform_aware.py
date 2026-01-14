@@ -359,6 +359,19 @@ class PlatformAwareSeller(Trader):
                 f"{min_sol_output / LAMPORTS_PER_SOL:.10f} SOL ({min_sol_output} lamports)"
             )
 
+            # Validate required token_info fields for sell
+            if token_info.platform == Platform.PUMP_FUN:
+                if not token_info.bonding_curve:
+                    logger.error(
+                        f"Cannot sell {token_info.symbol}: missing bonding_curve address. "
+                        "Position data may be corrupted or token already sold."
+                    )
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        error_message="Missing bonding_curve - position data corrupted",
+                    )
+
             # Build sell instructions using platform-specific builder
             instructions = await instruction_builder.build_sell_instruction(
                 token_info,
