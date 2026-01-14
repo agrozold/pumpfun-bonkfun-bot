@@ -156,11 +156,17 @@ class FallbackSeller:
             logger.info(f"📍 Parsing market data ({len(data)} bytes)...")
             try:
                 market_data = self._parse_market_data(data)
+                logger.info(f"📍 Market data parsed: base_mint={market_data.get('base_mint', 'N/A')[:8]}...")
             except Exception as e:
                 logger.error(f"📍 Failed to parse market data: {e}")
                 return False, None, f"Failed to parse market data: {e}"
             
-            token_program_id = await self._get_token_program_id(mint)
+            try:
+                token_program_id = await self._get_token_program_id(mint)
+                logger.info(f"📍 Token program: {token_program_id}")
+            except Exception as e:
+                logger.error(f"📍 Failed to get token program: {e}")
+                return False, None, f"Failed to get token program: {e}"
             
             # Get user token accounts
             user_base_ata = get_associated_token_address(
@@ -175,11 +181,16 @@ class FallbackSeller:
             pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
             
             # Calculate price and token amount
-            base_resp = await rpc_client.get_token_account_balance(pool_base_ata)
-            quote_resp = await rpc_client.get_token_account_balance(pool_quote_ata)
-            base_amount = float(base_resp.value.ui_amount)
-            quote_amount = float(quote_resp.value.ui_amount)
-            price = quote_amount / base_amount
+            try:
+                base_resp = await rpc_client.get_token_account_balance(pool_base_ata)
+                quote_resp = await rpc_client.get_token_account_balance(pool_quote_ata)
+                base_amount = float(base_resp.value.ui_amount)
+                quote_amount = float(quote_resp.value.ui_amount)
+                price = quote_amount / base_amount
+                logger.info(f"📍 Pool price: {price:.10f} SOL per token")
+            except Exception as e:
+                logger.error(f"📍 Failed to get pool balances: {e}")
+                return False, None, f"Failed to get pool balances: {e}"
             
             # Calculate expected tokens
             expected_tokens = sol_amount / price
