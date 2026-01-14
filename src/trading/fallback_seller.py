@@ -125,14 +125,31 @@ class FallbackSeller:
             
             # Get market data
             logger.info(f"📍 Fetching market account data...")
-            market_response = await rpc_client.get_account_info(market, encoding="base64")
+            try:
+                market_response = await rpc_client.get_account_info(market, encoding="base64")
+            except Exception as e:
+                logger.error(f"📍 get_account_info failed for market {market}: {e}")
+                return False, None, f"Failed to fetch market data: {e}"
+            
             if not market_response.value:
                 logger.error(f"📍 Market account {market} not found on chain")
                 return False, None, f"Market account {market} not found on chain"
             
             data = market_response.value.data
+            # Handle both bytes and tuple (base64 encoded)
+            if isinstance(data, tuple):
+                import base64
+                data = base64.b64decode(data[0])
+            elif isinstance(data, str):
+                import base64
+                data = base64.b64decode(data)
+            
             logger.info(f"📍 Parsing market data ({len(data)} bytes)...")
-            market_data = self._parse_market_data(data)
+            try:
+                market_data = self._parse_market_data(data)
+            except Exception as e:
+                logger.error(f"📍 Failed to parse market data: {e}")
+                return False, None, f"Failed to parse market data: {e}"
             
             token_program_id = await self._get_token_program_id(mint)
             
