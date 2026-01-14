@@ -311,17 +311,46 @@ class UniversalTrader:
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
         self.pump_signals: dict[str, list] = {}  # mint -> detected patterns
+        self.pending_tokens: dict[str, TokenInfo] = {}  # mint -> TokenInfo for pattern-only mode
         self.active_positions: list[Position] = []  # Active positions for persistence
 
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
     ):
-        """Callback when pump pattern is detected."""
+        """Callback when pump pattern is detected - trigger buy if in pattern_only_mode."""
         logger.warning(
             f"🚀 PUMP SIGNAL: {symbol} ({mint[:8]}...) - "
             f"{len(patterns)} patterns, strength: {strength:.2f}"
         )
         self.pump_signals[mint] = patterns
+        
+        # Cleanup old pending tokens (older than 5 minutes)
+        self._cleanup_pending_tokens()
+        
+        # If pattern_only_mode and we have pending token_info - buy now!
+        if self.pattern_only_mode and mint in self.pending_tokens:
+            token_info = self.pending_tokens.pop(mint)
+            logger.warning(f"🚀 BUYING on pump signal: {symbol}")
+            # Process token with signal (skip_checks=False to still do dev check)
+            asyncio.create_task(self._handle_token(token_info, skip_checks=False))
+
+    def _cleanup_pending_tokens(self):
+        """Remove pending tokens older than 5 minutes."""
+        import time
+        now = time.time()
+        max_age = 300  # 5 minutes
+        
+        to_remove = []
+        for mint_str in self.pending_tokens:
+            if mint_str in self.token_timestamps:
+                age = now - self.token_timestamps[mint_str]
+                if age > max_age:
+                    to_remove.append(mint_str)
+        
+        for mint_str in to_remove:
+            self.pending_tokens.pop(mint_str, None)
+            if to_remove:
+                logger.debug(f"Cleaned up {len(to_remove)} old pending tokens")
 
     def _has_pump_signal(self, mint: str) -> bool:
         """Check if token has pump signal."""
@@ -703,6 +732,8 @@ class UniversalTrader:
                 logger.info(
                     f"Pattern only mode: skipping {token_info.symbol} - no pump signal detected"
                 )
+                # Store token_info for later if signal arrives
+                self.pending_tokens[mint_str] = token_info
                 return
 
             # Token scoring check (runs in parallel with wait time) - skip if whale copy
