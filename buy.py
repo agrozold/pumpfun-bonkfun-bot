@@ -503,6 +503,11 @@ async def buy_token(
     """Buy tokens - автоматически выбирает Pump.fun или PumpSwap."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
     rpc_endpoint = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    # Fallback RPC для ручных команд (Alchemy)
+    fallback_rpc = os.environ.get(
+        "SOLANA_RPC_FALLBACK",
+        "https://solana-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY"
+    )
     
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
@@ -513,18 +518,28 @@ async def buy_token(
 
     payer = Keypair.from_bytes(base58.b58decode(private_key))
     
-    async with AsyncClient(rpc_endpoint) as client:
-        # Check bonding curve state
-        bonding_curve, _ = get_bonding_curve_address(mint)
-        curve_state = await get_curve_state(client, bonding_curve)
-        
-        # Decide which method to use
-        if curve_state is None or curve_state.complete:
-            # Token migrated to Raydium - use PumpSwap
-            return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
-        else:
-            # Token still on bonding curve - use Pump.fun
-            return await buy_via_pumpfun(client, payer, mint, curve_state, amount_sol, slippage, priority_fee, max_retries)
+    # Try primary RPC first, fallback to Alchemy on rate limit
+    for attempt, endpoint in enumerate([rpc_endpoint, fallback_rpc]):
+        try:
+            async with AsyncClient(endpoint) as client:
+                # Check bonding curve state
+                bonding_curve, _ = get_bonding_curve_address(mint)
+                curve_state = await get_curve_state(client, bonding_curve)
+                
+                # Decide which method to use
+                if curve_state is None or curve_state.complete:
+                    # Token migrated to Raydium - use PumpSwap
+                    return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
+                else:
+                    # Token still on bonding curve - use Pump.fun
+                    return await buy_via_pumpfun(client, payer, mint, curve_state, amount_sol, slippage, priority_fee, max_retries)
+        except Exception as e:
+            if "429" in str(e) and attempt == 0:
+                print(f"⚠️ Primary RPC rate limited, switching to fallback...")
+                continue
+            raise
+    
+    return False
 
 
 def main():
