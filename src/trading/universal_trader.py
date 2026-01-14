@@ -322,8 +322,8 @@ class UniversalTrader:
     async def _on_whale_buy(self, whale_buy: WhaleBuy):
         """Callback when whale buys a token - copy the trade.
         
-        Whale copy trades bypass age checks, dev checks, and scoring
-        because we trust the whale's judgment.
+        Whale copy trades bypass scoring and pattern checks,
+        but still check for serial scammers (dev check).
         """
         logger.warning(
             f"🐋 WHALE COPY: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
@@ -377,6 +377,26 @@ class UniversalTrader:
                 logger.warning(f"🐋 Cannot get curve state for {whale_buy.token_symbol}: {e} - skipping")
                 return
             
+            # DEV CHECK - даже для whale copy проверяем на серийных скамеров!
+            if self.dev_checker and creator:
+                try:
+                    creator_str = str(creator)
+                    dev_result = await self.dev_checker.check_creator(creator_str)
+                    logger.info(
+                        f"🐋 Dev check for {whale_buy.token_symbol}: "
+                        f"tokens={dev_result.tokens_created}, risk={dev_result.risk_score}, "
+                        f"safe={dev_result.is_safe}"
+                    )
+                    if not dev_result.is_safe:
+                        logger.warning(
+                            f"🐋 Skipping whale copy {whale_buy.token_symbol} - "
+                            f"Serial token creator: {dev_result.tokens_created} tokens"
+                        )
+                        return
+                except Exception as e:
+                    logger.warning(f"🐋 Dev check failed for {whale_buy.token_symbol}: {e}")
+                    # Продолжаем если dev check упал - лучше купить чем пропустить
+            
             # Для pump.fun используем Token2022 по умолчанию
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
             
@@ -415,7 +435,7 @@ class UniversalTrader:
             # Помечаем как обработанный
             self.processed_tokens.add(mint_str)
             
-            # Покупаем! skip_checks=True обходит dev check и scoring
+            # Покупаем! skip_checks=True обходит scoring и pattern check, но dev check уже сделан выше
             await self._handle_token(token_info, skip_checks=True)
             
         except Exception as e:
