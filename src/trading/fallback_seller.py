@@ -94,6 +94,9 @@ class FallbackSeller:
             sync_native,
         )
         
+        logger.info(f"🪐 PumpSwap BUY starting for {symbol} ({mint})")
+        logger.info(f"🪐 Amount: {sol_amount} SOL, market_address provided: {market_address is not None}")
+        
         try:
             rpc_client = await self.client.get_client()
             
@@ -103,23 +106,32 @@ class FallbackSeller:
                 logger.info(f"📍 Using provided PumpSwap market: {market}")
             else:
                 # Find market via get_program_accounts (expensive!)
+                logger.info(f"📍 Looking up PumpSwap market via get_program_accounts...")
                 filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
-                response = await rpc_client.get_program_accounts(
-                    PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters
-                )
+                try:
+                    response = await rpc_client.get_program_accounts(
+                        PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters
+                    )
+                except Exception as e:
+                    logger.error(f"📍 get_program_accounts failed: {e}")
+                    return False, None, f"RPC error looking up market: {e}"
                 
                 if not response.value:
-                    return False, None, "PumpSwap market not found"
+                    logger.warning(f"📍 No PumpSwap market found for {symbol}")
+                    return False, None, f"PumpSwap market not found for {mint}"
                 
                 market = response.value[0].pubkey
                 logger.info(f"📍 Found PumpSwap market: {market}")
             
             # Get market data
+            logger.info(f"📍 Fetching market account data...")
             market_response = await rpc_client.get_account_info(market, encoding="base64")
             if not market_response.value:
+                logger.error(f"📍 Market account {market} not found on chain")
                 return False, None, f"Market account {market} not found on chain"
             
             data = market_response.value.data
+            logger.info(f"📍 Parsing market data ({len(data)} bytes)...")
             market_data = self._parse_market_data(data)
             
             token_program_id = await self._get_token_program_id(mint)

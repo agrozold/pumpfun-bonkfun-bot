@@ -578,6 +578,9 @@ class UniversalTrader:
             if is_migrated:
                 from trading.fallback_seller import FallbackSeller
                 
+                logger.info(f"🔥 {token.symbol} is migrated, attempting PumpSwap buy...")
+                logger.info(f"🔥 DexScreener info: dex_id={token.dex_id}, pair_address={token.pair_address}")
+                
                 fallback = FallbackSeller(
                     client=self.solana_client,
                     wallet=self.wallet,
@@ -586,18 +589,18 @@ class UniversalTrader:
                     max_retries=self.max_retries,
                 )
                 
-                # Use pair_address from DexScreener if available AND it's PumpSwap
+                # Use pair_address from DexScreener if available
+                # PumpSwap pools can show as "pumpswap", "raydium", or other dex_id
                 market_address = None
-                if token.pair_address and token.dex_id:
-                    dex_lower = token.dex_id.lower()
-                    if dex_lower in ("pumpswap", "pump_amm", "pump"):
-                        try:
-                            market_address = Pubkey.from_string(token.pair_address)
-                            logger.info(f"🔥 Using DexScreener PumpSwap pair: {token.pair_address}")
-                        except Exception:
-                            pass
-                    else:
-                        logger.info(f"🔥 DEX is {token.dex_id}, not PumpSwap - will lookup market")
+                if token.pair_address:
+                    try:
+                        market_address = Pubkey.from_string(token.pair_address)
+                        logger.info(f"🔥 Using DexScreener pair as market: {token.pair_address}")
+                    except Exception as e:
+                        logger.warning(f"🔥 Invalid pair_address: {e}")
+                
+                if not market_address:
+                    logger.info(f"🔥 No pair_address, will lookup PumpSwap market via RPC")
                 
                 success, sig, error = await fallback.buy_via_pumpswap(
                     mint=mint,
@@ -622,7 +625,7 @@ class UniversalTrader:
                     self.active_positions.append(position)
                     save_positions(self.active_positions)
                 else:
-                    logger.error(f"❌ TRENDING PumpSwap BUY failed: {token.symbol} - {error}")
+                    logger.error(f"❌ TRENDING PumpSwap BUY failed: {token.symbol} - {error or 'Unknown error'}")
                 return
             
             # Not migrated - use normal flow
