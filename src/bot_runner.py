@@ -206,6 +206,13 @@ async def start_bot(config_path: str):
             enable_dev_check=cfg.get("dev_check", {}).get("enabled", False),
             dev_max_tokens_created=cfg.get("dev_check", {}).get("max_tokens_created", 50),
             dev_min_account_age_days=cfg.get("dev_check", {}).get("min_account_age_days", 1),
+            # Trending scanner configuration
+            enable_trending_scanner=cfg.get("trending_scanner", {}).get("enabled", False),
+            trending_min_volume_24h=cfg.get("trending_scanner", {}).get("min_volume_24h", 50000),
+            trending_min_market_cap=cfg.get("trending_scanner", {}).get("min_market_cap", 10000),
+            trending_max_market_cap=cfg.get("trending_scanner", {}).get("max_market_cap", 5000000),
+            trending_min_price_change_1h=cfg.get("trending_scanner", {}).get("min_price_change_1h", 20),
+            trending_scan_interval=cfg.get("trending_scanner", {}).get("scan_interval", 30),
         )
 
         await trader.start()
