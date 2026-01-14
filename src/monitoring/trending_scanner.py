@@ -377,17 +377,21 @@ class TrendingScanner:
         if token.price_change_5m >= self.min_price_change_5m:
             score += 35
             reasons.append(f"🚀 Price +{token.price_change_5m:.1f}% in 5min!")
+        elif token.price_change_1h >= self.min_price_change_1h:
+            # Или хороший рост за час
+            score += 25
+            reasons.append(f"📈 Price +{token.price_change_1h:.1f}% in 1h")
         else:
-            # Без резкого роста за 5м - не покупаем
+            # Без роста - не покупаем
             return 0, []
         
-        # 2. Buy pressure за 5 минут (РЕЗКИЕ ПОКУПКИ)
+        # 2. Buy pressure за 5 минут (бонус, не обязательно)
         if token.buy_pressure_5m >= self.min_buy_pressure:
             score += 30
             reasons.append(f"💪 Buy pressure {token.buy_pressure_5m*100:.0f}% (5m)")
-        else:
-            # Без давления покупок - не покупаем
-            return 0, []
+        elif token.buy_pressure_5m >= 0.5:
+            score += 15
+            reasons.append(f"👍 Buy pressure {token.buy_pressure_5m*100:.0f}% (5m)")
         
         # 3. Trade velocity (активность)
         if token.trade_velocity >= self.min_trade_velocity:
