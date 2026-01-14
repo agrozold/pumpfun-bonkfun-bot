@@ -39,3 +39,19 @@ wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
 #   min_whale_buys: 2              # Min whale buys in 30s for cluster signal
 #   min_patterns_to_buy: 2         # Min patterns needed to trigger buy
 #   pattern_only_mode: false       # If true, only buy when patterns detected
+
+# Token Scoring (optional - filters tokens by Dexscreener metrics)
+# scoring:
+#   enabled: true
+#   min_score: 70                  # Minimum score to buy (0-100)
+#   volume_weight: 30              # Weight for volume spike score
+#   buy_pressure_weight: 30        # Weight for buy/sell ratio score
+#   momentum_weight: 25            # Weight for price momentum score
+#   liquidity_weight: 15           # Weight for liquidity score
+
+# Whale Copy Trading (optional - copy trades from smart money wallets)
+# whale_copy:
+#   enabled: true
+#   wallets_file: "smart_money_wallets.json"
+#   min_buy_amount: 0.5            # Only copy buys > 0.5 SOL
+#   helius_api_key: "${HELIUS_API_KEY}"  # Optional, for faster tracking

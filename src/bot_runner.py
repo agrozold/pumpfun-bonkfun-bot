@@ -179,6 +179,22 @@ async def start_bot(config_path: str):
             pattern_only_mode=cfg.get("pattern_detection", {}).get(
                 "pattern_only_mode", False
             ),
+            # Token scoring configuration
+            enable_scoring=cfg.get("scoring", {}).get("enabled", False),
+            scoring_min_score=cfg.get("scoring", {}).get("min_score", 70),
+            scoring_volume_weight=cfg.get("scoring", {}).get("volume_weight", 30),
+            scoring_buy_pressure_weight=cfg.get("scoring", {}).get(
+                "buy_pressure_weight", 30
+            ),
+            scoring_momentum_weight=cfg.get("scoring", {}).get("momentum_weight", 25),
+            scoring_liquidity_weight=cfg.get("scoring", {}).get("liquidity_weight", 15),
+            # Whale copy trading configuration
+            enable_whale_copy=cfg.get("whale_copy", {}).get("enabled", False),
+            whale_wallets_file=cfg.get("whale_copy", {}).get(
+                "wallets_file", "smart_money_wallets.json"
+            ),
+            whale_min_buy_amount=cfg.get("whale_copy", {}).get("min_buy_amount", 0.5),
+            helius_api_key=cfg.get("whale_copy", {}).get("helius_api_key"),
         )
 
         await trader.start()

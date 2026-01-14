@@ -23,6 +23,8 @@ from core.wallet import Wallet
 from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
 from monitoring.pump_pattern_detector import PumpPatternDetector
+from monitoring.token_scorer import TokenScorer
+from monitoring.whale_tracker import WhaleTracker, WhaleBuy
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
@@ -94,6 +96,18 @@ class UniversalTrader:
         pattern_min_whale_buys: int = 2,
         pattern_min_patterns_to_buy: int = 2,
         pattern_only_mode: bool = False,  # Only buy when patterns detected
+        # Token scoring settings
+        enable_scoring: bool = False,
+        scoring_min_score: int = 70,
+        scoring_volume_weight: int = 30,
+        scoring_buy_pressure_weight: int = 30,
+        scoring_momentum_weight: int = 25,
+        scoring_liquidity_weight: int = 15,
+        # Whale copy trading settings
+        enable_whale_copy: bool = False,
+        whale_wallets_file: str = "smart_money_wallets.json",
+        whale_min_buy_amount: float = 0.5,
+        helius_api_key: str | None = None,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -144,6 +158,41 @@ class UniversalTrader:
                 f"holder_growth={pattern_holder_growth_threshold * 100}%, "
                 f"min_whale_buys={pattern_min_whale_buys}, "
                 f"pattern_only_mode={pattern_only_mode}"
+            )
+
+        # Token scoring setup
+        self.enable_scoring = enable_scoring
+        self.token_scorer: TokenScorer | None = None
+        
+        if enable_scoring:
+            self.token_scorer = TokenScorer(
+                min_score=scoring_min_score,
+                volume_weight=scoring_volume_weight,
+                buy_pressure_weight=scoring_buy_pressure_weight,
+                momentum_weight=scoring_momentum_weight,
+                liquidity_weight=scoring_liquidity_weight,
+            )
+            logger.info(
+                f"Token scoring enabled: min_score={scoring_min_score}, "
+                f"weights=[vol:{scoring_volume_weight}, bp:{scoring_buy_pressure_weight}, "
+                f"mom:{scoring_momentum_weight}, liq:{scoring_liquidity_weight}]"
+            )
+
+        # Whale copy trading setup
+        self.enable_whale_copy = enable_whale_copy
+        self.whale_tracker: WhaleTracker | None = None
+        self.helius_api_key = helius_api_key
+        
+        if enable_whale_copy:
+            self.whale_tracker = WhaleTracker(
+                wallets_file=whale_wallets_file,
+                min_buy_amount=whale_min_buy_amount,
+                helius_api_key=helius_api_key,
+            )
+            self.whale_tracker.set_callback(self._on_whale_buy)
+            logger.info(
+                f"Whale copy trading enabled: wallets_file={whale_wallets_file}, "
+                f"min_buy={whale_min_buy_amount} SOL"
             )
 
         # Get platform-specific implementations
@@ -246,6 +295,40 @@ class UniversalTrader:
         """Check if token has pump signal."""
         return mint in self.pump_signals and len(self.pump_signals[mint]) > 0
 
+    async def _on_whale_buy(self, whale_buy: WhaleBuy):
+        """Callback when whale buys a token - copy the trade."""
+        logger.warning(
+            f"🐋 WHALE COPY: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
+            f"for {whale_buy.amount_sol:.2f} SOL - COPYING!"
+        )
+        
+        # Создаём TokenInfo для покупки
+        try:
+            from interfaces.core import TokenInfo
+            
+            token_info = TokenInfo(
+                name=whale_buy.token_symbol,
+                symbol=whale_buy.token_symbol,
+                uri="",
+                mint=Pubkey.from_string(whale_buy.token_mint),
+                platform=self.platform,
+                bonding_curve=None,
+                associated_bonding_curve=None,
+                user=None,
+                creator=None,
+                creator_vault=None,
+                pool_state=None,
+                base_vault=None,
+                quote_vault=None,
+                creation_timestamp=int(whale_buy.timestamp.timestamp()),
+            )
+            
+            # Покупаем!
+            await self._handle_token(token_info)
+            
+        except Exception as e:
+            logger.exception(f"Failed to copy whale trade: {e}")
+
     async def start(self) -> None:
         """Start the trading bot and listen for new tokens."""
         logger.info(f"Starting Universal Trader for {self.platform.value}")
@@ -263,6 +346,14 @@ class UniversalTrader:
         )
         if self.enable_pattern_detection:
             logger.info(f"Pattern only mode: {self.pattern_only_mode}")
+
+        # Log scoring and whale copy status
+        logger.info(
+            f"Token scoring: {'enabled' if self.enable_scoring else 'disabled'}"
+        )
+        logger.info(
+            f"Whale copy trading: {'enabled' if self.enable_whale_copy else 'disabled'}"
+        )
 
         if self.exit_strategy == "tp_sl":
             logger.info(
@@ -304,6 +395,12 @@ class UniversalTrader:
                     "Running in continuous mode - will process tokens until interrupted"
                 )
                 processor_task = asyncio.create_task(self._process_token_queue())
+                
+                # Start whale tracker if enabled
+                whale_task = None
+                if self.whale_tracker:
+                    logger.info("Starting whale tracker in background...")
+                    whale_task = asyncio.create_task(self.whale_tracker.start())
 
                 try:
                     await self.token_listener.listen_for_tokens(
@@ -315,6 +412,10 @@ class UniversalTrader:
                     logger.exception("Token listening stopped due to error")
                 finally:
                     processor_task.cancel()
+                    if whale_task:
+                        whale_task.cancel()
+                        if self.whale_tracker:
+                            await self.whale_tracker.stop()
                     try:
                         await processor_task
                     except asyncio.CancelledError:
@@ -475,6 +576,13 @@ class UniversalTrader:
                 )
                 return
 
+            # Token scoring check (runs in parallel with wait time)
+            scoring_task = None
+            if self.token_scorer:
+                scoring_task = asyncio.create_task(
+                    self.token_scorer.should_buy(mint_str, token_info.symbol)
+                )
+
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
             if not self.extreme_fast_mode:
                 await self._save_token_info(token_info)
@@ -482,6 +590,21 @@ class UniversalTrader:
                     f"Waiting for {self.wait_time_after_creation} seconds for the pool/curve to stabilize..."
                 )
                 await asyncio.sleep(self.wait_time_after_creation)
+
+            # Check scoring result if enabled
+            if scoring_task:
+                try:
+                    should_buy, score = await scoring_task
+                    logger.info(
+                        f"📊 Token score for {token_info.symbol}: {score.total_score}/100 → {score.recommendation}"
+                    )
+                    if not should_buy:
+                        logger.info(
+                            f"Skipping {token_info.symbol} - score {score.total_score} below threshold"
+                        )
+                        return
+                except Exception as e:
+                    logger.warning(f"Scoring failed, proceeding anyway: {e}")
 
             # Buy token
             logger.info(

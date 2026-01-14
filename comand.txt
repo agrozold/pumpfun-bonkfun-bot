@@ -1,0 +1,58 @@
+Вот команды для VPS (Linux):
+
+  cd /opt/pumpfun-bonkfun-bot
+ 
+
+**Базовые команды (systemd):**
+```bash
+# Старт/стоп/статус
+sudo systemctl start pumpfun-bot
+sudo systemctl stop pumpfun-bot
+sudo systemctl restart pumpfun-bot
+sudo systemctl status pumpfun-bot
+
+# Логи
+sudo journalctl -u pumpfun-bot -f              # live логи
+sudo journalctl -u pumpfun-bot --since "1 hour ago"  # за час
+sudo journalctl -u pumpfun-bot -n 100          # последние 100 строк
+```
+
+**Проверка успешных сделок:**
+```bash
+# Успешные покупки
+grep -i "successfully bought" /opt/pumpfun-bonkfun-bot/logs/*.log
+
+# Успешные продажи  
+grep -i "successfully sold" /opt/pumpfun-bonkfun-bot/logs/*.log
+
+# Все транзакции
+grep -i "transaction confirmed" /opt/pumpfun-bonkfun-bot/logs/*.log
+
+# Из journalctl
+sudo journalctl -u pumpfun-bot | grep -i "successfully"
+```
+
+**Алиасы для ~/.bashrc:**
+```bash
+cat >> ~/.bashrc << 'EOF'
+alias bot-start='sudo systemctl start pumpfun-bot'
+alias bot-stop='sudo systemctl stop pumpfun-bot'
+alias bot-restart='sudo systemctl restart pumpfun-bot'
+alias bot-status='sudo systemctl status pumpfun-bot'
+alias bot-logs='sudo journalctl -u pumpfun-bot -f'
+alias bot-wins='sudo journalctl -u pumpfun-bot | grep -i "successfully"'
+alias bot-buys='sudo journalctl -u pumpfun-bot | grep -i "successfully bought"'
+alias bot-sells='sudo journalctl -u pumpfun-bot | grep -i "successfully sold"'
+EOF
+source ~/.bashrc
+```
+
+Теперь можешь использовать `bot-start`, `bot-logs`, `bot-wins` и т.д.
+
+
+cat >> ~/.bashrc << 'EOF'
+alias bot-count='grep -c "Successfully bought" /opt/pumpfun-bonkfun-bot/logs/*.log | awk -F: "{sum+=\$2} END {print \"Total buys:\", sum}"'
+alias bot-last='grep -h "Successfully" /opt/pumpfun-bonkfun-bot/logs/*.log | tail -10'
+alias bot-today='grep -h "Successfully" /opt/pumpfun-bonkfun-bot/logs/*.log | grep "$(date +%Y-%m-%d)"'
+EOF
+source ~/.bashrc
