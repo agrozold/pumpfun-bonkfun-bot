@@ -158,11 +158,17 @@ async def retry_rpc_call(func, *args, max_retries=MAX_RETRIES, **kwargs):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
+            # Check both the exception and its cause for rate limit errors
             error_str = str(e).lower()
-            if "429" in error_str or "too many requests" in error_str or "rate limit" in error_str:
+            cause_str = str(e.__cause__).lower() if e.__cause__ else ""
+            full_error = error_str + " " + cause_str
+            
+            if "429" in full_error or "too many requests" in full_error or "rate limit" in full_error:
                 wait_time = (2 ** attempt) + random.uniform(0, 1)
                 print(f"⏳ Rate limited, waiting {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...")
                 await asyncio.sleep(wait_time)
+                if attempt == max_retries - 1:
+                    raise
             else:
                 raise
     raise Exception(f"Max retries ({max_retries}) exceeded for RPC call")
