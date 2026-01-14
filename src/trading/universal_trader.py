@@ -711,13 +711,16 @@ class UniversalTrader:
                     self.dev_checker.check_dev(str(token_info.creator))
                 )
 
-            # Wait for pool/curve to stabilize (unless in extreme fast mode)
-            if not self.extreme_fast_mode:
+            # Wait for pool/curve to stabilize (unless in extreme fast mode or whale copy)
+            if not self.extreme_fast_mode and not skip_checks:
                 await self._save_token_info(token_info)
                 logger.info(
                     f"Waiting for {self.wait_time_after_creation} seconds for the pool/curve to stabilize..."
                 )
                 await asyncio.sleep(self.wait_time_after_creation)
+            elif skip_checks:
+                # Whale copy - покупаем СРАЗУ без ожидания
+                logger.info(f"🐋 WHALE COPY: Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} (checks skipped)...")
 
             # Check scoring result if enabled
             if scoring_task:

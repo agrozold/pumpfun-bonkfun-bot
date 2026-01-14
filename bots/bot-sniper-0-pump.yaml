@@ -13,7 +13,7 @@ platform: pump_fun
 priority_fees:
   enable_dynamic: false
   enable_fixed: true
-  fixed_amount: 300000
+  fixed_amount: 500000  # Увеличено для лучшего прохождения транзакций
 private_key: ${SOLANA_PRIVATE_KEY}
 pumpportal:
   url: wss://pumpportal.fun/api/data
