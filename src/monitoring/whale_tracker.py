@@ -2,8 +2,8 @@
 Whale Tracker - отслеживает транзакции китов в реальном времени.
 Когда кит покупает токен - отправляет сигнал на покупку.
 
-Использует стандартный Solana RPC WebSocket (logsSubscribe) для мгновенного получения.
-Helius HTTP API используется только для получения деталей транзакции.
+Использует ОДНО WebSocket соединение к Solana RPC с подпиской на логи pump.fun.
+Фильтрует транзакции по кошелькам китов локально.
 """
 
 import asyncio
@@ -19,6 +19,9 @@ from solders.pubkey import Pubkey
 
 logger = logging.getLogger(__name__)
 
+# pump.fun program ID
+PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+
 
 @dataclass
 class WhaleBuy:
@@ -33,12 +36,12 @@ class WhaleBuy:
 
 
 class WhaleTracker:
-    """Отслеживает покупки китов через Solana RPC WebSocket (logsSubscribe)."""
+    """Отслеживает покупки китов через одно WebSocket соединение к pump.fun."""
 
     def __init__(
         self,
         wallets_file: str = "smart_money_wallets.json",
-        min_buy_amount: float = 0.5,  # Минимум SOL для копирования
+        min_buy_amount: float = 0.5,
         helius_api_key: str | None = None,
         rpc_endpoint: str | None = None,
         wss_endpoint: str | None = None,
@@ -53,17 +56,12 @@ class WhaleTracker:
         self.on_whale_buy: Callable | None = None
         self.running = False
         self._session: aiohttp.ClientSession | None = None
-        self._ws_connections: list[aiohttp.ClientWebSocketResponse] = []
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._processed_txs: set[str] = set()
-        self._subscription_ids: dict[str, int] = {}  # wallet -> subscription_id
         
         self._load_wallets()
         
         logger.info(f"WhaleTracker initialized with {len(self.whale_wallets)} wallets")
-        if self.wss_endpoint:
-            logger.info(f"Using Solana RPC WebSocket: {self.wss_endpoint[:50]}...")
-        if self.helius_api_key:
-            logger.info("Helius HTTP API enabled for transaction details")
 
     def _load_wallets(self):
         """Загрузить список кошельков китов."""
@@ -103,21 +101,18 @@ class WhaleTracker:
         self.on_whale_buy = callback
 
     def _get_wss_endpoint(self) -> str | None:
-        """Получить WSS endpoint из конфига или сконструировать из RPC."""
+        """Получить WSS endpoint."""
         if self.wss_endpoint:
             return self.wss_endpoint
-        
-        # Попробовать сконструировать из HTTP endpoint
         if self.rpc_endpoint:
             if "https://" in self.rpc_endpoint:
                 return self.rpc_endpoint.replace("https://", "wss://")
             elif "http://" in self.rpc_endpoint:
                 return self.rpc_endpoint.replace("http://", "ws://")
-        
         return None
 
     async def start(self):
-        """Запустить отслеживание через Solana RPC WebSocket."""
+        """Запустить отслеживание."""
         if not self.whale_wallets:
             logger.warning("No whale wallets to track")
             return
@@ -130,55 +125,26 @@ class WhaleTracker:
         self.running = True
         self._session = aiohttp.ClientSession()
         
-        logger.info(f"Starting whale tracker for {len(self.whale_wallets)} wallets")
-        logger.info(f"Using Solana RPC WebSocket: {wss_url[:50]}...")
-        logger.info(f"Min buy amount to copy: {self.min_buy_amount} SOL")
+        logger.info(f"Starting whale tracker (single connection mode)")
+        logger.info(f"Tracking {len(self.whale_wallets)} whale wallets")
+        logger.info(f"Min buy amount: {self.min_buy_amount} SOL")
         
-        # Запускаем WebSocket подписки для каждого кошелька
-        await self._track_with_logs_subscribe(wss_url)
+        # Одно соединение, подписка на pump.fun программу
+        await self._track_pump_fun_logs(wss_url)
 
     async def stop(self):
         """Остановить отслеживание."""
         self.running = False
-        
-        # Закрыть все WebSocket соединения
-        for ws in self._ws_connections:
-            try:
-                await ws.close()
-            except Exception:
-                pass
-        self._ws_connections.clear()
-        
+        if self._ws:
+            await self._ws.close()
+            self._ws = None
         if self._session:
             await self._session.close()
             self._session = None
-        
         logger.info("Whale tracker stopped")
 
-    async def _track_with_logs_subscribe(self, wss_url: str):
-        """Отслеживание через Solana RPC logsSubscribe."""
-        wallets = list(self.whale_wallets.keys())
-        logger.info(f"Subscribing to logs for {len(wallets)} whale wallets...")
-        
-        # Создаём задачи для каждого кошелька
-        tasks = []
-        for wallet in wallets:
-            task = asyncio.create_task(
-                self._subscribe_to_wallet_logs(wss_url, wallet)
-            )
-            tasks.append(task)
-        
-        # Ждём все задачи (они будут работать бесконечно пока running=True)
-        try:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        except Exception as e:
-            logger.exception(f"Error in logs subscribe: {e}")
-
-    async def _subscribe_to_wallet_logs(self, wss_url: str, wallet: str):
-        """Подписаться на логи конкретного кошелька."""
-        whale_info = self.whale_wallets.get(wallet, {})
-        whale_label = whale_info.get("label", "whale")
-        
+    async def _track_pump_fun_logs(self, wss_url: str):
+        """Отслеживание через подписку на логи pump.fun программы."""
         while self.running:
             try:
                 async with self._session.ws_connect(
@@ -186,23 +152,22 @@ class WhaleTracker:
                     heartbeat=30,
                     timeout=aiohttp.ClientTimeout(total=None),
                 ) as ws:
-                    self._ws_connections.append(ws)
+                    self._ws = ws
                     
-                    # Подписываемся на логи с упоминанием кошелька
+                    # Подписываемся на ВСЕ логи pump.fun программы
                     subscribe_msg = {
                         "jsonrpc": "2.0",
                         "id": 1,
                         "method": "logsSubscribe",
                         "params": [
-                            {"mentions": [wallet]},
+                            {"mentions": [PUMP_FUN_PROGRAM]},
                             {"commitment": "processed"}
                         ]
                     }
                     
                     await ws.send_json(subscribe_msg)
-                    logger.info(f"Subscribed to logs for {whale_label} ({wallet[:8]}...)")
+                    logger.info(f"Subscribed to pump.fun logs (filtering {len(self.whale_wallets)} whales locally)")
                     
-                    # Слушаем сообщения
                     async for msg in ws:
                         if not self.running:
                             break
@@ -210,32 +175,27 @@ class WhaleTracker:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 data = json.loads(msg.data)
-                                await self._handle_log_notification(wallet, data)
+                                await self._handle_pump_log(data)
                             except json.JSONDecodeError:
                                 pass
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            logger.warning(f"WebSocket error for {wallet[:8]}...")
-                            break
-                        elif msg.type == aiohttp.WSMsgType.CLOSED:
-                            logger.warning(f"WebSocket closed for {wallet[:8]}...")
+                        elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                            logger.warning("WebSocket closed, reconnecting...")
                             break
                     
-                    if ws in self._ws_connections:
-                        self._ws_connections.remove(ws)
-                        
+                    self._ws = None
+                    
             except aiohttp.ClientError as e:
-                logger.warning(f"WebSocket connection error for {wallet[:8]}...: {e}")
+                logger.warning(f"WebSocket error: {e}")
             except Exception as e:
-                logger.exception(f"Error in wallet subscription {wallet[:8]}...: {e}")
+                logger.exception(f"Error in pump.fun log subscription: {e}")
             
             if self.running:
-                logger.info(f"Reconnecting to {wallet[:8]}... in 3s")
+                logger.info("Reconnecting in 3s...")
                 await asyncio.sleep(3)
 
-    async def _handle_log_notification(self, wallet: str, data: dict):
-        """Обработать уведомление о логах."""
-        # Проверяем что это уведомление (не ответ на подписку)
-        if "method" not in data or data.get("method") != "logsNotification":
+    async def _handle_pump_log(self, data: dict):
+        """Обработать лог от pump.fun."""
+        if data.get("method") != "logsNotification":
             return
         
         try:
@@ -247,206 +207,169 @@ class WhaleTracker:
             logs = value.get("logs", [])
             err = value.get("err")
             
-            # Пропускаем неудачные транзакции
-            if err:
+            if err or not signature:
                 return
             
-            # Пропускаем уже обработанные
             if signature in self._processed_txs:
                 return
             
-            # Проверяем что это pump.fun транзакция (ищем в логах)
-            is_pump_tx = False
+            # Проверяем что это Buy инструкция
+            is_buy = False
             for log in logs:
-                if "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P" in log:  # pump.fun program
-                    is_pump_tx = True
-                    break
-                if "Program log: Instruction: Buy" in log:
-                    is_pump_tx = True
+                if "Instruction: Buy" in log:
+                    is_buy = True
                     break
             
-            if not is_pump_tx:
+            if not is_buy:
                 return
             
-            logger.info(f"🔔 Detected pump.fun tx from whale {wallet[:8]}...: {signature[:16]}...")
-            
-            # Получаем детали транзакции через Helius HTTP API
-            await self._fetch_and_process_transaction(wallet, signature)
+            # Получаем детали транзакции и проверяем кошелёк
+            await self._check_if_whale_tx(signature)
             
         except Exception as e:
-            logger.debug(f"Error handling log notification: {e}")
+            logger.debug(f"Error handling pump log: {e}")
 
-    async def _fetch_and_process_transaction(self, wallet: str, signature: str):
-        """Получить детали транзакции и обработать."""
+    async def _check_if_whale_tx(self, signature: str):
+        """Проверить, является ли транзакция покупкой кита."""
         if signature in self._processed_txs:
             return
         
         self._processed_txs.add(signature)
-        
-        # Ограничиваем кэш
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        whale_info = self.whale_wallets.get(wallet, {})
-        whale_label = whale_info.get("label", "whale")
-        
-        # Пробуем получить детали через Helius
+        # Получаем детали через Helius (быстрее и удобнее)
         if self.helius_api_key:
-            tx_details = await self._get_tx_details_helius(signature)
-            if tx_details:
-                await self._process_helius_tx(wallet, tx_details, whale_label)
+            tx = await self._get_tx_helius(signature)
+            if tx:
+                await self._process_helius_tx(tx)
                 return
         
-        # Fallback: используем стандартный RPC для получения деталей
+        # Fallback на стандартный RPC
         if self.rpc_endpoint:
-            tx_details = await self._get_tx_details_rpc(signature)
-            if tx_details:
-                await self._process_rpc_tx(wallet, tx_details, whale_label, signature)
-                return
-        
-        logger.warning(f"Could not fetch tx details for {signature[:16]}...")
+            tx = await self._get_tx_rpc(signature)
+            if tx:
+                await self._process_rpc_tx(tx, signature)
 
-    async def _get_tx_details_helius(self, signature: str) -> dict | None:
-        """Получить детали транзакции через Helius API."""
-        url = f"https://api.helius.xyz/v0/transactions"
+    async def _get_tx_helius(self, signature: str) -> dict | None:
+        """Получить транзакцию через Helius."""
+        url = "https://api.helius.xyz/v0/transactions"
         params = {"api-key": self.helius_api_key}
-        payload = {"transactions": [signature]}
         
         try:
             async with self._session.post(
-                url, 
-                params=params, 
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=5)
+                url, params=params, json={"transactions": [signature]},
+                timeout=aiohttp.ClientTimeout(total=3)
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if data and len(data) > 0:
-                        return data[0]
+                    return data[0] if data else None
         except Exception as e:
-            logger.debug(f"Helius API error: {e}")
-        
+            logger.debug(f"Helius error: {e}")
         return None
 
-    async def _get_tx_details_rpc(self, signature: str) -> dict | None:
-        """Получить детали транзакции через стандартный RPC."""
+    async def _get_tx_rpc(self, signature: str) -> dict | None:
+        """Получить транзакцию через RPC."""
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getTransaction",
-            "params": [
-                signature,
-                {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
-            ]
+            "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
         }
         
         try:
             async with self._session.post(
-                self.rpc_endpoint,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=5)
+                self.rpc_endpoint, json=payload,
+                timeout=aiohttp.ClientTimeout(total=3)
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return data.get("result")
         except Exception as e:
             logger.debug(f"RPC error: {e}")
-        
         return None
 
-    async def _process_helius_tx(self, wallet: str, tx: dict, whale_label: str):
+    async def _process_helius_tx(self, tx: dict):
         """Обработать транзакцию от Helius."""
         try:
-            # Проверяем что это SWAP/BUY
-            tx_type = tx.get("type", "")
-            if tx_type not in ["SWAP", "UNKNOWN"]:
+            fee_payer = tx.get("feePayer", "")
+            
+            # Проверяем, является ли fee_payer китом
+            if fee_payer not in self.whale_wallets:
                 return
             
+            whale_info = self.whale_wallets[fee_payer]
             signature = tx.get("signature", "")
-            token_transfers = tx.get("tokenTransfers", [])
-            native_transfers = tx.get("nativeTransfers", [])
             
-            # Считаем потраченные SOL
+            # Считаем SOL
             sol_spent = 0
-            for transfer in native_transfers:
-                if transfer.get("fromUserAccount") == wallet:
+            token_mint = None
+            
+            for transfer in tx.get("nativeTransfers", []):
+                if transfer.get("fromUserAccount") == fee_payer:
                     sol_spent += transfer.get("amount", 0) / 1e9
             
-            # Находим полученный токен
-            token_mint = None
-            for transfer in token_transfers:
-                if transfer.get("toUserAccount") == wallet:
+            for transfer in tx.get("tokenTransfers", []):
+                if transfer.get("toUserAccount") == fee_payer:
                     token_mint = transfer.get("mint")
                     break
             
             if sol_spent >= self.min_buy_amount and token_mint:
                 await self._emit_whale_buy(
-                    wallet=wallet,
+                    wallet=fee_payer,
                     token_mint=token_mint,
                     sol_spent=sol_spent,
                     signature=signature,
-                    whale_label=whale_label,
+                    whale_label=whale_info.get("label", "whale"),
                 )
                 
         except Exception as e:
             logger.debug(f"Error processing Helius tx: {e}")
 
-    async def _process_rpc_tx(self, wallet: str, tx: dict, whale_label: str, signature: str):
-        """Обработать транзакцию от стандартного RPC."""
+    async def _process_rpc_tx(self, tx: dict, signature: str):
+        """Обработать транзакцию от RPC."""
         try:
-            meta = tx.get("meta", {})
-            if meta.get("err"):
+            message = tx.get("transaction", {}).get("message", {})
+            account_keys = message.get("accountKeys", [])
+            
+            if not account_keys:
                 return
             
-            # Считаем изменение SOL баланса
-            pre_balances = meta.get("preBalances", [])
-            post_balances = meta.get("postBalances", [])
+            # fee_payer - первый аккаунт
+            first_key = account_keys[0]
+            fee_payer = first_key.get("pubkey", "") if isinstance(first_key, dict) else str(first_key)
             
-            account_keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
+            if fee_payer not in self.whale_wallets:
+                return
             
-            sol_spent = 0
-            wallet_index = None
+            whale_info = self.whale_wallets[fee_payer]
+            meta = tx.get("meta", {})
             
-            for i, key in enumerate(account_keys):
-                key_str = key.get("pubkey", "") if isinstance(key, dict) else str(key)
-                if key_str == wallet:
-                    wallet_index = i
-                    break
+            # Считаем SOL
+            pre = meta.get("preBalances", [])
+            post = meta.get("postBalances", [])
+            sol_spent = (pre[0] - post[0]) / 1e9 if pre and post else 0
             
-            if wallet_index is not None and wallet_index < len(pre_balances):
-                sol_diff = (pre_balances[wallet_index] - post_balances[wallet_index]) / 1e9
-                if sol_diff > 0:
-                    sol_spent = sol_diff
-            
-            # Ищем токен в postTokenBalances
+            # Ищем токен
             token_mint = None
-            post_token_balances = meta.get("postTokenBalances", [])
-            for balance in post_token_balances:
-                owner = balance.get("owner", "")
-                if owner == wallet:
-                    token_mint = balance.get("mint")
+            for bal in meta.get("postTokenBalances", []):
+                if bal.get("owner") == fee_payer:
+                    token_mint = bal.get("mint")
                     break
             
             if sol_spent >= self.min_buy_amount and token_mint:
                 await self._emit_whale_buy(
-                    wallet=wallet,
+                    wallet=fee_payer,
                     token_mint=token_mint,
                     sol_spent=sol_spent,
                     signature=signature,
-                    whale_label=whale_label,
+                    whale_label=whale_info.get("label", "whale"),
                 )
                 
         except Exception as e:
             logger.debug(f"Error processing RPC tx: {e}")
 
-    async def _emit_whale_buy(
-        self, 
-        wallet: str, 
-        token_mint: str, 
-        sol_spent: float, 
-        signature: str,
-        whale_label: str,
-    ):
+    async def _emit_whale_buy(self, wallet: str, token_mint: str, sol_spent: float, signature: str, whale_label: str):
         """Отправить сигнал о покупке кита."""
         whale_buy = WhaleBuy(
             whale_wallet=wallet,
@@ -459,7 +382,7 @@ class WhaleTracker:
         )
         
         logger.warning(
-            f"🐋 WHALE BUY DETECTED: {whale_label} ({wallet[:8]}...) "
+            f"🐋 WHALE BUY: {whale_label} ({wallet[:8]}...) "
             f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL"
         )
         
@@ -467,12 +390,11 @@ class WhaleTracker:
             await self.on_whale_buy(whale_buy)
 
     async def check_wallet_activity(self, wallet: str) -> list[WhaleBuy]:
-        """Проверить последнюю активность кошелька (для ручной проверки)."""
+        """Проверить активность кошелька (для ручной проверки)."""
         if not self._session:
             self._session = aiohttp.ClientSession()
         
         buys = []
-        
         if self.helius_api_key:
             url = f"https://api.helius.xyz/v0/addresses/{wallet}/transactions"
             params = {"api-key": self.helius_api_key, "limit": 10, "type": "SWAP"}
@@ -480,8 +402,7 @@ class WhaleTracker:
             try:
                 async with self._session.get(url, params=params) as resp:
                     if resp.status == 200:
-                        txs = await resp.json()
-                        for tx in txs:
+                        for tx in await resp.json():
                             if tx.get("type") == "SWAP":
                                 buys.append(WhaleBuy(
                                     whale_wallet=wallet,
