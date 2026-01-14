@@ -355,7 +355,7 @@ class UniversalTrader:
                 PumpFunAddresses.PROGRAM
             )
             
-            # Проверяем что токен ещё на bonding curve (не мигрировал)
+            # Получаем состояние bonding curve (включая creator)
             try:
                 curve_manager = self.platform_implementations.curve_manager
                 pool_state = await curve_manager.get_pool_state(bonding_curve)
@@ -364,6 +364,14 @@ class UniversalTrader:
                         f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping"
                     )
                     return
+                
+                # Получаем creator из pool_state
+                creator = pool_state.get("creator")
+                if creator and isinstance(creator, str):
+                    creator = Pubkey.from_string(creator)
+                elif not isinstance(creator, Pubkey):
+                    creator = None
+                    
             except Exception as e:
                 # Если не можем получить состояние - токен возможно мигрировал
                 logger.warning(f"🐋 Cannot get curve state for {whale_buy.token_symbol}: {e} - skipping")
@@ -378,6 +386,14 @@ class UniversalTrader:
                 SystemAddresses.ASSOCIATED_TOKEN_PROGRAM
             )
             
+            # Derive creator_vault если есть creator
+            creator_vault = None
+            if creator:
+                creator_vault, _ = Pubkey.find_program_address(
+                    [b"creator-vault", bytes(creator)],
+                    PumpFunAddresses.PROGRAM
+                )
+            
             token_info = TokenInfo(
                 name=whale_buy.token_symbol,
                 symbol=whale_buy.token_symbol,
@@ -387,9 +403,9 @@ class UniversalTrader:
                 bonding_curve=bonding_curve,
                 associated_bonding_curve=associated_bonding_curve,
                 user=None,
-                creator=None,
-                creator_vault=None,
-                pool_state=None,
+                creator=creator,
+                creator_vault=creator_vault,
+                pool_state=pool_state,
                 base_vault=None,
                 quote_vault=None,
                 token_program_id=token_program_id,
@@ -611,7 +627,8 @@ class UniversalTrader:
                     token_key, current_time
                 )
 
-                if token_age > self.max_token_age:
+                # max_token_age=0 означает "без ограничения"
+                if self.max_token_age > 0 and token_age > self.max_token_age:
                     logger.info(
                         f"Skipping token {token_info.symbol} - too old ({token_age:.1f}s > {self.max_token_age}s)"
                     )
