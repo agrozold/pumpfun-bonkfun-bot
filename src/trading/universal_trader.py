@@ -342,25 +342,21 @@ class UniversalTrader:
             
             mint = Pubkey.from_string(mint_str)
             
-            # Получаем bonding_curve и другие адреса из блокчейна
-            address_provider = self.platform_implementations.get("address_provider")
-            if not address_provider:
-                logger.error("No address provider for whale copy")
-                return
+            # Получаем bonding_curve и другие адреса
+            address_provider = self.platform_implementations.address_provider
+            curve_manager = self.platform_implementations.curve_manager
             
             # Derive bonding curve from mint
             bonding_curve = address_provider.derive_bonding_curve(mint)
             
             # Проверяем что токен ещё на bonding curve (не мигрировал)
             try:
-                curve_manager = self.platform_implementations.get("curve_manager")
-                if curve_manager:
-                    pool_state = await curve_manager.get_pool_state(bonding_curve)
-                    if pool_state.get("complete", False):
-                        logger.warning(
-                            f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping"
-                        )
-                        return
+                pool_state = await curve_manager.get_pool_state(bonding_curve)
+                if pool_state.get("complete", False):
+                    logger.warning(
+                        f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping"
+                    )
+                    return
             except Exception as e:
                 # Если не можем получить состояние - токен возможно мигрировал
                 logger.warning(f"🐋 Cannot get curve state for {whale_buy.token_symbol}: {e} - skipping")
