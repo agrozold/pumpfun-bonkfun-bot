@@ -50,7 +50,11 @@ class WhaleTracker:
         self._session: aiohttp.ClientSession | None = None
         
         self._load_wallets()
-        logger.info(f"WhaleTracker initialized with {len(self.whale_wallets)} wallets")
+        
+        if self.helius_api_key:
+            logger.info(f"WhaleTracker initialized with {len(self.whale_wallets)} wallets, Helius API enabled")
+        else:
+            logger.warning("WhaleTracker initialized WITHOUT Helius API key - tracking will be limited!")
 
     def _load_wallets(self):
         """Загрузить список кошельков китов."""
@@ -116,7 +120,9 @@ class WhaleTracker:
 
     async def _track_with_helius(self):
         """Отслеживание через Helius Enhanced Transactions API."""
-        logger.info("Using Helius API for whale tracking")
+        logger.info(f"Using Helius API for whale tracking - monitoring {len(self.whale_wallets)} wallets")
+        logger.info(f"Tracked wallets: {list(self.whale_wallets.keys())}")
+        logger.info(f"Min buy amount to copy: {self.min_buy_amount} SOL")
         
         # Helius позволяет подписаться на транзакции адресов
         base_url = "https://api.helius.xyz/v0"
@@ -138,14 +144,18 @@ class WhaleTracker:
                     async with self._session.get(url, params=params) as resp:
                         if resp.status == 200:
                             txs = await resp.json()
+                            if txs:
+                                logger.debug(f"Whale {wallet[:8]}... has {len(txs)} recent swaps")
                             await self._process_helius_transactions(wallet, txs)
                         elif resp.status == 429:
-                            logger.warning("Helius rate limit, waiting...")
+                            logger.warning("Helius rate limit, waiting 5s...")
                             await asyncio.sleep(5)
+                        else:
+                            logger.warning(f"Helius API error {resp.status} for {wallet[:8]}...")
                     
-                    await asyncio.sleep(0.2)  # Rate limit between wallets
+                    await asyncio.sleep(0.3)  # Rate limit between wallets
                 
-                await asyncio.sleep(2)  # Poll interval
+                await asyncio.sleep(3)  # Poll interval
                 
             except Exception as e:
                 logger.exception(f"Helius tracking error: {e}")
@@ -153,9 +163,19 @@ class WhaleTracker:
 
     async def _process_helius_transactions(self, wallet: str, transactions: list):
         """Обработать транзакции от Helius."""
+        # Кэш обработанных транзакций чтобы не дублировать
+        if not hasattr(self, '_processed_txs'):
+            self._processed_txs: set[str] = set()
+        
         for tx in transactions:
             try:
-                # Проверить что это покупка токена
+                tx_sig = tx.get("signature", "")
+                
+                # Пропускаем уже обработанные транзакции
+                if tx_sig in self._processed_txs:
+                    continue
+                
+                # Проверить что это покупка токена (SWAP)
                 tx_type = tx.get("type", "")
                 if tx_type != "SWAP":
                     continue
@@ -180,26 +200,34 @@ class WhaleTracker:
                         token_symbol = transfer.get("tokenStandard", "UNKNOWN")
                 
                 if sol_spent >= self.min_buy_amount and token_mint:
+                    # Помечаем транзакцию как обработанную
+                    self._processed_txs.add(tx_sig)
+                    
+                    # Ограничиваем размер кэша
+                    if len(self._processed_txs) > 1000:
+                        # Удаляем старые записи
+                        self._processed_txs = set(list(self._processed_txs)[-500:])
+                    
                     whale_buy = WhaleBuy(
                         whale_wallet=wallet,
                         token_mint=token_mint,
                         token_symbol=token_symbol,
                         amount_sol=sol_spent,
                         timestamp=datetime.utcnow(),
-                        tx_signature=tx.get("signature", ""),
+                        tx_signature=tx_sig,
                         whale_label=self.whale_wallets[wallet].get("label", "whale"),
                     )
                     
                     logger.warning(
-                        f"🐋 WHALE BUY: {whale_buy.whale_label} bought {token_symbol} "
-                        f"for {sol_spent:.2f} SOL"
+                        f"🐋 WHALE BUY DETECTED: {whale_buy.whale_label} ({wallet[:8]}...) "
+                        f"bought {token_symbol} ({token_mint[:8]}...) for {sol_spent:.2f} SOL"
                     )
                     
                     if self.on_whale_buy:
                         await self.on_whale_buy(whale_buy)
                         
             except Exception as e:
-                logger.debug(f"Error processing tx: {e}")
+                logger.warning(f"Error processing whale tx: {e}")
 
     async def _track_with_polling(self):
         """Fallback: отслеживание через RPC polling (медленнее)."""
