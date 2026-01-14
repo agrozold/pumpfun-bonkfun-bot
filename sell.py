@@ -703,7 +703,8 @@ async def sell_token(
 ) -> bool:
     """Sell tokens - автоматически выбирает Pump.fun или PumpSwap."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
-    rpc_endpoint = os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    # Use Alchemy for manual scripts to avoid rate limits from bot
+    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
