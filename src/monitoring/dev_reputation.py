@@ -74,19 +74,21 @@ class DevReputationChecker:
             self._cache[creator_address] = result
             return result
         except Exception as e:
-            logger.exception(f"Failed to check dev {creator_address[:8]}: {e}")
-            # При ошибке разрешаем покупку, но с предупреждением
+            logger.warning(f"Helius API failed for {creator_address[:8]}: {e} - skipping dev check")
+            # При ошибке API пропускаем проверку но логируем
+            # Лучше купить с риском чем пропустить все токены
             return {
                 "is_safe": True,
-                "reason": f"Check failed: {e}",
+                "reason": f"API unavailable, skipping check",
                 "risk_score": 50,
+                "tokens_created": -1,  # Unknown
             }
 
     async def _analyze_dev(self, creator_address: str) -> dict:
         """Анализ истории дева через Helius API."""
         url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
-        # Helius максимум 1000 транзакций за запрос
-        params = {"api-key": self.api_key, "limit": 1000}
+        # Helius лимит - пробуем 100 (безопасный лимит)
+        params = {"api-key": self.api_key, "limit": 100}
         
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as resp:
