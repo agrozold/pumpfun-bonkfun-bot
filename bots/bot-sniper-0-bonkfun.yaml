@@ -29,7 +29,7 @@ filters:
   listener_type: pumpportal
   max_token_age: 15
   marry_mode: false
-  yolo_mode: false
+  yolo_mode: true
   monitored_pools:
   - bonk
 retries:
