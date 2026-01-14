@@ -2,11 +2,20 @@
 Position management for take profit/stop loss functionality.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 
 from solders.pubkey import Pubkey
+
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# File to store active positions
+POSITIONS_FILE = Path("positions.json")
 
 
 class ExitReason(Enum):
@@ -41,6 +50,43 @@ class Position:
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
+    
+    # Platform info for restoration
+    platform: str = "pump_fun"
+    bonding_curve: str | None = None
+
+    def to_dict(self) -> dict:
+        """Convert position to dictionary for JSON serialization."""
+        return {
+            "mint": str(self.mint),
+            "symbol": self.symbol,
+            "entry_price": self.entry_price,
+            "quantity": self.quantity,
+            "entry_time": self.entry_time.isoformat(),
+            "take_profit_price": self.take_profit_price,
+            "stop_loss_price": self.stop_loss_price,
+            "max_hold_time": self.max_hold_time,
+            "is_active": self.is_active,
+            "platform": self.platform,
+            "bonding_curve": self.bonding_curve,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Position":
+        """Create position from dictionary."""
+        return cls(
+            mint=Pubkey.from_string(data["mint"]),
+            symbol=data["symbol"],
+            entry_price=data["entry_price"],
+            quantity=data["quantity"],
+            entry_time=datetime.fromisoformat(data["entry_time"]),
+            take_profit_price=data.get("take_profit_price"),
+            stop_loss_price=data.get("stop_loss_price"),
+            max_hold_time=data.get("max_hold_time"),
+            is_active=data.get("is_active", True),
+            platform=data.get("platform", "pump_fun"),
+            bonding_curve=data.get("bonding_curve"),
+        )
 
     @classmethod
     def create_from_buy_result(
@@ -52,6 +98,8 @@ class Position:
         take_profit_percentage: float | None = None,
         stop_loss_percentage: float | None = None,
         max_hold_time: int | None = None,
+        platform: str = "pump_fun",
+        bonding_curve: str | None = None,
     ) -> "Position":
         """Create a position from a successful buy transaction.
 
@@ -63,6 +111,8 @@ class Position:
             take_profit_percentage: Take profit percentage (0.5 = 50% profit)
             stop_loss_percentage: Stop loss percentage (0.2 = 20% loss)
             max_hold_time: Maximum hold time in seconds
+            platform: Trading platform
+            bonding_curve: Bonding curve address for price checks
 
         Returns:
             Position instance
@@ -84,6 +134,8 @@ class Position:
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
+            platform=platform,
+            bonding_curve=bonding_curve,
         )
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
@@ -164,3 +216,58 @@ class Position:
         else:
             status = "CLOSED (UNKNOWN)"
         return f"Position({self.symbol}: {self.quantity:.6f} @ {self.entry_price:.8f} SOL - {status})"
+
+
+
+def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -> None:
+    """Save active positions to file.
+    
+    Args:
+        positions: List of positions to save
+        filepath: Path to save file
+    """
+    active_positions = [p.to_dict() for p in positions if p.is_active]
+    
+    try:
+        with open(filepath, "w") as f:
+            json.dump(active_positions, f, indent=2)
+        logger.info(f"Saved {len(active_positions)} active positions to {filepath}")
+    except Exception as e:
+        logger.exception(f"Failed to save positions: {e}")
+
+
+def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
+    """Load positions from file.
+    
+    Args:
+        filepath: Path to positions file
+        
+    Returns:
+        List of Position objects
+    """
+    if not filepath.exists():
+        logger.info(f"No positions file found at {filepath}")
+        return []
+    
+    try:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+        
+        positions = [Position.from_dict(p) for p in data]
+        logger.info(f"Loaded {len(positions)} positions from {filepath}")
+        return positions
+    except Exception as e:
+        logger.exception(f"Failed to load positions: {e}")
+        return []
+
+
+def remove_position(mint: str, filepath: Path = POSITIONS_FILE) -> None:
+    """Remove a position from the saved file.
+    
+    Args:
+        mint: Mint address of position to remove
+        filepath: Path to positions file
+    """
+    positions = load_positions(filepath)
+    positions = [p for p in positions if str(p.mint) != mint]
+    save_positions(positions, filepath)
