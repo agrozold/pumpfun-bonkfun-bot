@@ -19,11 +19,13 @@ Examples:
 
 import argparse
 import asyncio
+import base64
 import os
 import struct
 import sys
 import random
 
+import aiohttp
 import base58
 from construct import Flag, Int64ul, Struct
 from dotenv import load_dotenv
@@ -215,6 +217,142 @@ def calculate_price(curve_state: BondingCurveState) -> float:
 
 
 # ============================================================================
+# Jupiter Aggregator Functions (fallback for migrated tokens)
+# ============================================================================
+
+async def sell_via_jupiter(
+    client: AsyncClient,
+    payer: Keypair,
+    mint: Pubkey,
+    percent: float,
+    slippage: float,
+    priority_fee: int,
+    max_retries: int,
+) -> bool:
+    """Sell tokens via Jupiter aggregator - works for any token with liquidity."""
+    print("🪐 Using Jupiter aggregator...")
+    
+    token_program_id = await get_token_program_id(client, mint)
+    user_ata = get_associated_token_address(payer.pubkey(), mint, token_program_id)
+    
+    # Get token balance
+    total_balance = await get_token_balance(client, user_ata)
+    total_balance_decimal = total_balance / 10**TOKEN_DECIMALS
+    
+    if total_balance == 0:
+        print("❌ No tokens to sell")
+        return False
+    
+    # Calculate sell amount
+    sell_amount = int(total_balance * (percent / 100.0))
+    sell_amount_decimal = sell_amount / 10**TOKEN_DECIMALS
+    
+    if sell_amount == 0:
+        print("❌ Sell amount too small")
+        return False
+    
+    print(f"💰 Total balance: {total_balance_decimal:,.2f} tokens")
+    print(f"📊 Selling: {percent:.0f}% = {sell_amount_decimal:,.2f} tokens")
+    
+    # Jupiter API
+    jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
+    jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
+    
+    slippage_bps = int(slippage * 10000)  # Convert to basis points
+    
+    async with aiohttp.ClientSession() as session:
+        # Get quote
+        quote_params = {
+            "inputMint": str(mint),
+            "outputMint": str(SOL),
+            "amount": str(sell_amount),
+            "slippageBps": slippage_bps,
+        }
+        
+        try:
+            async with session.get(jupiter_quote_url, params=quote_params) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    print(f"❌ Jupiter quote failed: {error_text}")
+                    return False
+                quote = await resp.json()
+        except Exception as e:
+            print(f"❌ Jupiter quote error: {e}")
+            return False
+        
+        out_amount = int(quote.get("outAmount", 0))
+        out_amount_sol = out_amount / LAMPORTS_PER_SOL
+        
+        print(f"💵 Expected output: ~{out_amount_sol:.6f} SOL")
+        print(f"📉 Slippage: {slippage*100:.0f}%")
+        print()
+        
+        # Get swap transaction
+        swap_body = {
+            "quoteResponse": quote,
+            "userPublicKey": str(payer.pubkey()),
+            "wrapAndUnwrapSol": True,
+            "prioritizationFeeLamports": priority_fee,
+        }
+        
+        for attempt in range(max_retries):
+            try:
+                async with session.post(jupiter_swap_url, json=swap_body) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        print(f"❌ Jupiter swap failed: {error_text}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(1)
+                            continue
+                        return False
+                    swap_data = await resp.json()
+                
+                # Decode and sign transaction
+                swap_tx_base64 = swap_data.get("swapTransaction")
+                if not swap_tx_base64:
+                    print("❌ No swap transaction in response")
+                    return False
+                
+                tx_bytes = base64.b64decode(swap_tx_base64)
+                
+                # Jupiter returns VersionedTransaction
+                from solders.transaction import VersionedTransaction
+                tx = VersionedTransaction.from_bytes(tx_bytes)
+                
+                # Sign the transaction
+                signed_tx = VersionedTransaction(tx.message, [payer])
+                
+                print(f"🚀 Sending Jupiter transaction (attempt {attempt + 1}/{max_retries})...")
+                result = await retry_rpc_call(
+                    client.send_transaction, 
+                    signed_tx, 
+                    opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+                )
+                sig = result.value
+                
+                print(f"📤 Signature: {sig}")
+                print(f"🔗 https://solscan.io/tx/{sig}")
+                
+                await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
+                print("✅ Transaction confirmed!")
+                return True
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                if "429" in error_str or "too many requests" in error_str:
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    print(f"⏳ Rate limited, waiting {wait_time:.1f}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    print(f"❌ Attempt {attempt + 1} failed: {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(1)
+        
+        print("❌ All Jupiter attempts failed")
+        return False
+
+
+# ============================================================================
 # PumpSwap/Raydium AMM Functions
 # ============================================================================
 
@@ -319,8 +457,8 @@ async def sell_via_pumpswap(
     # Find market
     market = await get_market_address_by_base_mint(client, mint)
     if not market:
-        print("❌ PumpSwap market not found for this token")
-        return False
+        print("⚠️ PumpSwap market not found, trying Jupiter aggregator...")
+        return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
     
     print(f"📍 Found PumpSwap market: {market}")
     
