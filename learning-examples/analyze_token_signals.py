@@ -30,25 +30,55 @@ THRESHOLDS = {
 
 
 async def fetch_token_data(mint: str) -> dict | None:
-    """Fetch token data from Birdeye."""
-    if not BIRDEYE_API_KEY:
-        print("❌ BIRDEYE_API_KEY not set")
-        return None
-    
+    """Fetch token data from Birdeye, fallback to DexScreener."""
     async with aiohttp.ClientSession() as session:
-        url = f"{BIRDEYE_API_URL}/defi/token_overview?address={mint}"
-        headers = {
-            "X-API-KEY": BIRDEYE_API_KEY,
-            "x-chain": "solana",
-        }
+        # Try Birdeye first
+        if BIRDEYE_API_KEY:
+            url = f"{BIRDEYE_API_URL}/defi/token_overview?address={mint}"
+            headers = {
+                "X-API-KEY": BIRDEYE_API_KEY,
+                "x-chain": "solana",
+            }
+            
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("success"):
+                        print("✅ Data from Birdeye")
+                        return data.get("data", {})
+                else:
+                    text = await resp.text()
+                    print(f"⚠️ Birdeye error {resp.status}: {text[:200]}")
         
-        async with session.get(url, headers=headers) as resp:
+        # Fallback to DexScreener (free, no API key)
+        print("🔄 Trying DexScreener...")
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+        async with session.get(url) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                if data.get("success"):
-                    return data.get("data", {})
+                pairs = data.get("pairs", [])
+                if pairs:
+                    pair = pairs[0]  # Get first pair
+                    print("✅ Data from DexScreener")
+                    # Convert to Birdeye-like format
+                    return {
+                        "name": pair.get("baseToken", {}).get("name", "Unknown"),
+                        "symbol": pair.get("baseToken", {}).get("symbol", "Unknown"),
+                        "price": float(pair.get("priceUsd", 0) or 0),
+                        "v24hUSD": float(pair.get("volume", {}).get("h24", 0) or 0),
+                        "mc": float(pair.get("marketCap", 0) or 0),
+                        "buy5m": pair.get("txns", {}).get("m5", {}).get("buys", 0),
+                        "sell5m": pair.get("txns", {}).get("m5", {}).get("sells", 0),
+                        "priceChange5mPercent": float(pair.get("priceChange", {}).get("m5", 0) or 0),
+                        "vBuy5mUSD": 0,  # DexScreener doesn't provide this
+                        "vSell5mUSD": 0,
+                        "_source": "dexscreener",
+                    }
+                else:
+                    print("❌ Token not found on DexScreener (no pairs)")
             else:
-                print(f"❌ API error: {resp.status}")
+                print(f"❌ DexScreener error: {resp.status}")
+    
     return None
 
 
