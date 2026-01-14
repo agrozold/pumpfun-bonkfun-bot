@@ -351,6 +351,21 @@ class UniversalTrader:
             # Derive bonding curve from mint
             bonding_curve = address_provider.derive_bonding_curve(mint)
             
+            # Проверяем что токен ещё на bonding curve (не мигрировал)
+            try:
+                curve_manager = self.platform_implementations.get("curve_manager")
+                if curve_manager:
+                    pool_state = await curve_manager.get_pool_state(bonding_curve)
+                    if pool_state.get("complete", False):
+                        logger.warning(
+                            f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping"
+                        )
+                        return
+            except Exception as e:
+                # Если не можем получить состояние - токен возможно мигрировал
+                logger.warning(f"🐋 Cannot get curve state for {whale_buy.token_symbol}: {e} - skipping")
+                return
+            
             # Для pump.fun используем Token2022 по умолчанию
             from platforms.pumpfun.addresses import SystemAddresses
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
