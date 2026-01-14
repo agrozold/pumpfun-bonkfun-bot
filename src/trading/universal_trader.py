@@ -316,7 +316,11 @@ class UniversalTrader:
         return mint in self.pump_signals and len(self.pump_signals[mint]) > 0
 
     async def _on_whale_buy(self, whale_buy: WhaleBuy):
-        """Callback when whale buys a token - copy the trade."""
+        """Callback when whale buys a token - copy the trade.
+        
+        Whale copy trades bypass age checks, dev checks, and scoring
+        because we trust the whale's judgment.
+        """
         logger.warning(
             f"🐋 WHALE COPY: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
             f"for {whale_buy.amount_sol:.2f} SOL - COPYING!"
@@ -343,8 +347,8 @@ class UniversalTrader:
                 creation_timestamp=int(whale_buy.timestamp.timestamp()),
             )
             
-            # Покупаем!
-            await self._handle_token(token_info)
+            # Покупаем! skip_checks=True обходит dev check и scoring
+            await self._handle_token(token_info, skip_checks=True)
             
         except Exception as e:
             logger.exception(f"Failed to copy whale trade: {e}")
@@ -573,8 +577,13 @@ class UniversalTrader:
             finally:
                 self.token_queue.task_done()
 
-    async def _handle_token(self, token_info: TokenInfo) -> None:
-        """Handle a new token creation event."""
+    async def _handle_token(self, token_info: TokenInfo, skip_checks: bool = False) -> None:
+        """Handle a new token creation event.
+        
+        Args:
+            token_info: Token information
+            skip_checks: If True, skip scoring and dev checks (used for whale copy trades)
+        """
         try:
             # Validate that token is for our platform
             if token_info.platform != self.platform:
@@ -589,23 +598,23 @@ class UniversalTrader:
             if self.pattern_detector:
                 self.pattern_detector.start_tracking(mint_str, token_info.symbol)
 
-            # Check pattern_only_mode - skip if no pump signal detected
-            if self.pattern_only_mode and not self._has_pump_signal(mint_str):
+            # Check pattern_only_mode - skip if no pump signal detected (unless skip_checks)
+            if not skip_checks and self.pattern_only_mode and not self._has_pump_signal(mint_str):
                 logger.info(
                     f"Pattern only mode: skipping {token_info.symbol} - no pump signal detected"
                 )
                 return
 
-            # Token scoring check (runs in parallel with wait time)
+            # Token scoring check (runs in parallel with wait time) - skip if whale copy
             scoring_task = None
-            if self.token_scorer:
+            if self.token_scorer and not skip_checks:
                 scoring_task = asyncio.create_task(
                     self.token_scorer.should_buy(mint_str, token_info.symbol)
                 )
 
-            # Dev reputation check (runs in parallel)
+            # Dev reputation check (runs in parallel) - skip if whale copy
             dev_check_task = None
-            if self.dev_checker and token_info.creator:
+            if self.dev_checker and token_info.creator and not skip_checks:
                 dev_check_task = asyncio.create_task(
                     self.dev_checker.check_dev(str(token_info.creator))
                 )
@@ -652,9 +661,14 @@ class UniversalTrader:
                     logger.warning(f"Dev check failed, proceeding anyway: {e}")
 
             # Buy token
-            logger.info(
-                f"Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
-            )
+            if skip_checks:
+                logger.info(
+                    f"🐋 WHALE COPY: Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} (checks skipped)..."
+                )
+            else:
+                logger.info(
+                    f"Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
+                )
             buy_result: TradeResult = await self.buyer.execute(token_info)
 
             if buy_result.success:
