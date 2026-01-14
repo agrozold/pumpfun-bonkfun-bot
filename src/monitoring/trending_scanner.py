@@ -39,6 +39,7 @@ class TrendingToken:
     liquidity: float
     created_at: datetime | None
     pair_address: str | None = None  # Pool/AMM address from DexScreener
+    dex_id: str | None = None  # DEX identifier (pumpswap, raydium, etc)
     
     @property
     def buy_pressure_5m(self) -> float:
@@ -266,8 +267,13 @@ class TrendingScanner:
                 pairs = data.get("pairs", [])
                 
                 for pair in pairs:
-                    # Filter pump.fun on Solana
+                    # Filter pump.fun on Solana with PumpSwap DEX
                     if pair.get("chainId") != "solana":
+                        continue
+                    
+                    # Only PumpSwap pairs (pumpswap or pump_amm)
+                    dex_id = pair.get("dexId", "").lower()
+                    if dex_id not in ("pumpswap", "pump_amm", "pump"):
                         continue
                     
                     base = pair.get("baseToken", {})
@@ -344,6 +350,7 @@ class TrendingScanner:
                 liquidity=float(pair.get("liquidity", {}).get("usd", 0) or 0),
                 created_at=created_at,
                 pair_address=pair.get("pairAddress"),  # Pool address from DexScreener
+                dex_id=pair.get("dexId"),  # DEX identifier
             )
         except Exception as e:
             logger.debug(f"Parse error: {e}")
