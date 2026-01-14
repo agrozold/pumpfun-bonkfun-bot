@@ -37,6 +37,7 @@ PUMP_SWAP_EVENT_AUTHORITY = Pubkey.from_string("GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1y
 STANDARD_PUMPSWAP_FEE_RECIPIENT = Pubkey.from_string("7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 SELL_DISCRIMINATOR = bytes.fromhex("33e685a4017f83ad")
+BUY_DISCRIMINATOR = bytes.fromhex("66063d1201daebea")
 
 # System constants
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
@@ -67,6 +68,195 @@ class FallbackSeller:
         self.slippage = slippage
         self.priority_fee = priority_fee
         self.max_retries = max_retries
+
+    async def buy_via_pumpswap(
+        self,
+        mint: Pubkey,
+        sol_amount: float,
+        symbol: str = "TOKEN",
+    ) -> tuple[bool, str | None, str | None]:
+        """Buy token via PumpSwap AMM - for migrated tokens.
+        
+        Args:
+            mint: Token mint address
+            sol_amount: Amount of SOL to spend
+            symbol: Token symbol for logging
+            
+        Returns:
+            Tuple of (success, tx_signature, error_message)
+        """
+        from solders.system_program import TransferParams, transfer
+        from spl.token.instructions import (
+            SyncNativeParams,
+            create_idempotent_associated_token_account,
+            sync_native,
+        )
+        
+        try:
+            rpc_client = await self.client.get_client()
+            
+            # Find market
+            filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
+            response = await rpc_client.get_program_accounts(
+                PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters
+            )
+            
+            if not response.value:
+                return False, None, "PumpSwap market not found"
+            
+            market = response.value[0].pubkey
+            logger.info(f"📍 Found PumpSwap market: {market}")
+            
+            # Get market data
+            market_response = await rpc_client.get_account_info(market, encoding="base64")
+            data = market_response.value.data
+            market_data = self._parse_market_data(data)
+            
+            token_program_id = await self._get_token_program_id(mint)
+            
+            # Get user token accounts
+            user_base_ata = get_associated_token_address(
+                self.wallet.pubkey, mint, token_program_id
+            )
+            user_quote_ata = get_associated_token_address(
+                self.wallet.pubkey, SOL_MINT, SYSTEM_TOKEN_PROGRAM
+            )
+            
+            # Get pool accounts
+            pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
+            pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
+            
+            # Calculate price and token amount
+            base_resp = await rpc_client.get_token_account_balance(pool_base_ata)
+            quote_resp = await rpc_client.get_token_account_balance(pool_quote_ata)
+            base_amount = float(base_resp.value.ui_amount)
+            quote_amount = float(quote_resp.value.ui_amount)
+            price = quote_amount / base_amount
+            
+            # Calculate expected tokens
+            expected_tokens = sol_amount / price
+            min_tokens_output = int(expected_tokens * (1 - self.slippage) * 10**TOKEN_DECIMALS)
+            buy_amount_lamports = int(sol_amount * LAMPORTS_PER_SOL)
+            
+            logger.info(f"💵 PumpSwap BUY: {sol_amount} SOL -> ~{expected_tokens:,.2f} {symbol}")
+            
+            # Get fee recipients
+            fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
+            fee_recipient_ata = get_associated_token_address(
+                fee_recipient, SOL_MINT, SYSTEM_TOKEN_PROGRAM
+            )
+            
+            # Get creator vault
+            coin_creator = Pubkey.from_string(market_data["coin_creator"])
+            coin_creator_vault, _ = Pubkey.find_program_address(
+                [b"creator_vault", bytes(coin_creator)], PUMP_AMM_PROGRAM_ID
+            )
+            coin_creator_vault_ata = get_associated_token_address(
+                coin_creator_vault, SOL_MINT, SYSTEM_TOKEN_PROGRAM
+            )
+            
+            # Fee config PDA
+            fee_config, _ = Pubkey.find_program_address(
+                [b"fee_config", bytes(PUMP_AMM_PROGRAM_ID)], PUMP_FEE_PROGRAM
+            )
+            
+            # Build accounts for BUY (SOL -> Token)
+            accounts = [
+                AccountMeta(pubkey=market, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=SOL_MINT, is_signer=False, is_writable=False),  # input mint (SOL)
+                AccountMeta(pubkey=mint, is_signer=False, is_writable=False),  # output mint (token)
+                AccountMeta(pubkey=user_quote_ata, is_signer=False, is_writable=True),  # user SOL ATA
+                AccountMeta(pubkey=user_base_ata, is_signer=False, is_writable=True),  # user token ATA
+                AccountMeta(pubkey=pool_quote_ata, is_signer=False, is_writable=True),  # pool SOL
+                AccountMeta(pubkey=pool_base_ata, is_signer=False, is_writable=True),  # pool token
+                AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=fee_recipient_ata, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=PUMP_AMM_PROGRAM_ID, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=coin_creator_vault_ata, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=coin_creator_vault, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
+            ]
+            
+            # Build instruction data: discriminator + amount_in + min_amount_out
+            ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output)
+            
+            # Instructions
+            compute_limit_ix = set_compute_unit_limit(200_000)
+            compute_price_ix = set_compute_unit_price(self.priority_fee)
+            
+            # Create token ATA (idempotent)
+            create_token_ata_ix = create_idempotent_associated_token_account(
+                self.wallet.pubkey, self.wallet.pubkey, mint, token_program_id
+            )
+            
+            # Create wrapped SOL ATA (idempotent)
+            create_wsol_ata_ix = create_idempotent_associated_token_account(
+                self.wallet.pubkey, self.wallet.pubkey, SOL_MINT, SYSTEM_TOKEN_PROGRAM
+            )
+            
+            # Transfer SOL to wrapped SOL account
+            transfer_ix = transfer(
+                TransferParams(
+                    from_pubkey=self.wallet.pubkey,
+                    to_pubkey=user_quote_ata,
+                    lamports=buy_amount_lamports,
+                )
+            )
+            
+            # Sync native (update wrapped SOL balance)
+            sync_ix = sync_native(SyncNativeParams(SYSTEM_TOKEN_PROGRAM, user_quote_ata))
+            
+            # Buy instruction
+            buy_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
+            
+            # Send transaction
+            for attempt in range(self.max_retries):
+                try:
+                    blockhash = await rpc_client.get_latest_blockhash()
+                    msg = Message.new_with_blockhash(
+                        [
+                            compute_limit_ix,
+                            compute_price_ix,
+                            create_token_ata_ix,
+                            create_wsol_ata_ix,
+                            transfer_ix,
+                            sync_ix,
+                            buy_ix,
+                        ],
+                        self.wallet.pubkey,
+                        blockhash.value.blockhash,
+                    )
+                    tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
+                    
+                    logger.info(f"🚀 PumpSwap BUY attempt {attempt + 1}/{self.max_retries}...")
+                    result = await rpc_client.send_transaction(
+                        tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+                    )
+                    sig = str(result.value)
+                    
+                    logger.info(f"📤 PumpSwap BUY signature: {sig}")
+                    
+                    await rpc_client.confirm_transaction(sig, commitment="confirmed")
+                    logger.info(f"✅ PumpSwap BUY confirmed! Got ~{expected_tokens:,.2f} {symbol}")
+                    return True, sig, None
+                    
+                except Exception as e:
+                    logger.warning(f"PumpSwap BUY attempt {attempt + 1} failed: {e}")
+                    if attempt == self.max_retries - 1:
+                        return False, None, str(e)
+            
+            return False, None, "All PumpSwap BUY attempts failed"
+            
+        except Exception as e:
+            return False, None, str(e)
 
     async def buy_via_jupiter(
         self,

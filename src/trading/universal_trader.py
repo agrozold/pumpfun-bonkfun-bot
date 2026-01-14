@@ -574,7 +574,7 @@ class UniversalTrader:
             # Mark as processed
             self.processed_tokens.add(mint_str)
             
-            # If migrated - buy via Jupiter directly
+            # If migrated - buy via PumpSwap (Raydium AMM)
             if is_migrated:
                 from trading.fallback_seller import FallbackSeller
                 
@@ -586,20 +586,20 @@ class UniversalTrader:
                     max_retries=self.max_retries,
                 )
                 
-                success, sig, error = await fallback.buy_via_jupiter(
+                success, sig, error = await fallback.buy_via_pumpswap(
                     mint=mint,
                     sol_amount=self.buy_amount,
                     symbol=token.symbol,
                 )
                 
                 if success:
-                    logger.warning(f"✅ TRENDING Jupiter BUY: {token.symbol} - {sig}")
+                    logger.warning(f"✅ TRENDING PumpSwap BUY: {token.symbol} - {sig}")
                     # Save position for tracking
                     from trading.position import Position, save_positions
                     position = Position(
                         mint=mint_str,
                         symbol=token.symbol,
-                        buy_price=0,  # Unknown for Jupiter
+                        buy_price=0,  # Unknown for PumpSwap
                         buy_amount=self.buy_amount,
                         token_amount=0,  # Will be updated on sell
                         buy_signature=sig,
@@ -608,7 +608,7 @@ class UniversalTrader:
                     self.active_positions.append(position)
                     save_positions(self.active_positions)
                 else:
-                    logger.error(f"❌ TRENDING Jupiter BUY failed: {token.symbol} - {error}")
+                    logger.error(f"❌ TRENDING PumpSwap BUY failed: {token.symbol} - {error}")
                 return
             
             # Not migrated - use normal flow
