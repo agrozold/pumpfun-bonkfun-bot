@@ -96,6 +96,7 @@ class UniversalTrader:
         pattern_holder_growth_threshold: float = 0.5,
         pattern_min_whale_buys: int = 2,
         pattern_min_patterns_to_buy: int = 2,
+        pattern_min_signal_strength: float = 0.5,  # Minimum signal strength (0.0-1.0)
         pattern_only_mode: bool = False,  # Only buy when patterns detected
         # Token scoring settings
         enable_scoring: bool = False,
@@ -156,6 +157,7 @@ class UniversalTrader:
         # Pattern detection setup
         self.enable_pattern_detection = enable_pattern_detection
         self.pattern_only_mode = pattern_only_mode
+        self.pattern_min_signal_strength = pattern_min_signal_strength
         self.pattern_detector: PumpPatternDetector | None = None
 
         if enable_pattern_detection:
@@ -171,6 +173,7 @@ class UniversalTrader:
                 f"Pattern detection enabled: volume_spike={pattern_volume_spike_threshold}x, "
                 f"holder_growth={pattern_holder_growth_threshold * 100}%, "
                 f"min_whale_buys={pattern_min_whale_buys}, "
+                f"min_signal_strength={pattern_min_signal_strength}, "
                 f"pattern_only_mode={pattern_only_mode}"
             )
 
@@ -324,13 +327,20 @@ class UniversalTrader:
         )
         self.pump_signals[mint] = patterns
         
+        # Check minimum signal strength
+        if strength < self.pattern_min_signal_strength:
+            logger.info(
+                f"⚠️ Signal too weak for {symbol}: {strength:.2f} < {self.pattern_min_signal_strength:.2f} - skipping"
+            )
+            return
+        
         # Cleanup old pending tokens (older than 5 minutes)
         self._cleanup_pending_tokens()
         
         # If pattern_only_mode and we have pending token_info - buy now!
         if self.pattern_only_mode and mint in self.pending_tokens:
             token_info = self.pending_tokens.pop(mint)
-            logger.warning(f"🚀 BUYING on pump signal: {symbol}")
+            logger.warning(f"🚀 BUYING on STRONG pump signal: {symbol} (strength: {strength:.2f})")
             # Process token with signal (skip_checks=False to still do dev check)
             asyncio.create_task(self._handle_token(token_info, skip_checks=False))
 

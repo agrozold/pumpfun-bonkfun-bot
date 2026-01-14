@@ -32,13 +32,14 @@ trade:
   take_profit_percentage: 1.0
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
 
-# Pattern Detection - ТОЛЬКО покупать при паттернах
+# Pattern Detection - ТОЛЬКО покупать при сильных сигналах
 pattern_detection:
   enabled: true
   volume_spike_threshold: 3.0      # 3x от среднего объёма
   holder_growth_threshold: 0.5     # 50% рост холдеров
   min_whale_buys: 2                # 2+ whale покупки
-  min_patterns_to_buy: 1           # Минимум 1 паттерн для покупки
+  min_patterns_to_buy: 2           # Минимум 2 паттерна для покупки
+  min_signal_strength: 0.7         # Минимум 70% сила сигнала
   pattern_only_mode: true          # ТОЛЬКО по паттернам!
 
 # Token Scoring - filter tokens by Dexscreener metrics

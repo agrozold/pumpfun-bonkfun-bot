@@ -179,6 +179,9 @@ async def start_bot(config_path: str):
             pattern_min_patterns_to_buy=cfg.get("pattern_detection", {}).get(
                 "min_patterns_to_buy", 2
             ),
+            pattern_min_signal_strength=cfg.get("pattern_detection", {}).get(
+                "min_signal_strength", 0.5
+            ),
             pattern_only_mode=cfg.get("pattern_detection", {}).get(
                 "pattern_only_mode", False
             ),
