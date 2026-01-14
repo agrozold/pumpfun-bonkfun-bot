@@ -165,8 +165,15 @@ class FallbackSeller:
                 token_program_id = await self._get_token_program_id(mint)
                 logger.info(f"📍 Token program: {token_program_id}")
             except Exception as e:
-                logger.error(f"📍 Failed to get token program: {e}")
-                return False, None, f"Failed to get token program: {e}"
+                # Retry once after delay
+                import asyncio
+                await asyncio.sleep(0.5)
+                try:
+                    token_program_id = await self._get_token_program_id(mint)
+                    logger.info(f"📍 Token program (retry): {token_program_id}")
+                except Exception as e2:
+                    logger.error(f"📍 Failed to get token program: {e2}")
+                    return False, None, f"Failed to get token program: {e2}"
             
             # Get user token accounts
             user_base_ata = get_associated_token_address(
@@ -180,17 +187,24 @@ class FallbackSeller:
             pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
             pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
             
-            # Calculate price and token amount
-            try:
-                base_resp = await rpc_client.get_token_account_balance(pool_base_ata)
-                quote_resp = await rpc_client.get_token_account_balance(pool_quote_ata)
-                base_amount = float(base_resp.value.ui_amount)
-                quote_amount = float(quote_resp.value.ui_amount)
-                price = quote_amount / base_amount
-                logger.info(f"📍 Pool price: {price:.10f} SOL per token")
-            except Exception as e:
-                logger.error(f"📍 Failed to get pool balances: {e}")
-                return False, None, f"Failed to get pool balances: {e}"
+            # Calculate price and token amount with retry
+            import asyncio
+            for balance_retry in range(3):
+                try:
+                    base_resp = await rpc_client.get_token_account_balance(pool_base_ata)
+                    quote_resp = await rpc_client.get_token_account_balance(pool_quote_ata)
+                    base_amount = float(base_resp.value.ui_amount)
+                    quote_amount = float(quote_resp.value.ui_amount)
+                    price = quote_amount / base_amount
+                    logger.info(f"📍 Pool price: {price:.10f} SOL per token")
+                    break
+                except Exception as e:
+                    if balance_retry < 2:
+                        logger.warning(f"📍 Pool balance fetch failed, retry {balance_retry + 1}/3...")
+                        await asyncio.sleep(0.5 * (balance_retry + 1))
+                    else:
+                        logger.error(f"📍 Failed to get pool balances: {e}")
+                        return False, None, f"Failed to get pool balances: {e}"
             
             # Calculate expected tokens
             expected_tokens = sol_amount / price
