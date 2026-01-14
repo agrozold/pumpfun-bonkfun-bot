@@ -83,59 +83,62 @@ class DevReputationChecker:
             }
 
     async def _analyze_dev(self, creator_address: str) -> dict:
-        """Анализ истории дева через Helius API с пагинацией."""
-        base_url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
-        
-        tokens_created = 0
-        oldest_tx_time = None
-        newest_tx_time = None
-        before_signature = None
-        max_pages = 10  # До 10000 транзакций (10 * 1000)
+        """Анализ истории дева через Helius API."""
+        url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
+        # Helius максимум 1000 транзакций за запрос
+        params = {"api-key": self.api_key, "limit": 1000}
         
         async with aiohttp.ClientSession() as session:
-            for page in range(max_pages):
-                params = {"api-key": self.api_key, "limit": 1000}
-                if before_signature:
-                    params["before"] = before_signature
-                
-                async with session.get(base_url, params=params) as resp:
-                    if resp.status != 200:
-                        raise ValueError(f"Helius API error: {resp.status}")
-                    transactions = await resp.json()
-                
-                if not transactions:
-                    break  # Нет больше транзакций
-                
-                # Обрабатываем транзакции
-                for tx in transactions:
-                    tx_time = tx.get("timestamp")
-                    if tx_time:
-                        if oldest_tx_time is None or tx_time < oldest_tx_time:
-                            oldest_tx_time = tx_time
-                        if newest_tx_time is None or tx_time > newest_tx_time:
-                            newest_tx_time = tx_time
+            async with session.get(url, params=params) as resp:
+                if resp.status != 200:
+                    raise ValueError(f"Helius API error: {resp.status}")
+                transactions = await resp.json()
 
-                    instructions = tx.get("instructions", [])
-                    for ix in instructions:
-                        program_id = ix.get("programId", "")
-                        if program_id == PUMP_PROGRAM:
-                            ix_type = ix.get("type", "").lower()
-                            if "create" in ix_type:
-                                tokens_created += 1
-                
-                # Если уже нашли много токенов - сразу скипаем, не тратим время
-                if tokens_created > self.max_tokens_created:
-                    logger.info(f"Dev {creator_address[:8]}... already has {tokens_created} tokens, skipping further pages")
+        if not transactions:
+            return {
+                "is_safe": True,
+                "reason": "New wallet, no history",
+                "tokens_created": 0,
+                "risk_score": 30,
+            }
+
+        # Считаем транзакции к pump.fun программе
+        # Каждая транзакция с pump.fun = потенциальное создание токена
+        pump_txs = 0
+        oldest_tx_time = None
+
+        for tx in transactions:
+            tx_time = tx.get("timestamp")
+            if tx_time:
+                if oldest_tx_time is None or tx_time < oldest_tx_time:
+                    oldest_tx_time = tx_time
+
+            # Проверяем accountData на наличие pump.fun программы
+            account_data = tx.get("accountData", [])
+            for acc in account_data:
+                if acc.get("account") == PUMP_PROGRAM:
+                    pump_txs += 1
                     break
-                
-                # Если меньше 1000 транзакций - это последняя страница
-                if len(transactions) < 1000:
-                    break
-                
-                # Берём signature последней транзакции для пагинации
-                before_signature = transactions[-1].get("signature")
-                if not before_signature:
-                    break
+            
+            # Также проверяем instructions
+            instructions = tx.get("instructions", [])
+            for ix in instructions:
+                program_id = ix.get("programId", "")
+                if program_id == PUMP_PROGRAM:
+                    ix_type = ix.get("type", "").lower()
+                    # create, create_v2, или просто наличие pump программы
+                    if "create" in ix_type or not ix_type:
+                        pump_txs += 1
+                        break
+
+        # Делим на 2 т.к. считаем и accountData и instructions
+        # Примерная оценка - каждый токен = ~2-3 транзакции (create + buy)
+        tokens_created = pump_txs // 3
+        
+        # Если много транзакций к pump.fun - это серийный скамер
+        if pump_txs > 100:
+            tokens_created = max(tokens_created, pump_txs // 2)
+            logger.warning(f"Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - likely serial scammer")
 
         if tokens_created == 0 and oldest_tx_time is None:
             return {
