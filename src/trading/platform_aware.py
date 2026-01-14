@@ -54,6 +54,25 @@ class PlatformAwareBuyer(Trader):
             instruction_builder = implementations.instruction_builder
             curve_manager = implementations.curve_manager
 
+            # Get pool address and verify it exists before proceeding
+            pool_address = self._get_pool_address(token_info, address_provider)
+            
+            # Quick check if pool account exists (prevents "Account not found" errors)
+            try:
+                await self.client.get_account_info(pool_address)
+            except ValueError as e:
+                if "not found" in str(e).lower():
+                    logger.warning(
+                        f"Pool account {pool_address} does not exist for {token_info.symbol} "
+                        f"on {token_info.platform.value} - token may have migrated or not yet created"
+                    )
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        error_message=f"Pool account not found: {pool_address}",
+                    )
+                raise
+
             # Convert amount to lamports
             amount_lamports = int(self.amount * LAMPORTS_PER_SOL)
 
@@ -62,11 +81,9 @@ class PlatformAwareBuyer(Trader):
                 token_amount = self.extreme_fast_token_amount
                 token_price_sol = self.amount / token_amount if token_amount > 0 else 0
             else:
-                # Get pool address based on platform using platform-agnostic method
-                pool_address = self._get_pool_address(token_info, address_provider)
-
                 # Regular behavior with RPC call
                 # Fetch pool state to get price and mayhem mode status
+                # (pool_address already obtained and validated above)
                 pool_state = await curve_manager.get_pool_state(pool_address)
                 token_price_sol = pool_state.get("price_per_token")
 
