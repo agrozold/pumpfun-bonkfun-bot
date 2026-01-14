@@ -26,6 +26,7 @@ from monitoring.pump_pattern_detector import PumpPatternDetector
 from monitoring.token_scorer import TokenScorer
 from monitoring.whale_tracker import WhaleTracker, WhaleBuy
 from monitoring.dev_reputation import DevReputationChecker
+from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
@@ -115,6 +116,13 @@ class UniversalTrader:
         enable_dev_check: bool = False,
         dev_max_tokens_created: int = 50,
         dev_min_account_age_days: int = 1,
+        # Trending scanner settings
+        enable_trending_scanner: bool = False,
+        trending_min_volume_24h: float = 50000,
+        trending_min_market_cap: float = 10000,
+        trending_max_market_cap: float = 5000000,
+        trending_min_price_change_1h: float = 20,
+        trending_scan_interval: float = 30,
         # Balance protection
         min_sol_balance: float = 0.03,
     ):
@@ -227,6 +235,25 @@ class UniversalTrader:
             logger.info(
                 f"Dev reputation check enabled: max_tokens={dev_max_tokens_created}, "
                 f"min_age={dev_min_account_age_days} days"
+            )
+
+        # Trending scanner setup
+        self.enable_trending_scanner = enable_trending_scanner
+        self.trending_scanner: TrendingScanner | None = None
+
+        if enable_trending_scanner:
+            self.trending_scanner = TrendingScanner(
+                min_volume_24h=trending_min_volume_24h,
+                min_market_cap=trending_min_market_cap,
+                max_market_cap=trending_max_market_cap,
+                min_price_change_1h=trending_min_price_change_1h,
+                scan_interval=trending_scan_interval,
+            )
+            self.trending_scanner.set_callback(self._on_trending_token)
+            logger.info(
+                f"Trending scanner enabled: min_vol=${trending_min_volume_24h:,.0f}, "
+                f"min_mc=${trending_min_market_cap:,.0f}, max_mc=${trending_max_market_cap:,.0f}, "
+                f"min_change_1h={trending_min_price_change_1h}%"
             )
 
         # Get platform-specific implementations
@@ -488,6 +515,93 @@ class UniversalTrader:
         except Exception as e:
             logger.exception(f"Failed to copy whale trade: {e}")
 
+    async def _on_trending_token(self, token: TrendingToken):
+        """Callback when trending scanner finds a hot token."""
+        logger.warning(
+            f"🔥 TRENDING BUY: {token.symbol} - "
+            f"MC: ${token.market_cap:,.0f}, Vol: ${token.volume_24h:,.0f}, "
+            f"+{token.price_change_1h:.1f}% 1h"
+        )
+        
+        mint_str = token.mint
+        if mint_str in self.processed_tokens:
+            logger.info(f"🔥 Already processed {token.symbol}, skipping")
+            return
+        
+        # Только pump.fun поддерживается
+        if self.platform != Platform.PUMP_FUN:
+            logger.warning(f"🔥 Trending scanner only for pump_fun")
+            return
+        
+        try:
+            from interfaces.core import TokenInfo
+            from platforms.pumpfun.address_provider import PumpFunAddresses
+            from core.pubkeys import SystemAddresses
+            
+            mint = Pubkey.from_string(mint_str)
+            
+            # Derive bonding curve
+            bonding_curve, _ = Pubkey.find_program_address(
+                [b"bonding-curve", bytes(mint)],
+                PumpFunAddresses.PROGRAM
+            )
+            
+            # Check if migrated
+            try:
+                curve_manager = self.platform_implementations.curve_manager
+                pool_state = await curve_manager.get_pool_state(bonding_curve)
+                if pool_state.get("complete", False):
+                    logger.info(f"🔥 {token.symbol} migrated to Raydium, skipping")
+                    return
+                creator = pool_state.get("creator")
+                if creator and isinstance(creator, str):
+                    creator = Pubkey.from_string(creator)
+                elif not isinstance(creator, Pubkey):
+                    creator = None
+            except Exception as e:
+                logger.warning(f"🔥 Cannot get curve for {token.symbol}: {e}")
+                return
+            
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+            
+            associated_bonding_curve, _ = Pubkey.find_program_address(
+                [bytes(bonding_curve), bytes(token_program_id), bytes(mint)],
+                SystemAddresses.ASSOCIATED_TOKEN_PROGRAM
+            )
+            
+            creator_vault = None
+            if creator:
+                creator_vault, _ = Pubkey.find_program_address(
+                    [b"creator-vault", bytes(creator)],
+                    PumpFunAddresses.PROGRAM
+                )
+            
+            token_info = TokenInfo(
+                name=token.name,
+                symbol=token.symbol,
+                uri="",
+                mint=mint,
+                platform=self.platform,
+                bonding_curve=bonding_curve,
+                associated_bonding_curve=associated_bonding_curve,
+                user=None,
+                creator=creator,
+                creator_vault=creator_vault,
+                pool_state=pool_state,
+                base_vault=None,
+                quote_vault=None,
+                token_program_id=token_program_id,
+                creation_timestamp=int(token.created_at.timestamp()) if token.created_at else 0,
+            )
+            
+            self.processed_tokens.add(mint_str)
+            
+            # Покупаем! skip_checks=True - trending scanner уже проверил метрики
+            await self._handle_token(token_info, skip_checks=True)
+            
+        except Exception as e:
+            logger.exception(f"Failed to buy trending token: {e}")
+
     async def start(self) -> None:
         """Start the trading bot and listen for new tokens."""
         logger.info(f"Starting Universal Trader for {self.platform.value}")
@@ -512,6 +626,9 @@ class UniversalTrader:
         )
         logger.info(
             f"Whale copy trading: {'enabled' if self.enable_whale_copy else 'disabled'}"
+        )
+        logger.info(
+            f"Trending scanner: {'enabled' if self.enable_trending_scanner else 'disabled'}"
         )
 
         if self.exit_strategy == "tp_sl":
@@ -564,6 +681,12 @@ class UniversalTrader:
                     logger.info("Starting whale tracker in background...")
                     whale_task = asyncio.create_task(self.whale_tracker.start())
 
+                # Start trending scanner if enabled
+                trending_task = None
+                if self.trending_scanner:
+                    logger.info("Starting trending scanner in background...")
+                    trending_task = asyncio.create_task(self.trending_scanner.start())
+
                 try:
                     await self.token_listener.listen_for_tokens(
                         self._queue_token,
@@ -578,6 +701,10 @@ class UniversalTrader:
                         whale_task.cancel()
                         if self.whale_tracker:
                             await self.whale_tracker.stop()
+                    if trending_task:
+                        trending_task.cancel()
+                        if self.trending_scanner:
+                            await self.trending_scanner.stop()
                     try:
                         await processor_task
                     except asyncio.CancelledError:
