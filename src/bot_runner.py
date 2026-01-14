@@ -198,6 +198,7 @@ async def start_bot(config_path: str):
             ),
             whale_min_buy_amount=cfg.get("whale_copy", {}).get("min_buy_amount", 0.5),
             helius_api_key=cfg.get("whale_copy", {}).get("helius_api_key") or os.getenv("HELIUS_API_KEY"),
+            birdeye_api_key=os.getenv("BIRDEYE_API_KEY"),
             # Dev reputation check configuration
             enable_dev_check=cfg.get("dev_check", {}).get("enabled", False),
             dev_max_tokens_created=cfg.get("dev_check", {}).get("max_tokens_created", 50),
