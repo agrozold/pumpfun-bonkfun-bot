@@ -125,13 +125,22 @@ class FallbackSeller:
             
             # Get market data
             logger.info(f"📍 Fetching market account data...")
-            try:
-                market_response = await rpc_client.get_account_info(market, encoding="base64")
-            except Exception as e:
-                logger.error(f"📍 get_account_info failed for market {market}: {e}")
-                return False, None, f"Failed to fetch market data: {e}"
+            market_response = None
+            for retry in range(3):
+                try:
+                    market_response = await rpc_client.get_account_info(market, encoding="base64")
+                    break
+                except Exception as e:
+                    error_str = str(e)
+                    if "429" in error_str or not error_str:
+                        logger.warning(f"📍 RPC rate limited, retry {retry + 1}/3...")
+                        import asyncio
+                        await asyncio.sleep(0.5 * (retry + 1))
+                        continue
+                    logger.error(f"📍 get_account_info failed for market {market}: {e}")
+                    return False, None, f"Failed to fetch market data: {e}"
             
-            if not market_response.value:
+            if not market_response or not market_response.value:
                 logger.error(f"📍 Market account {market} not found on chain")
                 return False, None, f"Market account {market} not found on chain"
             
