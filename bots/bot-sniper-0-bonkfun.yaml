@@ -29,7 +29,7 @@ filters:
   listener_type: pumpportal
   max_token_age: 15
   marry_mode: false
-  yolo_mode: true
+  yolo_mode: false
   monitored_pools:
   - bonk
 retries:
@@ -42,11 +42,28 @@ cleanup:
 node:
   max_rps: 50
 
-# Pattern Detection (optional - disabled by default)
-# pattern_detection:
-#   enabled: true
-#   volume_spike_threshold: 3.0
-#   holder_growth_threshold: 0.5
-#   min_whale_buys: 2
-#   min_patterns_to_buy: 2
-#   pattern_only_mode: false
+# Pattern Detection
+pattern_detection:
+  enabled: true
+  volume_spike_threshold: 3.0
+  holder_growth_threshold: 0.5
+  min_whale_buys: 2
+  min_patterns_to_buy: 1
+  pattern_only_mode: false
+
+# Token Scoring
+scoring:
+  enabled: true
+  min_score: 40
+
+# Whale Copy Trading
+whale_copy:
+  enabled: true
+  wallets_file: "smart_money_wallets.json"
+  min_buy_amount: 0.1
+
+# Dev Reputation Check - filter out serial scammers
+dev_check:
+  enabled: true
+  max_tokens_created: 50
+  min_account_age_days: 1

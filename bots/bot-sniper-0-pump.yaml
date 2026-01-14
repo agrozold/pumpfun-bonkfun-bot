@@ -49,3 +49,9 @@ whale_copy:
   enabled: true
   wallets_file: "smart_money_wallets.json"
   min_buy_amount: 0.1
+
+# Dev Reputation Check - filter out serial scammers
+dev_check:
+  enabled: true
+  max_tokens_created: 50
+  min_account_age_days: 1
