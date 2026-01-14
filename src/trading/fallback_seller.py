@@ -266,6 +266,7 @@ class FallbackSeller:
             return False, None, "All PumpSwap BUY attempts failed"
             
         except Exception as e:
+            logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
             return False, None, str(e)
 
     async def buy_via_jupiter(
