@@ -118,10 +118,12 @@ class UniversalTrader:
         dev_min_account_age_days: int = 1,
         # Trending scanner settings
         enable_trending_scanner: bool = False,
-        trending_min_volume_24h: float = 50000,
+        trending_min_volume_1h: float = 50000,
         trending_min_market_cap: float = 10000,
         trending_max_market_cap: float = 5000000,
+        trending_min_price_change_5m: float = 5,
         trending_min_price_change_1h: float = 20,
+        trending_min_buy_pressure: float = 0.65,
         trending_scan_interval: float = 30,
         # Balance protection
         min_sol_balance: float = 0.03,
@@ -243,17 +245,19 @@ class UniversalTrader:
 
         if enable_trending_scanner:
             self.trending_scanner = TrendingScanner(
-                min_volume_24h=trending_min_volume_24h,
+                min_volume_1h=trending_min_volume_1h,
                 min_market_cap=trending_min_market_cap,
                 max_market_cap=trending_max_market_cap,
+                min_price_change_5m=trending_min_price_change_5m,
                 min_price_change_1h=trending_min_price_change_1h,
+                min_buy_pressure=trending_min_buy_pressure,
                 scan_interval=trending_scan_interval,
             )
             self.trending_scanner.set_callback(self._on_trending_token)
             logger.info(
-                f"Trending scanner enabled: min_vol=${trending_min_volume_24h:,.0f}, "
+                f"Trending scanner enabled: min_vol_1h=${trending_min_volume_1h:,.0f}, "
                 f"min_mc=${trending_min_market_cap:,.0f}, max_mc=${trending_max_market_cap:,.0f}, "
-                f"min_change_1h={trending_min_price_change_1h}%"
+                f"min_change_5m={trending_min_price_change_5m}%, min_buy_pressure={trending_min_buy_pressure*100:.0f}%"
             )
 
         # Get platform-specific implementations

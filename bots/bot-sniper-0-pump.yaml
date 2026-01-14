@@ -61,11 +61,13 @@ dev_check:
   max_tokens_created: 30
   min_account_age_days: 0
 
-# Trending Scanner - сканирует существующие токены с ростом
+# Trending Scanner - ищет РЕЗКИЕ ВСПЛЕСКИ покупок
 trending_scanner:
   enabled: true
-  min_volume_24h: 50000       # Минимум $50k объёма за 24ч
+  min_volume_1h: 50000        # Минимум $50k объёма за 1 ЧАС
   min_market_cap: 10000       # Минимум $10k маркеткап
-  max_market_cap: 1000000     # Максимум $1M (не слишком поздно)
-  min_price_change_1h: 15     # Минимум +15% за час
+  max_market_cap: 1000000     # Максимум $1M
+  min_price_change_5m: 5      # Минимум +5% за 5 МИНУТ (резкий рост!)
+  min_price_change_1h: 20     # Минимум +20% за час
+  min_buy_pressure: 0.65      # 65% покупок (резкий buy)
   scan_interval: 30           # Сканировать каждые 30 сек

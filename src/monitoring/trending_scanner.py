@@ -26,6 +26,7 @@ class TrendingToken:
     name: str
     price_usd: float
     volume_24h: float
+    volume_1h: float
     volume_5m: float
     market_cap: float
     price_change_5m: float
@@ -33,19 +34,34 @@ class TrendingToken:
     price_change_24h: float
     buys_5m: int
     sells_5m: int
+    buys_1h: int
+    sells_1h: int
     liquidity: float
     created_at: datetime | None
     
     @property
-    def buy_pressure(self) -> float:
-        """Процент покупок."""
+    def buy_pressure_5m(self) -> float:
+        """Процент покупок за 5 минут."""
         total = self.buys_5m + self.sells_5m
         return self.buys_5m / total if total > 0 else 0
+    
+    @property
+    def buy_pressure_1h(self) -> float:
+        """Процент покупок за 1 час."""
+        total = self.buys_1h + self.sells_1h
+        return self.buys_1h / total if total > 0 else 0
     
     @property
     def trade_velocity(self) -> int:
         """Количество сделок за 5 минут."""
         return self.buys_5m + self.sells_5m
+    
+    @property
+    def volume_ratio(self) -> float:
+        """Отношение объёма 5м к среднему 5м за час."""
+        # 12 периодов по 5 минут в часе
+        avg_5m = self.volume_1h / 12 if self.volume_1h > 0 else 0
+        return self.volume_5m / avg_5m if avg_5m > 0 else 0
 
 
 class TrendingScanner:
@@ -54,30 +70,32 @@ class TrendingScanner:
     def __init__(
         self,
         # Фильтры
-        min_volume_24h: float = 50000,      # Минимум $50k объёма за 24ч
+        min_volume_1h: float = 50000,        # Минимум $50k объёма за 1 час!
         min_market_cap: float = 10000,       # Минимум $10k маркеткап
         max_market_cap: float = 5000000,     # Максимум $5M (не слишком поздно)
         min_liquidity: float = 5000,         # Минимум $5k ликвидности
         max_token_age_hours: float = 24,     # Токены не старше 24 часов
-        # Триггеры для покупки
+        # Триггеры для покупки - РЕЗКИЙ ВСПЛЕСК
+        min_price_change_5m: float = 5,      # Минимум +5% за 5 минут
         min_price_change_1h: float = 20,     # Минимум +20% за час
-        min_volume_spike: float = 2.0,       # Объём 2x от среднего
-        min_buy_pressure: float = 0.6,       # 60% покупок
-        min_trade_velocity: int = 10,        # 10+ сделок за 5 мин
+        min_buy_pressure: float = 0.65,      # 65% покупок (резкий buy)
+        min_trade_velocity: int = 15,        # 15+ сделок за 5 мин
+        min_volume_ratio: float = 3.0,       # Объём 5м должен быть 3x от среднего
         # Настройки
         scan_interval: float = 30,           # Сканировать каждые 30 сек
         max_concurrent_buys: int = 3,        # Макс покупок за цикл
     ):
-        self.min_volume_24h = min_volume_24h
+        self.min_volume_1h = min_volume_1h
         self.min_market_cap = min_market_cap
         self.max_market_cap = max_market_cap
         self.min_liquidity = min_liquidity
         self.max_token_age_hours = max_token_age_hours
         
+        self.min_price_change_5m = min_price_change_5m
         self.min_price_change_1h = min_price_change_1h
-        self.min_volume_spike = min_volume_spike
         self.min_buy_pressure = min_buy_pressure
         self.min_trade_velocity = min_trade_velocity
+        self.min_volume_ratio = min_volume_ratio
         
         self.scan_interval = scan_interval
         self.max_concurrent_buys = max_concurrent_buys
@@ -94,10 +112,11 @@ class TrendingScanner:
         
         logger.info(
             f"TrendingScanner initialized: "
-            f"min_vol=${min_volume_24h:,.0f}, "
+            f"min_vol_1h=${min_volume_1h:,.0f}, "
             f"min_mc=${min_market_cap:,.0f}, "
             f"max_mc=${max_market_cap:,.0f}, "
-            f"min_change_1h={min_price_change_1h}%"
+            f"min_change_5m={min_price_change_5m}%, "
+            f"min_buy_pressure={min_buy_pressure*100:.0f}%"
         )
 
     def set_callback(self, callback: Callable):
@@ -291,6 +310,8 @@ class TrendingScanner:
             base = pair.get("baseToken", {})
             txns = pair.get("txns", {})
             m5 = txns.get("m5", {})
+            h1 = txns.get("h1", {})
+            volume = pair.get("volume", {})
             
             # Parse creation time
             created_at = None
@@ -302,14 +323,17 @@ class TrendingScanner:
                 symbol=base.get("symbol", ""),
                 name=base.get("name", ""),
                 price_usd=float(pair.get("priceUsd", 0) or 0),
-                volume_24h=float(pair.get("volume", {}).get("h24", 0) or 0),
-                volume_5m=float(pair.get("volume", {}).get("m5", 0) or 0),
+                volume_24h=float(volume.get("h24", 0) or 0),
+                volume_1h=float(volume.get("h1", 0) or 0),
+                volume_5m=float(volume.get("m5", 0) or 0),
                 market_cap=float(pair.get("marketCap", 0) or 0),
                 price_change_5m=float(pair.get("priceChange", {}).get("m5", 0) or 0),
                 price_change_1h=float(pair.get("priceChange", {}).get("h1", 0) or 0),
                 price_change_24h=float(pair.get("priceChange", {}).get("h24", 0) or 0),
                 buys_5m=m5.get("buys", 0),
                 sells_5m=m5.get("sells", 0),
+                buys_1h=h1.get("buys", 0),
+                sells_1h=h1.get("sells", 0),
                 liquidity=float(pair.get("liquidity", {}).get("usd", 0) or 0),
                 created_at=created_at,
             )
@@ -322,8 +346,8 @@ class TrendingScanner:
         score = 0
         reasons = []
         
-        # Basic filters
-        if token.volume_24h < self.min_volume_24h:
+        # Basic filters - ОБЯЗАТЕЛЬНЫЕ
+        if token.volume_1h < self.min_volume_1h:
             return 0, []
         
         if token.market_cap < self.min_market_cap:
@@ -341,38 +365,43 @@ class TrendingScanner:
             if age_hours > self.max_token_age_hours:
                 return 0, []
         
-        # Scoring criteria
+        # === КРИТЕРИИ РЕЗКОГО ВСПЛЕСКА ===
         
-        # 1. Price momentum (1h change)
-        if token.price_change_1h >= self.min_price_change_1h:
+        # 1. Резкий рост цены за 5 минут (ВАЖНО!)
+        if token.price_change_5m >= self.min_price_change_5m:
+            score += 35
+            reasons.append(f"🚀 Price +{token.price_change_5m:.1f}% in 5min!")
+        else:
+            # Без резкого роста за 5м - не покупаем
+            return 0, []
+        
+        # 2. Buy pressure за 5 минут (РЕЗКИЕ ПОКУПКИ)
+        if token.buy_pressure_5m >= self.min_buy_pressure:
             score += 30
-            reasons.append(f"Price +{token.price_change_1h:.1f}% in 1h")
-        elif token.price_change_1h >= self.min_price_change_1h / 2:
-            score += 15
-            reasons.append(f"Price +{token.price_change_1h:.1f}% in 1h (moderate)")
+            reasons.append(f"💪 Buy pressure {token.buy_pressure_5m*100:.0f}% (5m)")
+        else:
+            # Без давления покупок - не покупаем
+            return 0, []
         
-        # 2. Buy pressure
-        if token.buy_pressure >= self.min_buy_pressure:
-            score += 25
-            reasons.append(f"Buy pressure {token.buy_pressure*100:.0f}%")
-        
-        # 3. Trade velocity
+        # 3. Trade velocity (активность)
         if token.trade_velocity >= self.min_trade_velocity:
             score += 20
-            reasons.append(f"Trade velocity: {token.trade_velocity} trades/5min")
+            reasons.append(f"⚡ {token.trade_velocity} trades in 5min")
         
-        # 4. Volume (higher = better)
-        if token.volume_24h >= 100000:
+        # 4. Volume ratio (всплеск объёма)
+        if token.volume_ratio >= self.min_volume_ratio:
             score += 15
-            reasons.append(f"High volume: ${token.volume_24h:,.0f}")
-        elif token.volume_24h >= 50000:
-            score += 10
-            reasons.append(f"Good volume: ${token.volume_24h:,.0f}")
+            reasons.append(f"📈 Volume {token.volume_ratio:.1f}x average")
         
-        # 5. Market cap sweet spot ($50k - $500k = early)
-        if 50000 <= token.market_cap <= 500000:
+        # 5. Бонус за рост за час
+        if token.price_change_1h >= self.min_price_change_1h:
             score += 10
-            reasons.append(f"Early MC: ${token.market_cap:,.0f}")
+            reasons.append(f"📊 +{token.price_change_1h:.1f}% in 1h")
+        
+        # 6. Бонус за ранний маркеткап
+        if 20000 <= token.market_cap <= 200000:
+            score += 10
+            reasons.append(f"🎯 Early MC: ${token.market_cap:,.0f}")
         
         return score, reasons
 
