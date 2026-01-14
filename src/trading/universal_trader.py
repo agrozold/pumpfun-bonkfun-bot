@@ -1069,14 +1069,36 @@ class UniversalTrader:
             logger.info(f"Restoring position: {position}")
             self.active_positions.append(position)
             
-            # Create minimal TokenInfo for monitoring
+            # Get creator from bonding curve state for proper sell instruction
+            creator = None
+            creator_vault = None
+            bonding_curve = None
+            
+            if position.bonding_curve:
+                bonding_curve = Pubkey.from_string(position.bonding_curve)
+                try:
+                    # Fetch curve state to get creator
+                    curve_manager = self.platform_implementations.curve_manager
+                    curve_state = await curve_manager.get_curve_state(bonding_curve)
+                    if curve_state and hasattr(curve_state, "creator") and curve_state.creator:
+                        creator = curve_state.creator
+                        # Derive creator vault
+                        address_provider = self.platform_implementations.address_provider
+                        creator_vault = address_provider.derive_creator_vault(creator)
+                        logger.info(f"Got creator {str(creator)[:8]}... from curve state")
+                except Exception as e:
+                    logger.warning(f"Failed to get creator from curve: {e}")
+            
+            # Create TokenInfo with creator info for proper sell
             token_info = TokenInfo(
                 name=position.symbol,
                 symbol=position.symbol,
                 uri="",
                 mint=position.mint,
                 platform=self.platform,
-                bonding_curve=Pubkey.from_string(position.bonding_curve) if position.bonding_curve else None,
+                bonding_curve=bonding_curve,
+                creator=creator,
+                creator_vault=creator_vault,
             )
             
             # Start monitoring in background

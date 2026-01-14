@@ -55,5 +55,5 @@ whale_copy:
 # Dev Reputation Check - filter out serial scammers
 dev_check:
   enabled: true
-  max_tokens_created: 50
-  min_account_age_days: 1
+  max_tokens_created: 30
+  min_account_age_days: 0
