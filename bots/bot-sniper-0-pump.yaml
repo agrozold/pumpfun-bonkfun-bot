@@ -1,5 +1,5 @@
-compute_units:
-  account_data_size: 12500000
+# compute_units:
+#   account_data_size: 512000  # Commented out - causes "max loaded accounts data size cap" error
 enabled: true
 env_file: .env
 filters:
@@ -22,10 +22,20 @@ trade:
   buy_amount: 0.01
   buy_slippage: 0.3
   exit_strategy: tp_sl
-  max_hold_time: 600
+  max_hold_time: 86400  # 24 hours
   moon_bag_percentage: 20
   price_check_interval: 2
   sell_slippage: 0.3
   stop_loss_percentage: 0.7
   take_profit_percentage: 1.0
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
+
+# Pattern Detection (optional - disabled by default)
+# Uncomment to enable pump pattern detection before buying
+# pattern_detection:
+#   enabled: true
+#   volume_spike_threshold: 3.0    # 3x volume increase triggers signal
+#   holder_growth_threshold: 0.5   # 50% holder growth triggers signal
+#   min_whale_buys: 2              # Min whale buys in 30s for cluster signal
+#   min_patterns_to_buy: 2         # Min patterns needed to trigger buy
+#   pattern_only_mode: false       # If true, only buy when patterns detected

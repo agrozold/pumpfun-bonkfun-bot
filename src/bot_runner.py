@@ -160,6 +160,25 @@ async def start_bot(config_path: str):
             yolo_mode=cfg["filters"].get("yolo_mode", False),
             # Compute unit configuration
             compute_units=cfg.get("compute_units", {}),
+            # Pattern detection configuration
+            enable_pattern_detection=cfg.get("pattern_detection", {}).get(
+                "enabled", False
+            ),
+            pattern_volume_spike_threshold=cfg.get("pattern_detection", {}).get(
+                "volume_spike_threshold", 3.0
+            ),
+            pattern_holder_growth_threshold=cfg.get("pattern_detection", {}).get(
+                "holder_growth_threshold", 0.5
+            ),
+            pattern_min_whale_buys=cfg.get("pattern_detection", {}).get(
+                "min_whale_buys", 2
+            ),
+            pattern_min_patterns_to_buy=cfg.get("pattern_detection", {}).get(
+                "min_patterns_to_buy", 2
+            ),
+            pattern_only_mode=cfg.get("pattern_detection", {}).get(
+                "pattern_only_mode", False
+            ),
         )
 
         await trader.start()
