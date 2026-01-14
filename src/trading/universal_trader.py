@@ -330,26 +330,55 @@ class UniversalTrader:
             f"for {whale_buy.amount_sol:.2f} SOL - COPYING!"
         )
         
+        # Проверяем что не копируем один и тот же токен дважды
+        mint_str = whale_buy.token_mint
+        if mint_str in self.processed_tokens:
+            logger.info(f"🐋 Already processed {whale_buy.token_symbol}, skipping duplicate")
+            return
+        
         # Создаём TokenInfo для покупки
         try:
             from interfaces.core import TokenInfo
+            
+            mint = Pubkey.from_string(mint_str)
+            
+            # Получаем bonding_curve и другие адреса из блокчейна
+            address_provider = self.platform_implementations.get("address_provider")
+            if not address_provider:
+                logger.error("No address provider for whale copy")
+                return
+            
+            # Derive bonding curve from mint
+            bonding_curve = address_provider.derive_bonding_curve(mint)
+            
+            # Для pump.fun используем Token2022 по умолчанию
+            from platforms.pumpfun.addresses import SystemAddresses
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+            
+            associated_bonding_curve = address_provider.derive_associated_bonding_curve(
+                mint, bonding_curve, token_program_id
+            )
             
             token_info = TokenInfo(
                 name=whale_buy.token_symbol,
                 symbol=whale_buy.token_symbol,
                 uri="",
-                mint=Pubkey.from_string(whale_buy.token_mint),
+                mint=mint,
                 platform=self.platform,
-                bonding_curve=None,
-                associated_bonding_curve=None,
+                bonding_curve=bonding_curve,
+                associated_bonding_curve=associated_bonding_curve,
                 user=None,
                 creator=None,
                 creator_vault=None,
                 pool_state=None,
                 base_vault=None,
                 quote_vault=None,
+                token_program_id=token_program_id,
                 creation_timestamp=int(whale_buy.timestamp.timestamp()),
             )
+            
+            # Помечаем как обработанный
+            self.processed_tokens.add(mint_str)
             
             # Покупаем! skip_checks=True обходит dev check и scoring
             await self._handle_token(token_info, skip_checks=True)
@@ -705,9 +734,8 @@ class UniversalTrader:
             True if balance is sufficient, False if bot should stop buying.
         """
         try:
-            balance_resp = await self.solana_client.client.get_balance(
-                self.wallet.pubkey
-            )
+            client = await self.solana_client.get_client()
+            balance_resp = await client.get_balance(self.wallet.pubkey)
             balance_sol = balance_resp.value / 1_000_000_000  # LAMPORTS_PER_SOL
             
             # Check if we have enough for buy + reserve for sells
