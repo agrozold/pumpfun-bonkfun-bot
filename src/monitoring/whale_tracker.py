@@ -406,6 +406,11 @@ class WhaleTracker:
         
         logger.info(f"🐋 Checking TX {signature[:16]}... on {platform}")
         
+        # ВАЖНО: Даём транзакции время подтвердиться
+        # logsSubscribe даёт нам TX сразу (commitment: processed)
+        # но getTransaction может их ещё не видеть
+        await asyncio.sleep(1.0)  # 1 секунда задержки
+        
         # Используем стандартный RPC вместо Helius для экономии запросов
         if self.rpc_endpoint:
             tx = await self._get_tx_rpc(signature)
