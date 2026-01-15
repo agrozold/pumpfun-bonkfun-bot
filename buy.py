@@ -76,6 +76,46 @@ POOL_MAYHEM_MODE_MIN_SIZE = 244
 GLOBALCONFIG_RESERVED_FEE_OFFSET = 72
 
 
+async def rpc_call_with_retry(
+    coro_func,
+    max_retries: int = 5,
+    base_delay: float = 0.5,
+    max_delay: float = 8.0,
+):
+    """Execute RPC call with exponential backoff on rate limit errors.
+    
+    Args:
+        coro_func: Async function that returns a coroutine (will be called each retry)
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay in seconds
+        max_delay: Maximum delay between retries
+        
+    Returns:
+        Result of the RPC call
+        
+    Raises:
+        Last exception if all retries fail
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            return await coro_func()
+        except Exception as e:
+            last_error = e
+            error_str = str(e).lower()
+            # Check if it's a rate limit error
+            if "429" in error_str or "too many" in error_str or "rate" in error_str:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                print(f"⚠️ RPC rate limited, retry {attempt + 1}/{max_retries} in {delay:.1f}s...")
+                await asyncio.sleep(delay)
+            else:
+                # Not a rate limit error, re-raise immediately
+                raise
+    
+    # All retries exhausted
+    raise last_error
+
+
 class BondingCurveState:
     _BASE_STRUCT = Struct(
         "virtual_token_reserves" / Int64ul,
@@ -151,8 +191,11 @@ def find_pumpswap_user_volume(user: Pubkey) -> Pubkey:
 
 
 async def get_token_program_id(client: AsyncClient, mint: Pubkey) -> Pubkey:
-    """Determine if mint uses TokenProgram or Token2022Program."""
-    mint_info = await client.get_account_info(mint)
+    """Determine if mint uses TokenProgram or Token2022Program with retry."""
+    async def _call():
+        return await client.get_account_info(mint)
+    
+    mint_info = await rpc_call_with_retry(_call, max_retries=5, base_delay=0.5)
     if not mint_info.value:
         raise ValueError(f"Could not fetch mint info for {mint}")
     owner = mint_info.value.owner
@@ -164,8 +207,15 @@ async def get_token_program_id(client: AsyncClient, mint: Pubkey) -> Pubkey:
 
 
 async def get_curve_state(client: AsyncClient, curve: Pubkey) -> BondingCurveState | None:
-    """Get bonding curve state, returns None if not found."""
-    response = await client.get_account_info(curve, encoding="base64")
+    """Get bonding curve state, returns None if not found with retry."""
+    async def _call():
+        return await client.get_account_info(curve, encoding="base64")
+    
+    try:
+        response = await rpc_call_with_retry(_call, max_retries=5, base_delay=0.5)
+    except Exception:
+        return None
+    
     if not response.value or not response.value.data:
         return None
     try:
@@ -175,9 +225,18 @@ async def get_curve_state(client: AsyncClient, curve: Pubkey) -> BondingCurveSta
 
 
 async def get_fee_recipient(client: AsyncClient, curve_state: BondingCurveState) -> Pubkey:
+    """Get fee recipient with retry."""
     if not curve_state.is_mayhem_mode:
         return PUMP_FEE
-    response = await client.get_account_info(PUMP_GLOBAL, encoding="base64")
+    
+    async def _call():
+        return await client.get_account_info(PUMP_GLOBAL, encoding="base64")
+    
+    try:
+        response = await rpc_call_with_retry(_call, max_retries=3, base_delay=0.3)
+    except Exception:
+        return PUMP_FEE
+    
     if not response.value or not response.value.data:
         return PUMP_FEE
     data = response.value.data
@@ -198,17 +257,27 @@ def calculate_price(curve_state: BondingCurveState) -> float:
 # ============================================================================
 
 async def get_market_address_by_base_mint(client: AsyncClient, base_mint: Pubkey) -> Pubkey | None:
-    """Find the AMM pool address for a token using get_program_accounts."""
+    """Find the AMM pool address for a token using get_program_accounts with retry."""
     filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(base_mint))]
-    response = await client.get_program_accounts(PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
-    if response.value:
-        return response.value[0].pubkey
+    
+    async def _call():
+        return await client.get_program_accounts(PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
+    
+    try:
+        response = await rpc_call_with_retry(_call, max_retries=5, base_delay=0.5)
+        if response.value:
+            return response.value[0].pubkey
+    except Exception as e:
+        print(f"❌ Failed to get market address after retries: {e}")
     return None
 
 
 async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
-    """Parse pool account data."""
-    response = await client.get_account_info(market_address, encoding="base64")
+    """Parse pool account data with retry."""
+    async def _call():
+        return await client.get_account_info(market_address, encoding="base64")
+    
+    response = await rpc_call_with_retry(_call, max_retries=5, base_delay=0.5)
     data = response.value.data
     parsed_data: dict = {}
     offset = 8  # Skip discriminator
@@ -238,16 +307,30 @@ async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
 
 
 async def get_pumpswap_fee_recipients(client: AsyncClient, pool: Pubkey) -> tuple[Pubkey, Pubkey]:
-    """Get fee recipient based on pool's mayhem mode status."""
-    response = await client.get_account_info(pool, encoding="base64")
-    if not response.value or not response.value.data:
+    """Get fee recipient based on pool's mayhem mode status with retry."""
+    async def _get_pool():
+        return await client.get_account_info(pool, encoding="base64")
+    
+    try:
+        response = await rpc_call_with_retry(_get_pool, max_retries=3, base_delay=0.3)
+    except Exception:
+        response = None
+    
+    if not response or not response.value or not response.value.data:
         fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
     else:
         pool_data = response.value.data
         is_mayhem = len(pool_data) >= POOL_MAYHEM_MODE_MIN_SIZE and bool(pool_data[POOL_MAYHEM_MODE_OFFSET])
         if is_mayhem:
-            cfg_resp = await client.get_account_info(PUMP_SWAP_GLOBAL_CONFIG, encoding="base64")
-            if cfg_resp.value and cfg_resp.value.data:
+            async def _get_config():
+                return await client.get_account_info(PUMP_SWAP_GLOBAL_CONFIG, encoding="base64")
+            
+            try:
+                cfg_resp = await rpc_call_with_retry(_get_config, max_retries=3, base_delay=0.3)
+            except Exception:
+                cfg_resp = None
+            
+            if cfg_resp and cfg_resp.value and cfg_resp.value.data:
                 fee_recipient = Pubkey.from_bytes(cfg_resp.value.data[GLOBALCONFIG_RESERVED_FEE_OFFSET:GLOBALCONFIG_RESERVED_FEE_OFFSET + 32])
             else:
                 fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
@@ -259,9 +342,15 @@ async def get_pumpswap_fee_recipients(client: AsyncClient, pool: Pubkey) -> tupl
 
 
 async def calculate_pool_price(client: AsyncClient, pool_base_ata: Pubkey, pool_quote_ata: Pubkey) -> float:
-    """Calculate token price from AMM pool balances."""
-    base_resp = await client.get_token_account_balance(pool_base_ata)
-    quote_resp = await client.get_token_account_balance(pool_quote_ata)
+    """Calculate token price from AMM pool balances with retry."""
+    async def _get_base():
+        return await client.get_token_account_balance(pool_base_ata)
+    
+    async def _get_quote():
+        return await client.get_token_account_balance(pool_quote_ata)
+    
+    base_resp = await rpc_call_with_retry(_get_base, max_retries=3, base_delay=0.3)
+    quote_resp = await rpc_call_with_retry(_get_quote, max_retries=3, base_delay=0.3)
     base_amount = float(base_resp.value.ui_amount)
     quote_amount = float(quote_resp.value.ui_amount)
     return quote_amount / base_amount
