@@ -42,6 +42,9 @@ from spl.token.instructions import get_associated_token_address
 
 load_dotenv()
 
+# API Keys
+JUPITER_API_KEY = os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
+
 # Constants
 EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 TOKEN_DECIMALS = 6
@@ -192,6 +195,51 @@ async def retry_rpc_call(func, *args, max_retries=MAX_RETRIES, **kwargs):
     raise Exception(f"Max retries ({max_retries}) exceeded for RPC call")
 
 
+async def get_pool_from_dexscreener(mint: str) -> tuple[str | None, str | None]:
+    """Find best swap pool using DexScreener API.
+    
+    Returns:
+        Tuple of (pair_address, dex_id) or (None, None) if not found
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None, None
+                data = await resp.json()
+        
+        pairs = data.get("pairs", [])
+        if not pairs:
+            return None, None
+        
+        # Filter for Solana pairs only
+        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+        if not solana_pairs:
+            return None, None
+        
+        # Prefer pumpswap, then raydium
+        pumpswap_pairs = [p for p in solana_pairs if "pumpswap" in p.get("dexId", "").lower()]
+        raydium_pairs = [p for p in solana_pairs if "raydium" in p.get("dexId", "").lower()]
+        
+        if pumpswap_pairs:
+            best = max(pumpswap_pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0))
+            print(f"📍 DexScreener found PumpSwap pool: {best.get('pairAddress')}")
+            return best.get("pairAddress"), "pumpswap"
+        elif raydium_pairs:
+            best = max(raydium_pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0))
+            print(f"📍 DexScreener found Raydium pool: {best.get('pairAddress')}")
+            return best.get("pairAddress"), "raydium"
+        else:
+            best = max(solana_pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0))
+            print(f"📍 DexScreener found {best.get('dexId')} pool: {best.get('pairAddress')}")
+            return best.get("pairAddress"), best.get("dexId")
+            
+    except Exception as e:
+        print(f"⚠️ DexScreener lookup failed: {e}")
+        return None, None
+
+
 async def get_fee_recipient(client: AsyncClient, curve_state: BondingCurveState) -> Pubkey:
     if not curve_state.is_mayhem_mode:
         return PUMP_FEE
@@ -229,7 +277,7 @@ async def sell_via_jupiter(
     priority_fee: int,
     max_retries: int,
 ) -> bool:
-    """Sell tokens via Jupiter aggregator - works for any token with liquidity."""
+    """Sell tokens via Jupiter aggregator with API key - works for any token with liquidity."""
     print("🪐 Using Jupiter aggregator...")
     
     token_program_id = await get_token_program_id(client, mint)
@@ -254,14 +302,19 @@ async def sell_via_jupiter(
     print(f"💰 Total balance: {total_balance_decimal:,.2f} tokens")
     print(f"📊 Selling: {percent:.0f}% = {sell_amount_decimal:,.2f} tokens")
     
-    # Jupiter API
-    jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
-    jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
+    # Jupiter API with key
+    jupiter_quote_url = "https://api.jup.ag/swap/v1/quote"
+    jupiter_swap_url = "https://api.jup.ag/swap/v1/swap"
+    
+    headers = {
+        "x-api-key": JUPITER_API_KEY,
+        "Content-Type": "application/json",
+    }
     
     slippage_bps = int(slippage * 10000)  # Convert to basis points
     
     async with aiohttp.ClientSession() as session:
-        # Get quote
+        # Get quote with retry
         quote_params = {
             "inputMint": str(mint),
             "outputMint": str(SOL),
@@ -269,15 +322,32 @@ async def sell_via_jupiter(
             "slippageBps": slippage_bps,
         }
         
-        try:
-            async with session.get(jupiter_quote_url, params=quote_params) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    print(f"❌ Jupiter quote failed: {error_text}")
+        quote = None
+        for attempt in range(max_retries):
+            try:
+                async with session.get(jupiter_quote_url, params=quote_params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 429:
+                        delay = 1.0 * (attempt + 1)
+                        print(f"⚠️ Jupiter rate limited, retry {attempt + 1}/{max_retries} in {delay}s...")
+                        await asyncio.sleep(delay)
+                        continue
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        print(f"❌ Jupiter quote failed: {error_text}")
+                        return False
+                    quote = await resp.json()
+                    break
+            except asyncio.TimeoutError:
+                print(f"⚠️ Jupiter quote timeout, retry {attempt + 1}/{max_retries}...")
+                await asyncio.sleep(1.0)
+            except Exception as e:
+                print(f"❌ Jupiter quote error: {e}")
+                if attempt == max_retries - 1:
                     return False
-                quote = await resp.json()
-        except Exception as e:
-            print(f"❌ Jupiter quote error: {e}")
+                await asyncio.sleep(1.0)
+        
+        if not quote:
+            print("❌ Failed to get Jupiter quote after retries")
             return False
         
         out_amount = int(quote.get("outAmount", 0))
@@ -287,7 +357,7 @@ async def sell_via_jupiter(
         print(f"📉 Slippage: {slippage*100:.0f}%")
         print()
         
-        # Get swap transaction
+        # Get swap transaction with retry
         swap_body = {
             "quoteResponse": quote,
             "userPublicKey": str(payer.pubkey()),
@@ -297,7 +367,12 @@ async def sell_via_jupiter(
         
         for attempt in range(max_retries):
             try:
-                async with session.post(jupiter_swap_url, json=swap_body) as resp:
+                async with session.post(jupiter_swap_url, json=swap_body, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 429:
+                        delay = 1.0 * (attempt + 1)
+                        print(f"⚠️ Jupiter swap rate limited, retry {attempt + 1}/{max_retries}...")
+                        await asyncio.sleep(delay)
+                        continue
                     if resp.status != 200:
                         error_text = await resp.text()
                         print(f"❌ Jupiter swap failed: {error_text}")
@@ -451,14 +526,30 @@ async def sell_via_pumpswap(
     priority_fee: int,
     max_retries: int,
 ) -> bool:
-    """Sell tokens via PumpSwap/Raydium AMM."""
-    print("🔄 Token migrated to Raydium - using PumpSwap AMM...")
+    """Sell tokens via PumpSwap/Raydium AMM, fallback to Jupiter for other DEXes."""
     
-    # Find market
+    # Find market via RPC first
     market = await get_market_address_by_base_mint(client, mint)
+    
+    # Fallback to DexScreener if not found
     if not market:
-        print("⚠️ PumpSwap market not found, trying Jupiter aggregator...")
-        return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
+        print("📍 PumpSwap market not found via RPC, trying DexScreener...")
+        pair_address, dex_id = await get_pool_from_dexscreener(str(mint))
+        
+        if pair_address and dex_id == "pumpswap":
+            market = Pubkey.from_string(pair_address)
+            print(f"📍 Using DexScreener PumpSwap pool: {market}")
+        elif pair_address and dex_id in ("raydium", "orca", "meteora", "raydium_cp"):
+            # Use Jupiter for Raydium/Orca/Meteora
+            print(f"📍 Token trades on {dex_id} - using Jupiter aggregator...")
+            return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
+        elif pair_address:
+            # Unknown DEX - try Jupiter anyway
+            print(f"📍 Token trades on {dex_id} - trying Jupiter aggregator...")
+            return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
+        else:
+            print("⚠️ No pool found, trying Jupiter aggregator...")
+            return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
     
     print(f"📍 Found PumpSwap market: {market}")
     
