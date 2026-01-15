@@ -211,6 +211,8 @@ class UniversalTrader:
         self.helius_api_key = helius_api_key
         
         if enable_whale_copy:
+            # Каждый бот слушает whale только для СВОЕЙ платформы
+            # Это избегает конфликтов WebSocket подписок между процессами
             self.whale_tracker = WhaleTracker(
                 wallets_file=whale_wallets_file,
                 min_buy_amount=whale_min_buy_amount,
@@ -218,11 +220,13 @@ class UniversalTrader:
                 rpc_endpoint=rpc_endpoint,
                 wss_endpoint=wss_endpoint,
                 time_window_minutes=5.0,  # Only copy buys from last 5 minutes
+                platform=self.platform.value,  # Слушаем только свою платформу!
             )
             self.whale_tracker.set_callback(self._on_whale_buy)
             logger.info(
                 f"Whale copy trading enabled: wallets_file={whale_wallets_file}, "
-                f"min_buy={whale_min_buy_amount} SOL, time_window=5 min"
+                f"min_buy={whale_min_buy_amount} SOL, time_window=5 min, "
+                f"platform={self.platform.value}"
             )
 
         # Dev reputation checker setup
@@ -420,10 +424,11 @@ class UniversalTrader:
                 logger.info(f"🐋 Already processed {mint_str[:8]}..., skipping duplicate")
                 return
             
-            # Step 2: Platform matching - each bot copies only its own platform
+            # Step 2: Platform validation (should always match now since each bot
+            # listens only to its own platform, but keep as safety check)
             whale_platform = Platform(whale_buy.platform)
             if whale_platform != self.platform:
-                logger.info(
+                logger.warning(
                     f"🐋 Platform mismatch: whale={whale_buy.platform}, bot={self.platform.value} - skipping"
                 )
                 return
@@ -450,9 +455,6 @@ class UniversalTrader:
             logger.warning(f"🐋 EXECUTING BUY for {token_info.symbol} ({mint_str[:8]}...) on {self.platform.value}")
             await self._handle_token(token_info, skip_checks=True)
             logger.warning(f"🐋 _handle_token completed for {token_info.symbol}")
-            
-        except Exception as e:
-            logger.exception(f"🐋 WHALE COPY FAILED: {e}")
             
         except Exception as e:
             logger.exception(f"🐋 WHALE COPY FAILED: {e}")
