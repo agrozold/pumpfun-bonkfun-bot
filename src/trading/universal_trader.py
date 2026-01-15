@@ -521,16 +521,33 @@ class UniversalTrader:
 
     async def _on_trending_token(self, token: TrendingToken):
         """Callback when trending scanner finds a hot token."""
+        mint_str = token.mint
+        
+        # Check if already processed
+        if mint_str in self.processed_tokens:
+            logger.info(f"🔥 Already processed {token.symbol}, skipping")
+            return
+        
+        # Check if already have position in this token
+        for pos in self.active_positions:
+            if str(pos.mint) == mint_str:
+                logger.info(f"🔥 Already have position in {token.symbol}, skipping")
+                return
+        
+        # Check token age - skip if older than 5 minutes
+        if token.created_at:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            token_age = (now - token.created_at).total_seconds()
+            if token_age > 300:  # 5 minutes
+                logger.info(f"🔥 Token {token.symbol} too old ({token_age:.0f}s), skipping")
+                return
+        
         logger.warning(
             f"🔥 TRENDING BUY: {token.symbol} - "
             f"MC: ${token.market_cap:,.0f}, Vol: ${token.volume_24h:,.0f}, "
             f"+{token.price_change_1h:.1f}% 1h"
         )
-        
-        mint_str = token.mint
-        if mint_str in self.processed_tokens:
-            logger.info(f"🔥 Already processed {token.symbol}, skipping")
-            return
         
         # Только pump.fun поддерживается
         if self.platform != Platform.PUMP_FUN:

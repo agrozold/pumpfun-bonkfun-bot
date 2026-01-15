@@ -38,7 +38,7 @@ PUMP_SWAP_EVENT_AUTHORITY = Pubkey.from_string("GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1y
 STANDARD_PUMPSWAP_FEE_RECIPIENT = Pubkey.from_string("7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ")
 PUMP_FEE_PROGRAM = Pubkey.from_string("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ")
 SELL_DISCRIMINATOR = bytes.fromhex("33e685a4017f83ad")
-BUY_DISCRIMINATOR = bytes.fromhex("66063d1201daebea")
+BUY_DISCRIMINATOR = bytes.fromhex("c62e1552b4d9e870")  # buy_exact_quote_in
 
 # System constants
 SYSTEM_PROGRAM = Pubkey.from_string("11111111111111111111111111111111")
@@ -256,7 +256,8 @@ class FallbackSeller:
             min_tokens_output = int(expected_tokens * (1 - self.slippage) * 10**TOKEN_DECIMALS)
             buy_amount_lamports = int(sol_amount * LAMPORTS_PER_SOL)
             
-            logger.info(f"💵 PumpSwap BUY: {sol_amount} SOL -> ~{expected_tokens:,.2f} {symbol}")
+            logger.info(f"💵 PumpSwap BUY: {sol_amount} SOL ({buy_amount_lamports} lamports) -> ~{expected_tokens:,.2f} {symbol}")
+            logger.info(f"💵 Min tokens out: {min_tokens_output} (with {self.slippage*100}% slippage)")
             
             # Get fee recipients
             fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
@@ -320,8 +321,9 @@ class FallbackSeller:
             logger.info(f"  Quote token program (SOL): {SYSTEM_TOKEN_PROGRAM}")
             logger.info(f"  Base token program: {token_program_id}")
             
-            # Build instruction data: discriminator + amount_in + min_amount_out
-            ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output)
+            # Build instruction data: discriminator + spendable_quote_in + min_base_amount_out
+            # Using buy_exact_quote_in: spend X SOL, get at least Y tokens
+            ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output) + bytes([0])  # track_volume = false
             
             # Instructions
             compute_limit_ix = set_compute_unit_limit(200_000)
