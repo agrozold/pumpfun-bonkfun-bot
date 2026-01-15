@@ -278,29 +278,39 @@ class FallbackSeller:
                 [b"fee_config", bytes(PUMP_AMM_PROGRAM_ID)], PUMP_FEE_PROGRAM
             )
             
-            # Build accounts for BUY (SOL -> Token)
+            # Volume accumulator PDAs (required by IDL)
+            global_volume_accumulator, _ = Pubkey.find_program_address(
+                [b"global_volume_accumulator"], PUMP_AMM_PROGRAM_ID
+            )
+            user_volume_accumulator, _ = Pubkey.find_program_address(
+                [b"user_volume_accumulator", bytes(self.wallet.pubkey)], PUMP_AMM_PROGRAM_ID
+            )
+            
+            # Build accounts for BUY (SOL -> Token) - ORDER MUST MATCH IDL!
             accounts = [
-                AccountMeta(pubkey=market, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
-                AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=SOL_MINT, is_signer=False, is_writable=False),  # input mint (SOL)
-                AccountMeta(pubkey=mint, is_signer=False, is_writable=False),  # output mint (token)
-                AccountMeta(pubkey=user_quote_ata, is_signer=False, is_writable=True),  # user SOL ATA
-                AccountMeta(pubkey=user_base_ata, is_signer=False, is_writable=True),  # user token ATA
-                AccountMeta(pubkey=pool_quote_ata, is_signer=False, is_writable=True),  # pool SOL
-                AccountMeta(pubkey=pool_base_ata, is_signer=False, is_writable=True),  # pool token
-                AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=fee_recipient_ata, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=PUMP_AMM_PROGRAM_ID, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=coin_creator_vault_ata, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=coin_creator_vault, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=market, is_signer=False, is_writable=True),  # 0: pool
+                AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),  # 1: user
+                AccountMeta(pubkey=PUMP_SWAP_GLOBAL_CONFIG, is_signer=False, is_writable=False),  # 2: global_config
+                AccountMeta(pubkey=mint, is_signer=False, is_writable=False),  # 3: base_mint (token)
+                AccountMeta(pubkey=SOL_MINT, is_signer=False, is_writable=False),  # 4: quote_mint (SOL)
+                AccountMeta(pubkey=user_base_ata, is_signer=False, is_writable=True),  # 5: user_base_token_account
+                AccountMeta(pubkey=user_quote_ata, is_signer=False, is_writable=True),  # 6: user_quote_token_account
+                AccountMeta(pubkey=pool_base_ata, is_signer=False, is_writable=True),  # 7: pool_base_token_account
+                AccountMeta(pubkey=pool_quote_ata, is_signer=False, is_writable=True),  # 8: pool_quote_token_account
+                AccountMeta(pubkey=fee_recipient, is_signer=False, is_writable=False),  # 9: protocol_fee_recipient
+                AccountMeta(pubkey=fee_recipient_ata, is_signer=False, is_writable=True),  # 10: protocol_fee_recipient_token_account
+                AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),  # 11: base_token_program (Token2022!)
+                AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),  # 12: quote_token_program (SOL)
+                AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),  # 13: system_program
+                AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),  # 14: associated_token_program
+                AccountMeta(pubkey=PUMP_SWAP_EVENT_AUTHORITY, is_signer=False, is_writable=False),  # 15: event_authority
+                AccountMeta(pubkey=PUMP_AMM_PROGRAM_ID, is_signer=False, is_writable=False),  # 16: program
+                AccountMeta(pubkey=coin_creator_vault_ata, is_signer=False, is_writable=True),  # 17: coin_creator_vault_ata
+                AccountMeta(pubkey=coin_creator_vault, is_signer=False, is_writable=False),  # 18: coin_creator_vault_authority
+                AccountMeta(pubkey=global_volume_accumulator, is_signer=False, is_writable=False),  # 19: global_volume_accumulator
+                AccountMeta(pubkey=user_volume_accumulator, is_signer=False, is_writable=True),  # 20: user_volume_accumulator
+                AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),  # 21: fee_config
+                AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),  # 22: fee_program
             ]
             
             # Log accounts list for debugging
