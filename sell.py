@@ -434,9 +434,12 @@ async def sell_via_jupiter(
 async def get_market_address_by_base_mint(client: AsyncClient, base_mint: Pubkey) -> Pubkey | None:
     """Find the AMM pool address for a token."""
     filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(base_mint))]
-    response = await retry_rpc_call(client.get_program_accounts, PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
-    if response.value:
-        return response.value[0].pubkey
+    try:
+        response = await retry_rpc_call(client.get_program_accounts, PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters)
+        if response.value:
+            return response.value[0].pubkey
+    except Exception as e:
+        print(f"⚠️ RPC failed to find market: {e}")
     return None
 
 
