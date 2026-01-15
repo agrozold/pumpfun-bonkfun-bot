@@ -343,27 +343,46 @@ class FallbackSeller:
                 tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             )
             sig = str(result.value)
-            logger.info(f"� PumpSwap BUY signature: {sig}")
+            logger.info(f"PumpSwap BUY signature: {sig}")
+            logger.info(f"https://solscan.io/tx/{sig}")
             
-            # Retry confirmation only (NOT resending tx!)
+            # Wait and verify ACTUAL tx success (not just "confirmed")
+            import asyncio
             for attempt in range(self.max_retries):
                 try:
-                    logger.info(f"⏳ Confirming tx (attempt {attempt + 1}/{self.max_retries})...")
-                    await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
-                    logger.info(f"✅ PumpSwap BUY confirmed! Got ~{expected_tokens:,.2f} {symbol}")
+                    logger.info(f"Checking tx status (attempt {attempt + 1}/{self.max_retries})...")
+                    await asyncio.sleep(2.0)
+                    
+                    # Get full transaction to check err field
+                    tx_response = await rpc_client.get_transaction(
+                        Signature.from_string(sig),
+                        encoding="json",
+                        max_supported_transaction_version=0,
+                    )
+                    
+                    if tx_response.value is None:
+                        logger.warning(f"Transaction not found yet, retrying...")
+                        continue
+                    
+                    # Check if transaction actually succeeded (err must be None)
+                    meta = tx_response.value.transaction.meta
+                    if meta and meta.err is not None:
+                        error_msg = f"Transaction FAILED on-chain: {meta.err}"
+                        logger.error(f"FAILED: {error_msg}")
+                        return False, sig, error_msg
+                    
+                    logger.info(f"PumpSwap BUY SUCCESS! Got ~{expected_tokens:,.2f} {symbol}")
                     return True, sig, None
                     
                 except Exception as e:
                     error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                    logger.warning(f"Confirm attempt {attempt + 1} failed: {error_msg}")
+                    logger.warning(f"Status check attempt {attempt + 1} failed: {error_msg}")
                     if attempt == self.max_retries - 1:
-                        # Return signature anyway - tx might have succeeded
-                        logger.warning(f"⚠️ Confirmation failed but tx may have succeeded: {sig}")
+                        logger.warning(f"Could not verify tx status: {sig}")
                         return False, sig, error_msg
-                    import asyncio
                     await asyncio.sleep(1.0 * (attempt + 1))
             
-            return False, sig, "Confirmation timeout (tx may have succeeded)"
+            return False, sig, "Could not verify transaction status"
             
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
@@ -660,31 +679,49 @@ class FallbackSeller:
             )
             tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
             
-            logger.info(f"🚀 Sending PumpSwap SELL transaction...")
+            logger.info(f"Sending PumpSwap SELL transaction...")
             result = await rpc_client.send_transaction(
                 tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             )
             sig = str(result.value)
-            logger.info(f"� PumpSwap SELL signature: {sig}")
+            logger.info(f"PumpSwap SELL signature: {sig}")
+            logger.info(f"https://solscan.io/tx/{sig}")
             
-            # Retry confirmation only (NOT resending tx!)
+            # Wait and verify ACTUAL tx success
+            import asyncio
             for attempt in range(self.max_retries):
                 try:
-                    logger.info(f"⏳ Confirming tx (attempt {attempt + 1}/{self.max_retries})...")
-                    await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
-                    logger.info("✅ PumpSwap sell confirmed!")
+                    logger.info(f"Checking tx status (attempt {attempt + 1}/{self.max_retries})...")
+                    await asyncio.sleep(2.0)
+                    
+                    tx_response = await rpc_client.get_transaction(
+                        Signature.from_string(sig),
+                        encoding="json",
+                        max_supported_transaction_version=0,
+                    )
+                    
+                    if tx_response.value is None:
+                        logger.warning(f"Transaction not found yet, retrying...")
+                        continue
+                    
+                    meta = tx_response.value.transaction.meta
+                    if meta and meta.err is not None:
+                        error_msg = f"Transaction FAILED on-chain: {meta.err}"
+                        logger.error(f"FAILED: {error_msg}")
+                        return False, sig, error_msg
+                    
+                    logger.info("PumpSwap SELL SUCCESS!")
                     return True, sig, None
                     
                 except Exception as e:
                     error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                    logger.warning(f"Confirm attempt {attempt + 1} failed: {error_msg}")
+                    logger.warning(f"Status check attempt {attempt + 1} failed: {error_msg}")
                     if attempt == self.max_retries - 1:
-                        logger.warning(f"⚠️ Confirmation failed but tx may have succeeded: {sig}")
+                        logger.warning(f"Could not verify tx status: {sig}")
                         return False, sig, error_msg
-                    import asyncio
                     await asyncio.sleep(1.0 * (attempt + 1))
             
-            return False, sig, "Confirmation timeout (tx may have succeeded)"
+            return False, sig, "Could not verify transaction status"
             
         except Exception as e:
             return False, None, str(e)
