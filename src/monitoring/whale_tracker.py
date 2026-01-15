@@ -100,15 +100,20 @@ class WhaleTracker:
     def _load_wallets(self):
         """Загрузить список кошельков китов."""
         path = Path(self.wallets_file)
+        logger.warning(f"🐋 Loading wallets from: {path.absolute()}")
+        
         if not path.exists():
-            logger.warning(f"Wallets file not found: {self.wallets_file}")
+            logger.error(f"🐋 Wallets file NOT FOUND: {path.absolute()}")
             return
         
         try:
             with open(path) as f:
                 data = json.load(f)
             
-            for whale in data.get("whales", []):
+            whales_list = data.get("whales", [])
+            logger.warning(f"🐋 Found {len(whales_list)} entries in whales list")
+            
+            for whale in whales_list:
                 wallet = whale.get("wallet", "")
                 if wallet:
                     self.whale_wallets[wallet] = {
@@ -117,7 +122,12 @@ class WhaleTracker:
                         "source": whale.get("source", "manual"),
                     }
             
-            logger.info(f"Loaded {len(self.whale_wallets)} whale wallets")
+            logger.warning(f"🐋 Loaded {len(self.whale_wallets)} whale wallets successfully")
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"🐋 JSON parse error in {self.wallets_file}: {e}")
+        except Exception as e:
+            logger.exception(f"🐋 Error loading wallets: {e}")
         except Exception as e:
             logger.exception(f"Failed to load wallets: {e}")
 
