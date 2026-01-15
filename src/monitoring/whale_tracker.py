@@ -157,11 +157,11 @@ class WhaleTracker:
         
         # Если передан wss_endpoint - используем его (может быть приватный RPC)
         if self.wss_endpoint and "helius" not in self.wss_endpoint.lower():
-            logger.info(f"🐋 Using provided WSS: {self.wss_endpoint[:50]}...")
+            logger.warning(f"🐋 WSS ENDPOINT: Using provided: {self.wss_endpoint[:50]}...")
             return self.wss_endpoint
         
         # Fallback на публичный Solana WSS
-        logger.info(f"🐋 Using public Solana WSS for logsSubscribe (Helius gives 429)")
+        logger.warning(f"🐋 WSS ENDPOINT: Using public Solana (Helius gives 429)")
         return public_wss
 
     async def start(self):
