@@ -48,6 +48,7 @@ class PlatformAwareBuyer(Trader):
         """Execute buy operation using platform-specific implementations."""
         try:
             # Get platform-specific implementations
+            logger.info(f"🔧 Getting platform implementations for {token_info.platform.value}...")
             implementations = get_platform_implementations(
                 token_info.platform, self.client
             )
@@ -57,10 +58,13 @@ class PlatformAwareBuyer(Trader):
 
             # Get pool address and verify it exists before proceeding
             pool_address = self._get_pool_address(token_info, address_provider)
+            logger.info(f"🔧 Pool address: {pool_address}")
             
             # Quick check if pool account exists (prevents "Account not found" errors)
             try:
+                logger.info(f"🔧 Checking pool account exists...")
                 await self.client.get_account_info(pool_address)
+                logger.info(f"🔧 Pool account exists ✅")
             except ValueError as e:
                 if "not found" in str(e).lower():
                     logger.warning(
