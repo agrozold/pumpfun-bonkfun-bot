@@ -19,6 +19,7 @@ import os
 import struct
 import sys
 
+import aiohttp
 import base58
 from construct import Flag, Int64ul, Struct
 from dotenv import load_dotenv
@@ -273,6 +274,53 @@ async def get_market_address_by_base_mint(client: AsyncClient, base_mint: Pubkey
     return None
 
 
+async def get_pool_from_dexscreener(mint: str) -> tuple[str | None, str | None]:
+    """Find best swap pool using DexScreener API.
+    
+    Returns:
+        Tuple of (pair_address, dex_id) or (None, None) if not found
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None, None
+                data = await resp.json()
+        
+        pairs = data.get("pairs", [])
+        if not pairs:
+            return None, None
+        
+        # Filter for Solana pairs only
+        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+        if not solana_pairs:
+            return None, None
+        
+        # Prefer pumpswap, then raydium
+        pumpswap_pairs = [p for p in solana_pairs if "pumpswap" in p.get("dexId", "").lower()]
+        raydium_pairs = [p for p in solana_pairs if "raydium" in p.get("dexId", "").lower()]
+        
+        if pumpswap_pairs:
+            # Sort by liquidity
+            best = max(pumpswap_pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0))
+            print(f"📍 DexScreener found PumpSwap pool: {best.get('pairAddress')}")
+            return best.get("pairAddress"), "pumpswap"
+        elif raydium_pairs:
+            best = max(raydium_pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0))
+            print(f"📍 DexScreener found Raydium pool: {best.get('pairAddress')}")
+            return best.get("pairAddress"), "raydium"
+        else:
+            # Any other DEX
+            best = max(solana_pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0))
+            print(f"📍 DexScreener found {best.get('dexId')} pool: {best.get('pairAddress')}")
+            return best.get("pairAddress"), best.get("dexId")
+            
+    except Exception as e:
+        print(f"⚠️ DexScreener lookup failed: {e}")
+        return None, None
+
+
 async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
     """Parse pool account data with retry."""
     async def _call():
@@ -367,13 +415,26 @@ async def buy_via_pumpswap(
     max_retries: int,
 ) -> bool:
     """Buy tokens via PumpSwap/Raydium AMM."""
-    print("🔄 Token migrated to Raydium - using PumpSwap AMM...")
     
-    # Find market
+    # Find market via RPC first
     market = await get_market_address_by_base_mint(client, mint)
+    
+    # Fallback to DexScreener if not found
     if not market:
-        print("❌ PumpSwap market not found for this token")
-        return False
+        print("📍 PumpSwap market not found via RPC, trying DexScreener...")
+        pair_address, dex_id = await get_pool_from_dexscreener(str(mint))
+        
+        if pair_address and dex_id == "pumpswap":
+            market = Pubkey.from_string(pair_address)
+            print(f"📍 Using DexScreener PumpSwap pool: {market}")
+        elif pair_address:
+            print(f"❌ Token trades on {dex_id}, not PumpSwap - manual swap not supported yet")
+            print(f"   Pool address: {pair_address}")
+            print(f"   Try swapping on https://pump.fun or https://raydium.io")
+            return False
+        else:
+            print("❌ No swap pool found for this token on any DEX")
+            return False
     
     print(f"📍 Found PumpSwap market: {market}")
     
