@@ -1559,23 +1559,31 @@ class UniversalTrader:
 
     async def _restore_positions(self) -> None:
         """Restore and resume monitoring of saved positions on startup."""
+        logger.info("🔄 Checking for saved positions to restore...")
         positions = load_positions()
+        
         if not positions:
+            logger.info("🔄 No saved positions found")
             return
 
-        logger.info(f"Found {len(positions)} saved positions to restore")
+        logger.info(f"🔄 Found {len(positions)} saved positions to restore")
         
         for position in positions:
+            logger.info(
+                f"🔄 Checking position: {position.symbol} ({position.mint[:8]}...) "
+                f"platform={position.platform}, is_active={position.is_active}"
+            )
+            
             # Only restore positions for our platform
             if position.platform != self.platform.value:
-                logger.info(f"Skipping position {position.symbol} - different platform")
+                logger.info(f"🔄 Skipping position {position.symbol} - different platform ({position.platform} != {self.platform.value})")
                 continue
                 
             if not position.is_active:
-                logger.info(f"Skipping closed position {position.symbol}")
+                logger.info(f"🔄 Skipping closed position {position.symbol}")
                 continue
 
-            logger.info(f"Restoring position: {position}")
+            logger.info(f"🔄 Restoring position: {position.symbol} on {position.platform}")
             self.active_positions.append(position)
             
             # Get creator from bonding curve state for proper sell instruction
@@ -1635,6 +1643,7 @@ class UniversalTrader:
             )
             
             # Start monitoring in background
+            logger.info(f"🔄 Starting position monitor for {position.symbol} (TP: {position.take_profit_price}, SL: {position.stop_loss_price})")
             asyncio.create_task(self._monitor_position_until_exit(token_info, position))
 
 
