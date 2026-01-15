@@ -1030,18 +1030,26 @@ class UniversalTrader:
 
             # Buy token
             if skip_checks:
-                logger.info(
-                    f"🐋 WHALE COPY: Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} (checks skipped)..."
+                logger.warning(
+                    f"🐋 WHALE COPY: Executing buy for {token_info.symbol}..."
                 )
             else:
                 logger.info(
                     f"Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
                 )
-            buy_result: TradeResult = await self.buyer.execute(token_info)
+            
+            try:
+                buy_result: TradeResult = await self.buyer.execute(token_info)
+                logger.info(f"Buy result: success={buy_result.success}, signature={buy_result.signature}")
+            except Exception as e:
+                logger.exception(f"❌ Buy execution failed with exception: {e}")
+                return
 
             if buy_result.success:
+                logger.warning(f"✅ BUY SUCCESS: {token_info.symbol} - {buy_result.signature}")
                 await self._handle_successful_buy(token_info, buy_result)
             else:
+                logger.error(f"❌ BUY FAILED: {token_info.symbol} - {buy_result.error}")
                 await self._handle_failed_buy(token_info, buy_result)
 
             # Only wait for next token in yolo mode
