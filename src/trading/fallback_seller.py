@@ -183,6 +183,7 @@ class FallbackSeller:
             try:
                 token_program_id = await self._get_token_program_id(mint)
                 logger.info(f"📍 Token program: {token_program_id}")
+                logger.info(f"📍 Is Token2022: {token_program_id == TOKEN_2022_PROGRAM}")
             except Exception as e:
                 # Retry once after delay
                 import asyncio
@@ -309,15 +310,29 @@ class FallbackSeller:
             compute_limit_ix = set_compute_unit_limit(200_000)
             compute_price_ix = set_compute_unit_price(self.priority_fee)
             
-            # Create token ATA (idempotent)
-            create_token_ata_ix = create_idempotent_associated_token_account(
-                self.wallet.pubkey, self.wallet.pubkey, mint, token_program_id
-            )
+            # Create token ATA instruction manually for Token2022 compatibility
+            # The spl-token create_idempotent_associated_token_account may not work correctly with Token2022
+            create_token_ata_accounts = [
+                AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),  # payer
+                AccountMeta(pubkey=user_base_ata, is_signer=False, is_writable=True),  # ata
+                AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),  # owner
+                AccountMeta(pubkey=mint, is_signer=False, is_writable=False),  # mint
+                AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),  # Use correct token program!
+            ]
+            # Instruction 1 = create idempotent ATA
+            create_token_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_token_ata_accounts)
             
-            # Create wrapped SOL ATA (idempotent)
-            create_wsol_ata_ix = create_idempotent_associated_token_account(
-                self.wallet.pubkey, self.wallet.pubkey, SOL_MINT, SYSTEM_TOKEN_PROGRAM
-            )
+            # Create wrapped SOL ATA (always uses classic token program)
+            create_wsol_ata_accounts = [
+                AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=user_quote_ata, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=SOL_MINT, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+            ]
+            create_wsol_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_wsol_ata_accounts)
             
             # Transfer SOL to wrapped SOL account
             transfer_ix = transfer(
