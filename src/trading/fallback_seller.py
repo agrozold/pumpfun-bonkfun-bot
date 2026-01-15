@@ -293,7 +293,14 @@ class FallbackSeller:
             # Send transaction
             for attempt in range(self.max_retries):
                 try:
-                    blockhash = await rpc_client.get_latest_blockhash()
+                    # Use cached blockhash from SolanaClient to save RPC calls
+                    try:
+                        blockhash = await self.client.get_cached_blockhash()
+                    except RuntimeError:
+                        # Cache not ready, fetch directly
+                        blockhash_resp = await rpc_client.get_latest_blockhash()
+                        blockhash = blockhash_resp.value.blockhash
+                    
                     msg = Message.new_with_blockhash(
                         [
                             compute_limit_ix,
@@ -305,7 +312,7 @@ class FallbackSeller:
                             buy_ix,
                         ],
                         self.wallet.pubkey,
-                        blockhash.value.blockhash,
+                        blockhash,
                     )
                     tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
                     
@@ -593,11 +600,18 @@ class FallbackSeller:
             # Send transaction
             for attempt in range(self.max_retries):
                 try:
-                    blockhash = await rpc_client.get_latest_blockhash()
+                    # Use cached blockhash from SolanaClient to save RPC calls
+                    try:
+                        blockhash = await self.client.get_cached_blockhash()
+                    except RuntimeError:
+                        # Cache not ready, fetch directly
+                        blockhash_resp = await rpc_client.get_latest_blockhash()
+                        blockhash = blockhash_resp.value.blockhash
+                    
                     msg = Message.new_with_blockhash(
                         [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
                         self.wallet.pubkey,
-                        blockhash.value.blockhash,
+                        blockhash,
                     )
                     tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
                     

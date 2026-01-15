@@ -146,6 +146,35 @@ class SolanaClient:
             raise ValueError(f"Account {pubkey} not found")
         return response.value
 
+    async def get_multiple_accounts(self, pubkeys: list[Pubkey]) -> list[dict[str, Any] | None]:
+        """Get multiple accounts in a single RPC call (batch).
+        
+        Much more efficient than calling get_account_info multiple times.
+        Solana supports up to 100 accounts per call.
+
+        Args:
+            pubkeys: List of public keys (max 100)
+
+        Returns:
+            List of account info dicts (None for accounts that don't exist)
+        """
+        if not pubkeys:
+            return []
+        
+        # Solana limit is 100 accounts per call
+        if len(pubkeys) > 100:
+            logger.warning(f"get_multiple_accounts: truncating {len(pubkeys)} to 100")
+            pubkeys = pubkeys[:100]
+        
+        client = await self.get_client()
+        response = await client.get_multiple_accounts(pubkeys, encoding="base64")
+        
+        results = []
+        for account in response.value:
+            results.append(account if account else None)
+        
+        return results
+
     async def get_token_account_balance(self, token_account: Pubkey) -> int:
         """Get token balance for an account.
 
