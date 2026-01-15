@@ -1569,8 +1569,9 @@ class UniversalTrader:
         logger.info(f"🔄 Found {len(positions)} saved positions to restore")
         
         for position in positions:
+            mint_str = str(position.mint)
             logger.info(
-                f"🔄 Checking position: {position.symbol} ({position.mint[:8]}...) "
+                f"🔄 Checking position: {position.symbol} ({mint_str[:8]}...) "
                 f"platform={position.platform}, is_active={position.is_active}"
             )
             
