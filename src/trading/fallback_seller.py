@@ -303,6 +303,13 @@ class FallbackSeller:
                 AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
             ]
             
+            # Log accounts list for debugging
+            logger.info("=== PumpSwap BUY Accounts ===")
+            for i, acc in enumerate(accounts):
+                logger.info(f"  #{i}: {acc.pubkey} (signer={acc.is_signer}, writable={acc.is_writable})")
+            logger.info(f"  Quote token program (SOL): {SYSTEM_TOKEN_PROGRAM}")
+            logger.info(f"  Base token program: {token_program_id}")
+            
             # Build instruction data: discriminator + amount_in + min_amount_out
             ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output)
             
@@ -310,29 +317,71 @@ class FallbackSeller:
             compute_limit_ix = set_compute_unit_limit(200_000)
             compute_price_ix = set_compute_unit_price(self.priority_fee)
             
-            # Create token ATA instruction manually for Token2022 compatibility
-            # The spl-token create_idempotent_associated_token_account may not work correctly with Token2022
-            create_token_ata_accounts = [
-                AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),  # payer
-                AccountMeta(pubkey=user_base_ata, is_signer=False, is_writable=True),  # ata
-                AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),  # owner
-                AccountMeta(pubkey=mint, is_signer=False, is_writable=False),  # mint
-                AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),  # Use correct token program!
-            ]
-            # Instruction 1 = create idempotent ATA
-            create_token_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_token_ata_accounts)
+            # Check if ATAs already exist before creating
+            instructions = [compute_limit_ix, compute_price_ix]
             
-            # Create wrapped SOL ATA (always uses classic token program)
-            create_wsol_ata_accounts = [
-                AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
-                AccountMeta(pubkey=user_quote_ata, is_signer=False, is_writable=True),
-                AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=SOL_MINT, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
-                AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
-            ]
-            create_wsol_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_wsol_ata_accounts)
+            # Check user_base_ata (token ATA)
+            try:
+                base_ata_info = await rpc_client.get_account_info(user_base_ata)
+                if base_ata_info.value:
+                    logger.info(f"📍 Token ATA exists: {user_base_ata}, owner: {base_ata_info.value.owner}")
+                else:
+                    logger.info(f"📍 Token ATA does not exist, will create: {user_base_ata}")
+                    create_token_ata_accounts = [
+                        AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
+                        AccountMeta(pubkey=user_base_ata, is_signer=False, is_writable=True),
+                        AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),
+                        AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
+                        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                        AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),
+                    ]
+                    create_token_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_token_ata_accounts)
+                    instructions.append(create_token_ata_ix)
+            except Exception as e:
+                logger.warning(f"📍 Could not check token ATA: {e}, will try to create")
+                create_token_ata_accounts = [
+                    AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
+                    AccountMeta(pubkey=user_base_ata, is_signer=False, is_writable=True),
+                    AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),
+                    AccountMeta(pubkey=mint, is_signer=False, is_writable=False),
+                    AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                    AccountMeta(pubkey=token_program_id, is_signer=False, is_writable=False),
+                ]
+                create_token_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_token_ata_accounts)
+                instructions.append(create_token_ata_ix)
+            
+            # Check user_quote_ata (wrapped SOL ATA)
+            try:
+                quote_ata_info = await rpc_client.get_account_info(user_quote_ata)
+                if quote_ata_info.value:
+                    logger.info(f"📍 WSOL ATA exists: {user_quote_ata}, owner: {quote_ata_info.value.owner}")
+                    # Verify owner is correct
+                    if quote_ata_info.value.owner != SYSTEM_TOKEN_PROGRAM:
+                        logger.error(f"❌ WSOL ATA has wrong owner! Expected {SYSTEM_TOKEN_PROGRAM}, got {quote_ata_info.value.owner}")
+                else:
+                    logger.info(f"📍 WSOL ATA does not exist, will create: {user_quote_ata}")
+                    create_wsol_ata_accounts = [
+                        AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
+                        AccountMeta(pubkey=user_quote_ata, is_signer=False, is_writable=True),
+                        AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),
+                        AccountMeta(pubkey=SOL_MINT, is_signer=False, is_writable=False),
+                        AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                        AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                    ]
+                    create_wsol_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_wsol_ata_accounts)
+                    instructions.append(create_wsol_ata_ix)
+            except Exception as e:
+                logger.warning(f"📍 Could not check WSOL ATA: {e}, will try to create")
+                create_wsol_ata_accounts = [
+                    AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
+                    AccountMeta(pubkey=user_quote_ata, is_signer=False, is_writable=True),
+                    AccountMeta(pubkey=self.wallet.pubkey, is_signer=False, is_writable=False),
+                    AccountMeta(pubkey=SOL_MINT, is_signer=False, is_writable=False),
+                    AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                    AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                ]
+                create_wsol_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_wsol_ata_accounts)
+                instructions.append(create_wsol_ata_ix)
             
             # Transfer SOL to wrapped SOL account
             transfer_ix = transfer(
@@ -342,12 +391,17 @@ class FallbackSeller:
                     lamports=buy_amount_lamports,
                 )
             )
+            instructions.append(transfer_ix)
             
             # Sync native (update wrapped SOL balance)
             sync_ix = sync_native(SyncNativeParams(SYSTEM_TOKEN_PROGRAM, user_quote_ata))
+            instructions.append(sync_ix)
             
             # Buy instruction
             buy_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
+            instructions.append(buy_ix)
+            
+            logger.info(f"📍 Total instructions: {len(instructions)}")
             
             # Send transaction ONCE, then retry confirmation
             try:
@@ -357,15 +411,7 @@ class FallbackSeller:
                 blockhash = blockhash_resp.value.blockhash
             
             msg = Message.new_with_blockhash(
-                [
-                    compute_limit_ix,
-                    compute_price_ix,
-                    create_token_ata_ix,
-                    create_wsol_ata_ix,
-                    transfer_ix,
-                    sync_ix,
-                    buy_ix,
-                ],
+                instructions,
                 self.wallet.pubkey,
                 blockhash,
             )
