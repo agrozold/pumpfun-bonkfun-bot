@@ -187,20 +187,45 @@ class FallbackSeller:
             pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
             pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
             
-            # Calculate price and token amount with retry
+            # Get pool balances - use batch call to save RPC requests
             import asyncio
             for balance_retry in range(3):
                 try:
-                    base_resp = await rpc_client.get_token_account_balance(pool_base_ata)
-                    quote_resp = await rpc_client.get_token_account_balance(pool_quote_ata)
-                    base_amount = float(base_resp.value.ui_amount)
-                    quote_amount = float(quote_resp.value.ui_amount)
+                    # Single batch call for both accounts
+                    accounts = await self.client.get_multiple_accounts([pool_base_ata, pool_quote_ata])
+                    
+                    if not accounts[0] or not accounts[1]:
+                        raise ValueError("Pool vault accounts not found")
+                    
+                    # Parse token account data (offset 64 for amount in SPL token account)
+                    base_data = accounts[0].data
+                    quote_data = accounts[1].data
+                    
+                    # Handle base64 encoded data
+                    if isinstance(base_data, tuple):
+                        import base64 as b64
+                        base_data = b64.b64decode(base_data[0])
+                    if isinstance(quote_data, tuple):
+                        import base64 as b64
+                        quote_data = b64.b64decode(quote_data[0])
+                    
+                    # Token account layout: amount is at offset 64, 8 bytes little-endian
+                    base_amount_raw = struct.unpack("<Q", base_data[64:72])[0]
+                    quote_amount_raw = struct.unpack("<Q", quote_data[64:72])[0]
+                    
+                    base_amount = base_amount_raw / (10 ** TOKEN_DECIMALS)
+                    quote_amount = quote_amount_raw / (10 ** 9)  # SOL has 9 decimals
+                    
+                    if base_amount == 0:
+                        raise ValueError("Pool has zero base tokens")
+                    
                     price = quote_amount / base_amount
+                    logger.info(f"📍 Pool reserves: {base_amount:,.2f} tokens, {quote_amount:.4f} SOL")
                     logger.info(f"📍 Pool price: {price:.10f} SOL per token")
                     break
                 except Exception as e:
                     if balance_retry < 2:
-                        logger.warning(f"📍 Pool balance fetch failed, retry {balance_retry + 1}/3...")
+                        logger.warning(f"📍 Pool balance fetch failed, retry {balance_retry + 1}/3: {e}")
                         await asyncio.sleep(0.5 * (balance_retry + 1))
                     else:
                         logger.error(f"📍 Failed to get pool balances: {e}")
@@ -522,11 +547,28 @@ class FallbackSeller:
             pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
             pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
             
-            # Calculate price
-            base_resp = await rpc_client.get_token_account_balance(pool_base_ata)
-            quote_resp = await rpc_client.get_token_account_balance(pool_quote_ata)
-            base_amount = float(base_resp.value.ui_amount)
-            quote_amount = float(quote_resp.value.ui_amount)
+            # Get pool balances - use batch call to save RPC requests
+            accounts = await self.client.get_multiple_accounts([pool_base_ata, pool_quote_ata])
+            
+            if not accounts[0] or not accounts[1]:
+                return False, None, "Pool vault accounts not found"
+            
+            # Parse token account data
+            base_data = accounts[0].data
+            quote_data = accounts[1].data
+            
+            if isinstance(base_data, tuple):
+                import base64 as b64
+                base_data = b64.b64decode(base_data[0])
+            if isinstance(quote_data, tuple):
+                import base64 as b64
+                quote_data = b64.b64decode(quote_data[0])
+            
+            base_amount_raw = struct.unpack("<Q", base_data[64:72])[0]
+            quote_amount_raw = struct.unpack("<Q", quote_data[64:72])[0]
+            
+            base_amount = base_amount_raw / (10 ** TOKEN_DECIMALS)
+            quote_amount = quote_amount_raw / (10 ** 9)
             price = quote_amount / base_amount
             
             sol_value = token_amount * price
