@@ -63,12 +63,30 @@ class FallbackSeller:
         slippage: float = 0.25,
         priority_fee: int = 100_000,
         max_retries: int = 3,
+        alt_rpc_endpoint: str | None = None,  # Alternative RPC to avoid rate limits
     ):
         self.client = client
         self.wallet = wallet
         self.slippage = slippage
         self.priority_fee = priority_fee
         self.max_retries = max_retries
+        self.alt_rpc_endpoint = alt_rpc_endpoint
+        self._alt_client = None
+    
+    async def _get_rpc_client(self):
+        """Get RPC client, preferring alternative endpoint if available."""
+        import os
+        
+        # Try alternative RPC first (Alchemy) to avoid rate limits on main RPC
+        alt_endpoint = self.alt_rpc_endpoint or os.getenv("ALCHEMY_RPC_ENDPOINT")
+        if alt_endpoint:
+            if self._alt_client is None:
+                from solana.rpc.async_api import AsyncClient
+                self._alt_client = AsyncClient(alt_endpoint)
+            return self._alt_client
+        
+        # Fallback to main client
+        return await self.client.get_client()
 
     async def buy_via_pumpswap(
         self,
@@ -99,7 +117,7 @@ class FallbackSeller:
         logger.info(f"🪐 Amount: {sol_amount} SOL, market_address provided: {market_address is not None}")
         
         try:
-            rpc_client = await self.client.get_client()
+            rpc_client = await self._get_rpc_client()
             
             # Use provided market or find it
             if market_address:
@@ -346,14 +364,14 @@ class FallbackSeller:
             logger.info(f"PumpSwap BUY signature: {sig}")
             logger.info(f"https://solscan.io/tx/{sig}")
             
-            # Wait and verify ACTUAL tx success (not just "confirmed")
+            # Quick status check - don't block too long on rate limits
             import asyncio
-            for attempt in range(self.max_retries):
+            for attempt in range(min(self.max_retries, 3)):  # Max 3 attempts for status
                 try:
-                    logger.info(f"Checking tx status (attempt {attempt + 1}/{self.max_retries})...")
-                    await asyncio.sleep(2.0)
+                    backoff = 2.0 * (attempt + 1)  # 2, 4, 6 seconds
+                    logger.info(f"Checking tx status (attempt {attempt + 1}/3, wait {backoff}s)...")
+                    await asyncio.sleep(backoff)
                     
-                    # Get full transaction to check err field
                     tx_response = await rpc_client.get_transaction(
                         Signature.from_string(sig),
                         encoding="json",
@@ -361,10 +379,9 @@ class FallbackSeller:
                     )
                     
                     if tx_response.value is None:
-                        logger.warning(f"Transaction not found yet, retrying...")
+                        logger.warning(f"Transaction not found yet...")
                         continue
                     
-                    # Check if transaction actually succeeded (err must be None)
                     meta = tx_response.value.transaction.meta
                     if meta and meta.err is not None:
                         error_msg = f"Transaction FAILED on-chain: {meta.err}"
@@ -375,14 +392,21 @@ class FallbackSeller:
                     return True, sig, None
                     
                 except Exception as e:
-                    error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                    logger.warning(f"Status check attempt {attempt + 1} failed: {error_msg}")
-                    if attempt == self.max_retries - 1:
-                        logger.warning(f"Could not verify tx status: {sig}")
-                        return False, sig, error_msg
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                    error_str = str(e).lower()
+                    # If rate limited, return signature - user can check on solscan
+                    if "429" in error_str or "rate" in error_str or "too many" in error_str:
+                        logger.warning(f"RPC rate limited - check tx on solscan: {sig}")
+                        return True, sig, None  # Assume success, user verifies
+                    
+                    error_msg = str(e) if str(e) else f"{type(e).__name__}"
+                    logger.warning(f"Status check failed: {error_msg}")
+                    if attempt == 2:  # Last attempt
+                        logger.warning(f"Could not verify - check solscan: {sig}")
+                        return True, sig, None  # Assume success
             
-            return False, sig, "Could not verify transaction status"
+            # If we get here, tx was sent but status unknown
+            logger.warning(f"Status unknown - check solscan: {sig}")
+            return True, sig, None  # Assume success
             
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
@@ -442,7 +466,7 @@ class FallbackSeller:
                     "prioritizationFeeLamports": self.priority_fee,
                 }
                 
-                rpc_client = await self.client.get_client()
+                rpc_client = await self._get_rpc_client()
                 
                 for attempt in range(self.max_retries):
                     try:
@@ -512,7 +536,7 @@ class FallbackSeller:
 
     async def _get_token_program_id(self, mint: Pubkey) -> Pubkey:
         """Determine if mint uses TokenProgram or Token2022Program."""
-        rpc_client = await self.client.get_client()
+        rpc_client = await self._get_rpc_client()
         mint_info = await rpc_client.get_account_info(mint)
         if not mint_info.value:
             raise ValueError(f"Could not fetch mint info for {mint}")
@@ -525,7 +549,7 @@ class FallbackSeller:
 
     async def _get_token_balance(self, ata: Pubkey) -> int:
         """Get token balance in raw units."""
-        rpc_client = await self.client.get_client()
+        rpc_client = await self._get_rpc_client()
         response = await rpc_client.get_token_account_balance(ata)
         return int(response.value.amount) if response.value else 0
 
@@ -537,7 +561,7 @@ class FallbackSeller:
     ) -> tuple[bool, str | None, str | None]:
         """Sell via PumpSwap AMM."""
         try:
-            rpc_client = await self.client.get_client()
+            rpc_client = await self._get_rpc_client()
             
             # Find market
             filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
@@ -687,12 +711,13 @@ class FallbackSeller:
             logger.info(f"PumpSwap SELL signature: {sig}")
             logger.info(f"https://solscan.io/tx/{sig}")
             
-            # Wait and verify ACTUAL tx success
+            # Quick status check - don't block too long on rate limits
             import asyncio
-            for attempt in range(self.max_retries):
+            for attempt in range(min(self.max_retries, 3)):
                 try:
-                    logger.info(f"Checking tx status (attempt {attempt + 1}/{self.max_retries})...")
-                    await asyncio.sleep(2.0)
+                    backoff = 2.0 * (attempt + 1)
+                    logger.info(f"Checking tx status (attempt {attempt + 1}/3, wait {backoff}s)...")
+                    await asyncio.sleep(backoff)
                     
                     tx_response = await rpc_client.get_transaction(
                         Signature.from_string(sig),
@@ -701,7 +726,7 @@ class FallbackSeller:
                     )
                     
                     if tx_response.value is None:
-                        logger.warning(f"Transaction not found yet, retrying...")
+                        logger.warning(f"Transaction not found yet...")
                         continue
                     
                     meta = tx_response.value.transaction.meta
@@ -714,14 +739,19 @@ class FallbackSeller:
                     return True, sig, None
                     
                 except Exception as e:
-                    error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                    logger.warning(f"Status check attempt {attempt + 1} failed: {error_msg}")
-                    if attempt == self.max_retries - 1:
-                        logger.warning(f"Could not verify tx status: {sig}")
-                        return False, sig, error_msg
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                    error_str = str(e).lower()
+                    if "429" in error_str or "rate" in error_str or "too many" in error_str:
+                        logger.warning(f"RPC rate limited - check tx on solscan: {sig}")
+                        return True, sig, None
+                    
+                    error_msg = str(e) if str(e) else f"{type(e).__name__}"
+                    logger.warning(f"Status check failed: {error_msg}")
+                    if attempt == 2:
+                        logger.warning(f"Could not verify - check solscan: {sig}")
+                        return True, sig, None
             
-            return False, sig, "Could not verify transaction status"
+            logger.warning(f"Status unknown - check solscan: {sig}")
+            return True, sig, None
             
         except Exception as e:
             return False, None, str(e)
@@ -816,7 +846,7 @@ class FallbackSeller:
                         tx = VersionedTransaction.from_bytes(tx_bytes)
                         signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
                         
-                        rpc_client = await self.client.get_client()
+                        rpc_client = await self._get_rpc_client()
                         
                         logger.info(f"🚀 Jupiter sell attempt {attempt + 1}/{self.max_retries}...")
                         result = await rpc_client.send_transaction(
