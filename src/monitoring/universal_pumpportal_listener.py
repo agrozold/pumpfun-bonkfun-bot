@@ -75,11 +75,20 @@ class UniversalPumpPortalListener(BaseTokenListener):
             match_string: Optional string to match in token name/symbol
             creator_address: Optional creator address to filter by
         """
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
         while True:
             try:
-                async with websockets.connect(self.pumpportal_url) as websocket:
+                async with websockets.connect(
+                    self.pumpportal_url,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=5,
+                ) as websocket:
                     await self._subscribe_to_new_tokens(websocket)
                     ping_task = asyncio.create_task(self._ping_loop(websocket))
+                    consecutive_errors = 0  # Reset on successful connect
 
                     try:
                         while True:
@@ -116,12 +125,25 @@ class UniversalPumpPortalListener(BaseTokenListener):
                                     )
                                     continue
 
-                            await token_callback(token_info)
+                            # Process callback with timeout protection
+                            try:
+                                await asyncio.wait_for(
+                                    token_callback(token_info),
+                                    timeout=30  # 30s max for callback processing
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    f"Token callback timeout (30s) for {token_info.symbol} - skipping"
+                                )
+                                continue
 
                     except websockets.exceptions.ConnectionClosed:
                         logger.warning(
                             "PumpPortal WebSocket connection closed. Reconnecting..."
                         )
+                    except asyncio.CancelledError:
+                        logger.info("PumpPortal listener cancelled")
+                        raise
                     finally:
                         ping_task.cancel()
                         try:
@@ -129,10 +151,25 @@ class UniversalPumpPortalListener(BaseTokenListener):
                         except asyncio.CancelledError:
                             pass
 
+            except asyncio.CancelledError:
+                logger.info("PumpPortal listener task cancelled")
+                raise
+            except asyncio.TimeoutError:
+                consecutive_errors += 1
+                logger.warning(f"PumpPortal WebSocket timeout (error {consecutive_errors}/{max_consecutive_errors})")
             except Exception:
-                logger.exception("PumpPortal WebSocket connection error")
-                logger.info("Reconnecting in 5 seconds...")
-                await asyncio.sleep(5)
+                consecutive_errors += 1
+                logger.exception(f"PumpPortal WebSocket connection error (error {consecutive_errors}/{max_consecutive_errors})")
+            
+            # Exponential backoff with max 30s
+            if consecutive_errors >= max_consecutive_errors:
+                logger.error(f"Too many consecutive errors ({consecutive_errors}), waiting 30s...")
+                await asyncio.sleep(30)
+                consecutive_errors = 0
+            else:
+                backoff = min(5 * (2 ** consecutive_errors), 30)
+                logger.info(f"Reconnecting in {backoff}s...")
+                await asyncio.sleep(backoff)
 
     async def _subscribe_to_new_tokens(self, websocket) -> None:
         """Subscribe to new token events from PumpPortal.
@@ -177,7 +214,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
             TokenInfo if a token creation is found, None otherwise
         """
         try:
-            response = await asyncio.wait_for(websocket.recv(), timeout=30)
+            response = await asyncio.wait_for(websocket.recv(), timeout=60)
             data = json.loads(response)
 
             # Handle different message formats from PumpPortal
@@ -213,13 +250,17 @@ class UniversalPumpPortalListener(BaseTokenListener):
             logger.debug(f"No processor could handle token data from pool {pool_name}")
             return None
 
-        except TimeoutError:
-            logger.debug("No data received from PumpPortal for 30 seconds")
+        except asyncio.TimeoutError:
+            # Normal timeout - no data for 60s, just return None to continue loop
+            logger.debug("No data received from PumpPortal for 60 seconds")
+        except asyncio.CancelledError:
+            # Task cancelled - propagate
+            raise
         except websockets.exceptions.ConnectionClosed:
             logger.warning("PumpPortal WebSocket connection closed")
             raise
         except json.JSONDecodeError:
-            logger.exception("Failed to decode PumpPortal message")
+            logger.debug("Failed to decode PumpPortal message")
         except Exception:
             logger.exception("Error processing PumpPortal WebSocket message")
 

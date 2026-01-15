@@ -202,15 +202,20 @@ class WhaleTracker:
             wss_url: WebSocket URL для подключения
             programs: Список program ID для подписки
         """
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
         while self.running:
             try:
                 logger.info(f"🐋 Connecting to WSS for whale tracking...")
                 async with self._session.ws_connect(
                     wss_url,
                     heartbeat=30,
-                    timeout=aiohttp.ClientTimeout(total=None),
+                    timeout=aiohttp.ClientTimeout(total=60, sock_connect=30),
+                    receive_timeout=120,  # 2 min timeout for receiving messages
                 ) as ws:
                     self._ws = ws
+                    consecutive_errors = 0  # Reset on successful connect
                     
                     # Подписываемся на каждую программу
                     for i, program in enumerate(programs):
@@ -230,30 +235,72 @@ class WhaleTracker:
                     platform_info = self.target_platform or "ALL platforms"
                     logger.warning(f"🐋 Filtering {len(self.whale_wallets)} whale wallets on {platform_info}")
                     
-                    async for msg in ws:
-                        if not self.running:
+                    # Message processing loop with timeout protection
+                    last_message_time = time.time()
+                    while self.running:
+                        try:
+                            # Wait for message with timeout
+                            msg = await asyncio.wait_for(
+                                ws.receive(),
+                                timeout=120  # 2 min timeout - if no message, reconnect
+                            )
+                            last_message_time = time.time()
+                            
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                try:
+                                    data = json.loads(msg.data)
+                                    # Process with timeout to prevent hanging
+                                    await asyncio.wait_for(
+                                        self._handle_log(data),
+                                        timeout=10  # 10s max for processing single message
+                                    )
+                                except asyncio.TimeoutError:
+                                    logger.warning("🐋 Message processing timeout (10s) - skipping message")
+                                    continue
+                                except json.JSONDecodeError:
+                                    pass
+                            elif msg.type == aiohttp.WSMsgType.PING:
+                                await ws.pong(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.PONG:
+                                pass  # Heartbeat response
+                            elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
+                                logger.warning(f"🐋 WebSocket closed (type={msg.type}), reconnecting...")
+                                break
+                                
+                        except asyncio.TimeoutError:
+                            # No message for 2 minutes - connection might be dead
+                            idle_time = time.time() - last_message_time
+                            logger.warning(f"🐋 No messages for {idle_time:.0f}s - reconnecting...")
                             break
-                        
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            try:
-                                data = json.loads(msg.data)
-                                await self._handle_log(data)
-                            except json.JSONDecodeError:
-                                pass
-                        elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
-                            logger.warning("🐋 WebSocket closed, reconnecting...")
-                            break
+                        except asyncio.CancelledError:
+                            logger.info("🐋 Whale tracker cancelled")
+                            raise
                     
                     self._ws = None
                     
+            except asyncio.CancelledError:
+                logger.info("🐋 Whale tracker task cancelled")
+                raise
+            except asyncio.TimeoutError as e:
+                consecutive_errors += 1
+                logger.warning(f"🐋 WebSocket timeout: {e} (error {consecutive_errors}/{max_consecutive_errors})")
             except aiohttp.ClientError as e:
-                logger.warning(f"🐋 WebSocket error: {e}")
+                consecutive_errors += 1
+                logger.warning(f"🐋 WebSocket client error: {e} (error {consecutive_errors}/{max_consecutive_errors})")
             except Exception as e:
-                logger.exception(f"🐋 Error in log subscription: {e}")
+                consecutive_errors += 1
+                logger.exception(f"🐋 Error in log subscription: {e} (error {consecutive_errors}/{max_consecutive_errors})")
             
             if self.running:
-                logger.info("Reconnecting in 3s...")
-                await asyncio.sleep(3)
+                # Exponential backoff with max 30s
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error(f"🐋 Too many consecutive errors ({consecutive_errors}), waiting 30s...")
+                    await asyncio.sleep(30)
+                    consecutive_errors = 0  # Reset after long wait
+                else:
+                    backoff = min(3 * (2 ** consecutive_errors), 30)
+                    logger.info(f"🐋 Reconnecting in {backoff}s...")
+                    await asyncio.sleep(backoff)
 
     def _detect_platform_from_logs(self, logs: list[str]) -> str | None:
         """Определить платформу по логам транзакции.
