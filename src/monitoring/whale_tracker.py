@@ -54,10 +54,13 @@ class WhaleBuy:
 
 
 class WhaleTracker:
-    """Отслеживает покупки китов через WebSocket соединения ко ВСЕМ платформам.
+    """Отслеживает покупки китов через WebSocket соединения.
     
     REAL-TIME копирование: только свежие покупки (< time_window_minutes).
     Поддерживает: pump.fun, letsbonk
+    
+    ВАЖНО: Каждый бот должен создавать свой WhaleTracker с указанием platform,
+    чтобы избежать конфликтов WebSocket подписок между процессами.
     """
 
     def __init__(
@@ -68,6 +71,7 @@ class WhaleTracker:
         rpc_endpoint: str | None = None,
         wss_endpoint: str | None = None,
         time_window_minutes: float = 5.0,  # Копируем только покупки за последние N минут
+        platform: str | None = None,  # Если указано - слушаем только эту платформу
     ):
         self.wallets_file = wallets_file
         self.min_buy_amount = min_buy_amount
@@ -76,6 +80,7 @@ class WhaleTracker:
         self.wss_endpoint = wss_endpoint
         self.time_window_minutes = time_window_minutes
         self.time_window_seconds = time_window_minutes * 60
+        self.target_platform = platform  # None = все платформы, иначе только указанная
         
         self.whale_wallets: dict[str, dict] = {}  # wallet -> info
         self.on_whale_buy: Callable | None = None
@@ -86,9 +91,10 @@ class WhaleTracker:
         
         self._load_wallets()
         
+        platform_info = f"platform={platform}" if platform else "ALL platforms"
         logger.info(
             f"WhaleTracker initialized: {len(self.whale_wallets)} wallets, "
-            f"min_buy={min_buy_amount} SOL, time_window={time_window_minutes} min"
+            f"min_buy={min_buy_amount} SOL, time_window={time_window_minutes} min, {platform_info}"
         )
 
     def _load_wallets(self):
@@ -140,7 +146,11 @@ class WhaleTracker:
         return None
 
     async def start(self):
-        """Запустить отслеживание ВСЕХ платформ."""
+        """Запустить отслеживание платформ.
+        
+        Если target_platform указан - слушаем только её.
+        Иначе слушаем все платформы.
+        """
         if not self.whale_wallets:
             logger.warning("🐋 No whale wallets to track")
             return
@@ -153,13 +163,26 @@ class WhaleTracker:
         self.running = True
         self._session = aiohttp.ClientSession()
         
+        # Определяем какие программы слушать
+        if self.target_platform:
+            # Слушаем только указанную платформу
+            programs_to_track = []
+            for program_id, platform in PROGRAM_TO_PLATFORM.items():
+                if platform == self.target_platform:
+                    programs_to_track.append(program_id)
+            platform_names = self.target_platform
+        else:
+            # Слушаем все платформы
+            programs_to_track = ALL_PROGRAMS
+            platform_names = "pump.fun, letsbonk"
+        
         logger.warning(f"🐋 WHALE TRACKER STARTED - tracking {len(self.whale_wallets)} wallets")
         logger.warning(f"🐋 Min buy: {self.min_buy_amount} SOL, Time window: {self.time_window_minutes} min")
-        logger.warning(f"🐋 Monitoring {len(ALL_PROGRAMS)} platforms: pump.fun, letsbonk")
+        logger.warning(f"🐋 Monitoring: {platform_names}")
         logger.info(f"🐋 WSS endpoint: {wss_url[:50]}...")
         
-        # Подписываемся на ВСЕ программы
-        await self._track_all_programs(wss_url)
+        # Подписываемся на выбранные программы
+        await self._track_programs(wss_url, programs_to_track)
 
     async def stop(self):
         """Остановить отслеживание."""
@@ -172,8 +195,13 @@ class WhaleTracker:
             self._session = None
         logger.info("Whale tracker stopped")
 
-    async def _track_all_programs(self, wss_url: str):
-        """Отслеживание через подписку на логи ВСЕХ программ."""
+    async def _track_programs(self, wss_url: str, programs: list[str]):
+        """Отслеживание через подписку на логи указанных программ.
+        
+        Args:
+            wss_url: WebSocket URL для подключения
+            programs: Список program ID для подписки
+        """
         while self.running:
             try:
                 logger.info(f"🐋 Connecting to WSS for whale tracking...")
@@ -184,8 +212,8 @@ class WhaleTracker:
                 ) as ws:
                     self._ws = ws
                     
-                    # Подписываемся на КАЖДУЮ программу отдельно
-                    for i, program in enumerate(ALL_PROGRAMS):
+                    # Подписываемся на каждую программу
+                    for i, program in enumerate(programs):
                         subscribe_msg = {
                             "jsonrpc": "2.0",
                             "id": i + 1,
@@ -196,10 +224,11 @@ class WhaleTracker:
                             ]
                         }
                         await ws.send_json(subscribe_msg)
-                        platform_name = "pump.fun" if program == PUMP_FUN_PROGRAM else "letsbonk"
+                        platform_name = PROGRAM_TO_PLATFORM.get(program, program[:8])
                         logger.warning(f"🐋 SUBSCRIBED to {platform_name} logs")
                     
-                    logger.warning(f"🐋 Filtering {len(self.whale_wallets)} whale wallets across ALL platforms")
+                    platform_info = self.target_platform or "ALL platforms"
+                    logger.warning(f"🐋 Filtering {len(self.whale_wallets)} whale wallets on {platform_info}")
                     
                     async for msg in ws:
                         if not self.running:
