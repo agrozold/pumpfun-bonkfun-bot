@@ -355,9 +355,13 @@ class FallbackSeller:
                     return True, sig, None
                     
                 except Exception as e:
-                    logger.warning(f"PumpSwap BUY attempt {attempt + 1} failed: {e}")
+                    error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
+                    logger.warning(f"PumpSwap BUY attempt {attempt + 1} failed: {error_msg}")
+                    logger.debug(f"Full exception details:", exc_info=True)
                     if attempt == self.max_retries - 1:
-                        return False, None, str(e)
+                        return False, None, error_msg
+                    import asyncio
+                    await asyncio.sleep(0.5 * (attempt + 1))  # Backoff between retries
             
             return False, None, "All PumpSwap BUY attempts failed"
             
@@ -452,9 +456,11 @@ class FallbackSeller:
                         return True, sig, None
                         
                     except Exception as e:
-                        logger.warning(f"Jupiter BUY attempt {attempt + 1} failed: {e}")
+                        error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
+                        logger.warning(f"Jupiter BUY attempt {attempt + 1} failed: {error_msg}")
+                        logger.debug(f"Full exception details:", exc_info=True)
                         if attempt == self.max_retries - 1:
-                            return False, None, str(e)
+                            return False, None, error_msg
                 
                 return False, None, "All Jupiter BUY attempts failed"
                 
@@ -671,9 +677,13 @@ class FallbackSeller:
                     return True, sig, None
                     
                 except Exception as e:
-                    logger.warning(f"PumpSwap attempt {attempt + 1} failed: {e}")
+                    error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
+                    logger.warning(f"PumpSwap attempt {attempt + 1} failed: {error_msg}")
+                    logger.debug(f"Full exception details:", exc_info=True)
                     if attempt == self.max_retries - 1:
-                        return False, None, str(e)
+                        return False, None, error_msg
+                    import asyncio
+                    await asyncio.sleep(0.5 * (attempt + 1))
             
             return False, None, "All PumpSwap attempts failed"
             
@@ -786,9 +796,11 @@ class FallbackSeller:
                         return True, sig, None
                         
                     except Exception as e:
-                        logger.warning(f"Jupiter attempt {attempt + 1} failed: {e}")
+                        error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
+                        logger.warning(f"Jupiter attempt {attempt + 1} failed: {error_msg}")
+                        logger.debug(f"Full exception details:", exc_info=True)
                         if attempt == self.max_retries - 1:
-                            return False, None, str(e)
+                            return False, None, error_msg
                 
                 return False, None, "All Jupiter attempts failed"
                 
