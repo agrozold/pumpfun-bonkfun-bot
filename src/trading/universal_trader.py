@@ -210,24 +210,32 @@ class UniversalTrader:
         self.whale_tracker: WhaleTracker | None = None
         self.helius_api_key = helius_api_key
         
+        logger.info(f"Whale copy config: enable_whale_copy={enable_whale_copy}")
+        
         if enable_whale_copy:
-            # Каждый бот слушает whale только для СВОЕЙ платформы
-            # Это избегает конфликтов WebSocket подписок между процессами
-            self.whale_tracker = WhaleTracker(
-                wallets_file=whale_wallets_file,
-                min_buy_amount=whale_min_buy_amount,
-                helius_api_key=helius_api_key,
-                rpc_endpoint=rpc_endpoint,
-                wss_endpoint=wss_endpoint,
-                time_window_minutes=5.0,  # Only copy buys from last 5 minutes
-                platform=self.platform.value,  # Слушаем только свою платформу!
-            )
-            self.whale_tracker.set_callback(self._on_whale_buy)
-            logger.info(
-                f"Whale copy trading enabled: wallets_file={whale_wallets_file}, "
-                f"min_buy={whale_min_buy_amount} SOL, time_window=5 min, "
-                f"platform={self.platform.value}"
-            )
+            try:
+                # Каждый бот слушает whale только для СВОЕЙ платформы
+                # Это избегает конфликтов WebSocket подписок между процессами
+                self.whale_tracker = WhaleTracker(
+                    wallets_file=whale_wallets_file,
+                    min_buy_amount=whale_min_buy_amount,
+                    helius_api_key=helius_api_key,
+                    rpc_endpoint=rpc_endpoint,
+                    wss_endpoint=wss_endpoint,
+                    time_window_minutes=5.0,  # Only copy buys from last 5 minutes
+                    platform=self.platform.value,  # Слушаем только свою платформу!
+                )
+                self.whale_tracker.set_callback(self._on_whale_buy)
+                logger.warning(
+                    f"🐋 Whale copy trading enabled: wallets_file={whale_wallets_file}, "
+                    f"min_buy={whale_min_buy_amount} SOL, time_window=5 min, "
+                    f"platform={self.platform.value}"
+                )
+            except Exception as e:
+                logger.exception(f"Failed to initialize WhaleTracker: {e}")
+                self.whale_tracker = None
+        else:
+            logger.info("Whale copy trading: DISABLED")
 
         # Dev reputation checker setup
         self.enable_dev_check = enable_dev_check
@@ -975,8 +983,10 @@ class UniversalTrader:
                 # Start whale tracker if enabled
                 whale_task = None
                 if self.whale_tracker:
-                    logger.info("Starting whale tracker in background...")
+                    logger.warning("🐋 Starting whale tracker in background...")
                     whale_task = asyncio.create_task(self.whale_tracker.start())
+                else:
+                    logger.info("Whale tracker not initialized, skipping...")
 
                 # Start trending scanner if enabled
                 trending_task = None
