@@ -440,7 +440,9 @@ class UniversalTrader:
             # Получаем состояние bonding curve (включая creator)
             try:
                 curve_manager = self.platform_implementations.curve_manager
+                logger.info(f"🐋 Getting pool state for {mint_str[:8]}...")
                 pool_state = await curve_manager.get_pool_state(bonding_curve)
+                logger.info(f"🐋 Pool state received: complete={pool_state.get('complete', False)}")
                 if pool_state.get("complete", False):
                     logger.warning(
                         f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping"
@@ -518,10 +520,11 @@ class UniversalTrader:
             self.processed_tokens.add(mint_str)
             
             # Покупаем! skip_checks=True обходит scoring и pattern check, но dev check уже сделан выше
+            logger.warning(f"🐋 EXECUTING WHALE COPY BUY for {whale_buy.token_symbol} ({mint_str[:8]}...)")
             await self._handle_token(token_info, skip_checks=True)
             
         except Exception as e:
-            logger.exception(f"Failed to copy whale trade: {e}")
+            logger.exception(f"🐋 Failed to copy whale trade: {e}")
 
     async def _on_trending_token(self, token: TrendingToken):
         """Callback when trending scanner finds a hot token."""
