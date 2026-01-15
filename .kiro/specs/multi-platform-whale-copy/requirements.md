@@ -2,7 +2,12 @@
 
 ## Introduction
 
-This feature extends the whale copy trading functionality to support all trading platforms (pump.fun and letsbonk/Raydium LaunchLab). Currently, whale tracking detects buys from both platforms but only processes pump.fun trades. This enhancement enables bots on any platform to copy whale trades from their respective platform.
+This feature extends the whale copy trading functionality to support all trading platforms and DEXes. Currently, whale tracking detects buys from bonding curve platforms (pump.fun and letsbonk) but fails when tokens have migrated to DEXes (PumpSwap, Raydium, Orca). This enhancement enables:
+
+1. **Bonding Curve Trading**: Copy whale trades on pump.fun and letsbonk bonding curves (existing)
+2. **DEX Trading**: Copy whale trades on migrated tokens via PumpSwap, Raydium, Orca (new)
+3. **Platform Detection**: Automatically detect which DEX/platform the whale used
+4. **Fallback Logic**: Try alternative platforms if primary fails
 
 ## Glossary
 
@@ -80,3 +85,79 @@ This feature extends the whale copy trading functionality to support all trading
 
 1. THE Whale_Tracker SHALL have a _handle_log method that routes logs to the appropriate platform-specific handler
 2. WHEN a log is received, THE _handle_log method SHALL be called (fixing the current bug where _handle_pump_log is defined but _handle_log is called)
+
+
+### Requirement 7: DEX Platform Detection from Whale Transaction
+
+**User Story:** As a trading bot operator, I want the whale tracker to detect which DEX a whale used for their trade, so that I can copy the trade on the same DEX.
+
+#### Acceptance Criteria
+
+1. WHEN processing a whale transaction, THE system SHALL parse the transaction instructions to identify the DEX program ID
+2. THE system SHALL detect the following DEX programs:
+   - PumpSwap (pump.fun AMM for migrated tokens)
+   - Raydium AMM
+   - Orca Whirlpool
+3. WHEN a DEX is detected, THE WhaleBuy SHALL include the `dex_platform` field with the detected DEX name
+4. IF no DEX is detected but a bonding curve program is found, THE system SHALL set `dex_platform` to None (bonding curve trade)
+
+### Requirement 8: Multi-DEX Buy Execution
+
+**User Story:** As a trading bot operator, I want the bot to execute buys on any supported DEX, so that I can copy whale trades regardless of where they occurred.
+
+#### Acceptance Criteria
+
+1. THE system SHALL support buying tokens on:
+   - pump.fun bonding curve (existing)
+   - letsbonk bonding curve (existing)
+   - PumpSwap AMM (new)
+   - Raydium AMM (new)
+   - Orca Whirlpool (new)
+2. WHEN a whale buy is detected on a specific DEX, THE system SHALL attempt to buy on that same DEX first
+3. IF the primary DEX buy fails, THE system SHALL try fallback DEXes in order of liquidity
+4. THE system SHALL log all buy attempts with platform/DEX name and result
+
+### Requirement 9: PumpSwap Buy Implementation
+
+**User Story:** As a trading bot operator, I want to buy migrated pump.fun tokens on PumpSwap, so that I can copy whale trades on graduated tokens.
+
+#### Acceptance Criteria
+
+1. THE system SHALL find the PumpSwap pool for a given token mint
+2. THE system SHALL fetch pool reserves to calculate swap price
+3. THE system SHALL build and send a PumpSwap swap transaction with slippage protection
+4. THE system SHALL handle PumpSwap-specific errors (pool not found, insufficient liquidity)
+
+### Requirement 10: Raydium Buy Implementation
+
+**User Story:** As a trading bot operator, I want to buy tokens on Raydium AMM, so that I can copy whale trades on Raydium pools.
+
+#### Acceptance Criteria
+
+1. THE system SHALL find the Raydium pool for a given token mint
+2. THE system SHALL fetch pool state to calculate swap price
+3. THE system SHALL build and send a Raydium swap transaction with slippage protection
+4. THE system SHALL handle Raydium-specific errors (pool not found, insufficient liquidity)
+
+### Requirement 11: Fallback Platform Logic
+
+**User Story:** As a trading bot operator, I want the bot to try alternative platforms if the primary fails, so that I maximize trade success rate.
+
+#### Acceptance Criteria
+
+1. WHEN a buy on the primary platform fails, THE system SHALL try fallback platforms in this order:
+   - For pump_fun bonding curve: [pumpswap, raydium]
+   - For pumpswap: [raydium, orca]
+   - For raydium: [orca, pumpswap]
+2. THE system SHALL log each fallback attempt with reason for primary failure
+3. IF all platforms fail, THE system SHALL log error with all attempted platforms
+
+### Requirement 12: Position Tracking with Platform
+
+**User Story:** As a trading bot operator, I want positions to track which platform they were bought on, so that I can sell on the correct platform.
+
+#### Acceptance Criteria
+
+1. WHEN a position is created, THE system SHALL store the `buy_platform` field (bonding curve or DEX name)
+2. WHEN selling a position, THE system SHALL use the same platform where it was bought
+3. IF the original platform is unavailable for sell, THE system SHALL try fallback platforms

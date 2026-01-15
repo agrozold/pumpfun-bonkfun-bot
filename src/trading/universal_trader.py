@@ -403,13 +403,15 @@ class UniversalTrader:
         return mint in self.pump_signals and len(self.pump_signals[mint]) > 0
 
     async def _on_whale_buy(self, whale_buy: WhaleBuy):
-        """Callback when whale buys a token - copy the trade.
+        """Callback when whale buys a token - copy the trade on ANY available DEX.
         
-        Whale copy trades bypass scoring and pattern checks,
-        but still check for serial scammers (dev check).
+        UNIVERSAL WHALE COPY: Покупаем токен там где есть ликвидность!
+        Порядок попыток:
+        1. Pump.Fun bonding curve (если не мигрировал)
+        2. PumpSwap (для мигрированных токенов)
+        3. Jupiter (универсальный fallback)
         
-        Supports ALL platforms: pump.fun and letsbonk.
-        Each bot only copies trades from its own platform.
+        Whale copy trades bypass scoring and pattern checks.
         """
         logger.warning(
             f"🐋 WHALE COPY START: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
@@ -424,198 +426,260 @@ class UniversalTrader:
                 logger.info(f"🐋 Already processed {mint_str[:8]}..., skipping duplicate")
                 return
             
-            # Step 2: Platform validation (should always match now since each bot
-            # listens only to its own platform, but keep as safety check)
-            whale_platform = Platform(whale_buy.platform)
-            if whale_platform != self.platform:
-                logger.warning(
-                    f"🐋 Platform mismatch: whale={whale_buy.platform}, bot={self.platform.value} - skipping"
-                )
+            # Step 2: Check if already have position in this token
+            for pos in self.active_positions:
+                if str(pos.mint) == mint_str:
+                    logger.info(f"🐋 Already have position in {mint_str[:8]}..., skipping")
+                    return
+            
+            # Step 3: Check wallet balance
+            balance_ok = await self._check_balance_before_buy()
+            if not balance_ok:
                 return
             
-            logger.warning(f"🐋 Platform match: {self.platform.value} ✅ - creating TokenInfo...")
-            
-            # Step 3: Create platform-specific TokenInfo
-            if self.platform == Platform.PUMP_FUN:
-                token_info = await self._create_pumpfun_token_info(whale_buy)
-            elif self.platform == Platform.LETS_BONK:
-                token_info = await self._create_letsbonk_token_info(whale_buy)
-            else:
-                logger.error(f"🐋 Unsupported platform: {self.platform}")
-                return
-            
-            if token_info is None:
-                logger.warning(f"🐋 TokenInfo creation failed for {mint_str[:8]}...")
-                return  # Token creation failed (migrated, dev check failed, etc.)
-            
-            logger.warning(f"🐋 TokenInfo created successfully for {token_info.symbol}")
-            
-            # Step 4: Execute trade
+            # Mark as processed early to prevent duplicates
             self.processed_tokens.add(mint_str)
-            logger.warning(f"🐋 EXECUTING BUY for {token_info.symbol} ({mint_str[:8]}...) on {self.platform.value}")
-            await self._handle_token(token_info, skip_checks=True)
-            logger.warning(f"🐋 _handle_token completed for {token_info.symbol}")
+            
+            # Step 4: Try to buy on ANY available DEX
+            logger.warning(f"🐋 UNIVERSAL BUY: Searching for liquidity for {mint_str[:8]}...")
+            
+            success, tx_sig, dex_used, token_amount, price = await self._buy_any_dex(
+                mint_str=mint_str,
+                symbol=whale_buy.token_symbol,
+                sol_amount=self.buy_amount,
+            )
+            
+            if success:
+                logger.warning(f"✅ WHALE COPY SUCCESS on {dex_used}: {whale_buy.token_symbol} - {tx_sig}")
+                
+                # Save position
+                mint = Pubkey.from_string(mint_str)
+                position = Position(
+                    mint=mint,
+                    symbol=whale_buy.token_symbol,
+                    entry_price=price if price > 0 else self.buy_amount / max(token_amount, 1),
+                    quantity=token_amount,
+                    entry_time=datetime.utcnow(),
+                    platform=dex_used,  # Save which DEX was used
+                )
+                self.active_positions.append(position)
+                save_positions(self.active_positions)
+                
+                self._log_trade(
+                    "buy",
+                    None,  # No TokenInfo for universal buy
+                    price,
+                    token_amount,
+                    tx_sig,
+                    extra=f"whale_copy:{dex_used}:{whale_buy.token_symbol}",
+                )
+            else:
+                logger.error(f"❌ WHALE COPY FAILED: {whale_buy.token_symbol} - no liquidity found on any DEX")
             
         except Exception as e:
             logger.exception(f"🐋 WHALE COPY FAILED: {e}")
 
-    async def _create_pumpfun_token_info(self, whale_buy: WhaleBuy) -> TokenInfo | None:
-        """Create TokenInfo for pump.fun whale buy.
+    async def _buy_any_dex(
+        self,
+        mint_str: str,
+        symbol: str,
+        sol_amount: float,
+    ) -> tuple[bool, str | None, str, float, float]:
+        """Buy token on ANY available DEX - universal liquidity finder.
+        
+        Порядок попыток:
+        1. Pump.Fun bonding curve (самый быстрый, если не мигрировал)
+        2. PumpSwap (для мигрированных pump.fun токенов)
+        3. Jupiter (универсальный aggregator - найдет любую ликвидность)
         
         Args:
-            whale_buy: Whale buy information
+            mint_str: Token mint address as string
+            symbol: Token symbol for logging
+            sol_amount: Amount of SOL to spend
             
         Returns:
-            TokenInfo for pump.fun or None if token is migrated/invalid
+            Tuple of (success, tx_signature, dex_used, token_amount, price)
+        """
+        from trading.fallback_seller import FallbackSeller
+        from platforms.pumpfun.address_provider import PumpFunAddresses
+        
+        mint = Pubkey.from_string(mint_str)
+        
+        # ============================================
+        # 1️⃣ TRY PUMP.FUN BONDING CURVE (fastest)
+        # ============================================
+        logger.info(f"🔍 [1/3] Checking Pump.Fun bonding curve for {symbol}...")
+        
+        try:
+            # Derive bonding curve
+            bonding_curve, _ = Pubkey.find_program_address(
+                [b"bonding-curve", bytes(mint)],
+                PumpFunAddresses.PROGRAM
+            )
+            
+            # Check if bonding curve exists and not migrated
+            curve_manager = self.platform_implementations.curve_manager
+            pool_state = await curve_manager.get_pool_state(bonding_curve)
+            
+            if pool_state and not pool_state.get("complete", False):
+                # Bonding curve available! Use normal pump.fun buy
+                logger.info(f"✅ Pump.Fun bonding curve available for {symbol}")
+                
+                # Create TokenInfo for pump.fun buy
+                token_info = await self._create_pumpfun_token_info_from_mint(
+                    mint_str, symbol, bonding_curve, pool_state
+                )
+                
+                if token_info:
+                    # Execute buy via normal flow
+                    buy_result = await self.buyer.execute(token_info)
+                    
+                    if buy_result.success:
+                        logger.warning(f"✅ Pump.Fun BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                        return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
+                    else:
+                        logger.warning(f"⚠️ Pump.Fun buy failed: {buy_result.error_message}")
+            else:
+                logger.info(f"⚠️ Pump.Fun bonding curve migrated or unavailable for {symbol}")
+                
+        except Exception as e:
+            logger.info(f"⚠️ Pump.Fun check failed: {e}")
+        
+        # ============================================
+        # 2️⃣ TRY PUMPSWAP (for migrated tokens)
+        # ============================================
+        logger.info(f"🔍 [2/3] Trying PumpSwap for {symbol}...")
+        
+        try:
+            fallback = FallbackSeller(
+                client=self.solana_client,
+                wallet=self.wallet,
+                slippage=self.buy_slippage,
+                priority_fee=self.priority_fee_manager.fixed_fee,
+                max_retries=self.max_retries,
+            )
+            
+            success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
+                mint=mint,
+                sol_amount=sol_amount,
+                symbol=symbol,
+            )
+            
+            if success:
+                logger.warning(f"✅ PumpSwap BUY SUCCESS: {symbol} - {sig}")
+                return True, sig, "pumpswap", token_amount, price
+            else:
+                logger.info(f"⚠️ PumpSwap failed: {error}")
+                
+        except Exception as e:
+            logger.info(f"⚠️ PumpSwap error: {e}")
+        
+        # ============================================
+        # 3️⃣ TRY JUPITER (universal fallback)
+        # ============================================
+        logger.info(f"🔍 [3/3] Trying Jupiter aggregator for {symbol}...")
+        
+        try:
+            fallback = FallbackSeller(
+                client=self.solana_client,
+                wallet=self.wallet,
+                slippage=self.buy_slippage,
+                priority_fee=self.priority_fee_manager.fixed_fee,
+                max_retries=self.max_retries,
+            )
+            
+            success, sig, error = await fallback.buy_via_jupiter(
+                mint=mint,
+                sol_amount=sol_amount,
+                symbol=symbol,
+            )
+            
+            if success:
+                # Jupiter doesn't return exact amounts, estimate from SOL spent
+                estimated_price = sol_amount / 1000000  # Rough estimate
+                estimated_tokens = sol_amount / estimated_price if estimated_price > 0 else 0
+                logger.warning(f"✅ Jupiter BUY SUCCESS: {symbol} - {sig}")
+                return True, sig, "jupiter", estimated_tokens, estimated_price
+            else:
+                logger.info(f"⚠️ Jupiter failed: {error}")
+                
+        except Exception as e:
+            logger.info(f"⚠️ Jupiter error: {e}")
+        
+        # ============================================
+        # ❌ NO LIQUIDITY FOUND
+        # ============================================
+        logger.error(f"❌ NO LIQUIDITY: Could not buy {symbol} on any DEX")
+        return False, None, "none", 0, 0
+
+    async def _create_pumpfun_token_info_from_mint(
+        self,
+        mint_str: str,
+        symbol: str,
+        bonding_curve: Pubkey,
+        pool_state: dict,
+    ) -> "TokenInfo | None":
+        """Create TokenInfo for pump.fun from mint address (for universal buy).
+        
+        Args:
+            mint_str: Token mint address as string
+            symbol: Token symbol
+            bonding_curve: Derived bonding curve address
+            pool_state: Pool state from curve manager
+            
+        Returns:
+            TokenInfo or None if creation fails
         """
         from interfaces.core import TokenInfo
         from platforms.pumpfun.address_provider import PumpFunAddresses
         from core.pubkeys import SystemAddresses
         
-        mint_str = whale_buy.token_mint
-        logger.info(f"🐋 Creating pump.fun TokenInfo for {mint_str[:8]}...")
-        
         try:
             mint = Pubkey.from_string(mint_str)
-        except Exception as e:
-            logger.error(f"🐋 Invalid mint address: {e}")
-            return None
-        
-        # Derive bonding curve from mint (PDA)
-        bonding_curve, _ = Pubkey.find_program_address(
-            [b"bonding-curve", bytes(mint)],
-            PumpFunAddresses.PROGRAM
-        )
-        logger.info(f"🐋 Bonding curve: {str(bonding_curve)[:8]}...")
-        
-        # Get pool state
-        try:
-            curve_manager = self.platform_implementations.curve_manager
-            pool_state = await curve_manager.get_pool_state(bonding_curve)
-            logger.info(f"🐋 Pool state fetched: complete={pool_state.get('complete', False)}")
-        except Exception as e:
-            logger.warning(f"🐋 Failed to get pump.fun pool state: {e}")
-            return None
-        
-        if pool_state.get("complete", False):
-            logger.warning(f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping")
-            return None
-        
-        # Extract creator and run dev check
-        creator = self._extract_creator(pool_state)
-        if not await self._check_dev_reputation(creator, whale_buy.token_symbol):
-            return None
-        
-        # Derive addresses
-        token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
-        
-        associated_bonding_curve, _ = Pubkey.find_program_address(
-            [bytes(bonding_curve), bytes(token_program_id), bytes(mint)],
-            SystemAddresses.ASSOCIATED_TOKEN_PROGRAM
-        )
-        
-        creator_vault = None
-        if creator:
-            creator_vault, _ = Pubkey.find_program_address(
-                [b"creator-vault", bytes(creator)],
-                PumpFunAddresses.PROGRAM
-            )
-        
-        logger.info(f"🐋 TokenInfo ready for {whale_buy.token_symbol}")
-        
-        return TokenInfo(
-            name=whale_buy.token_symbol,
-            symbol=whale_buy.token_symbol,
-            uri="",
-            mint=mint,
-            platform=Platform.PUMP_FUN,
-            bonding_curve=bonding_curve,
-            associated_bonding_curve=associated_bonding_curve,
-            user=None,
-            creator=creator,
-            creator_vault=creator_vault,
-            pool_state=pool_state,
-            base_vault=None,
-            quote_vault=None,
-            token_program_id=token_program_id,
-            creation_timestamp=int(whale_buy.timestamp.timestamp()),
-        )
-
-    async def _create_letsbonk_token_info(self, whale_buy: WhaleBuy) -> TokenInfo | None:
-        """Create TokenInfo for letsbonk whale buy.
-        
-        Args:
-            whale_buy: Whale buy information
             
-        Returns:
-            TokenInfo for letsbonk or None if token is migrated/invalid
-        """
-        from interfaces.core import TokenInfo
-        from platforms.letsbonk.address_provider import (
-            LetsBonkAddressProvider,
-            LetsBonkAddresses,
-        )
-        from core.pubkeys import SystemAddresses
-        
-        mint_str = whale_buy.token_mint
-        mint = Pubkey.from_string(mint_str)
-        address_provider = LetsBonkAddressProvider()
-        
-        # Derive pool address
-        pool_address = address_provider.derive_pool_address(mint)
-        
-        # Get pool state
-        try:
-            curve_manager = self.platform_implementations.curve_manager
-            pool_state_data = await curve_manager.get_pool_state(pool_address)
+            # Extract creator
+            creator = pool_state.get("creator")
+            if creator and isinstance(creator, str):
+                creator = Pubkey.from_string(creator)
+            elif not isinstance(creator, Pubkey):
+                creator = None
+            
+            # Derive addresses
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+            
+            associated_bonding_curve, _ = Pubkey.find_program_address(
+                [bytes(bonding_curve), bytes(token_program_id), bytes(mint)],
+                SystemAddresses.ASSOCIATED_TOKEN_PROGRAM
+            )
+            
+            creator_vault = None
+            if creator:
+                creator_vault, _ = Pubkey.find_program_address(
+                    [b"creator-vault", bytes(creator)],
+                    PumpFunAddresses.PROGRAM
+                )
+            
+            return TokenInfo(
+                name=symbol,
+                symbol=symbol,
+                uri="",
+                mint=mint,
+                platform=Platform.PUMP_FUN,
+                bonding_curve=bonding_curve,
+                associated_bonding_curve=associated_bonding_curve,
+                user=None,
+                creator=creator,
+                creator_vault=creator_vault,
+                pool_state=pool_state,
+                base_vault=None,
+                quote_vault=None,
+                token_program_id=token_program_id,
+                creation_timestamp=0,
+            )
+            
         except Exception as e:
-            logger.warning(f"🐋 Failed to get letsbonk pool state: {e}")
+            logger.warning(f"Failed to create TokenInfo from mint: {e}")
             return None
-        
-        # Check if migrated (letsbonk uses different migration indicator)
-        if pool_state_data.get("status") == "migrated" or pool_state_data.get("complete", False):
-            logger.warning(f"🐋 Token {whale_buy.token_symbol} has migrated, skipping")
-            return None
-        
-        # Extract creator and run dev check
-        creator = self._extract_creator(pool_state_data)
-        if not await self._check_dev_reputation(creator, whale_buy.token_symbol):
-            return None
-        
-        # Derive addresses using LetsBonkAddressProvider
-        base_vault = address_provider.derive_base_vault(mint)
-        quote_vault = address_provider.derive_quote_vault(mint)
-        
-        # Get global_config and platform_config from pool_state or use defaults
-        global_config = pool_state_data.get("global_config") or LetsBonkAddresses.GLOBAL_CONFIG
-        platform_config = pool_state_data.get("platform_config") or LetsBonkAddresses.PLATFORM_CONFIG
-        
-        if isinstance(global_config, str):
-            global_config = Pubkey.from_string(global_config)
-        if isinstance(platform_config, str):
-            platform_config = Pubkey.from_string(platform_config)
-        
-        token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
-        
-        return TokenInfo(
-            name=whale_buy.token_symbol,
-            symbol=whale_buy.token_symbol,
-            uri="",
-            mint=mint,
-            platform=Platform.LETS_BONK,
-            pool_state=pool_address,
-            base_vault=base_vault,
-            quote_vault=quote_vault,
-            global_config=global_config,
-            platform_config=platform_config,
-            creator=creator,
-            user=None,
-            bonding_curve=None,
-            associated_bonding_curve=None,
-            creator_vault=None,
-            token_program_id=token_program_id,
-            creation_timestamp=int(whale_buy.timestamp.timestamp()),
-        )
 
     def _extract_creator(self, pool_state: dict) -> Pubkey | None:
         """Extract creator pubkey from pool state.
@@ -1520,26 +1584,56 @@ class UniversalTrader:
     def _log_trade(
         self,
         action: str,
-        token_info: TokenInfo,
+        token_info: TokenInfo | None,
         price: float,
         amount: float,
         tx_hash: str | None,
+        extra: str | None = None,
     ) -> None:
-        """Log trade information."""
+        """Log trade information.
+        
+        Args:
+            action: Trade action (buy/sell)
+            token_info: Token information (can be None for universal buys)
+            price: Trade price
+            amount: Token amount
+            tx_hash: Transaction signature
+            extra: Extra info string (e.g. "whale_copy:pumpswap:TOKEN")
+        """
         try:
             trades_dir = Path("trades")
             trades_dir.mkdir(exist_ok=True)
 
+            # Handle case when token_info is None (universal buy)
+            if token_info:
+                platform = token_info.platform.value
+                token_address = str(token_info.mint)
+                symbol = token_info.symbol
+            else:
+                # Parse from extra string: "whale_copy:dex:symbol"
+                platform = "unknown"
+                token_address = "unknown"
+                symbol = "unknown"
+                if extra:
+                    parts = extra.split(":")
+                    if len(parts) >= 2:
+                        platform = parts[1]  # dex used
+                    if len(parts) >= 3:
+                        symbol = parts[2]
+
             log_entry = {
                 "timestamp": datetime.utcnow().isoformat(),
                 "action": action,
-                "platform": token_info.platform.value,
-                "token_address": str(token_info.mint),
-                "symbol": token_info.symbol,
+                "platform": platform,
+                "token_address": token_address,
+                "symbol": symbol,
                 "price": price,
                 "amount": amount,
                 "tx_hash": str(tx_hash) if tx_hash else None,
             }
+            
+            if extra:
+                log_entry["extra"] = extra
 
             log_file_path = trades_dir / "trades.log"
             with log_file_path.open("a", encoding="utf-8") as log_file:
