@@ -617,13 +617,17 @@ async def buy_token(
         
         # Decide which method to use
         if curve_state is None:
-            print("🔄 Token migrated to Raydium - using PumpSwap AMM...")
+            print("🔄 Bonding curve not found - token migrated to Raydium, using PumpSwap AMM...")
             return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
         elif curve_state.complete:
-            print("🔄 Bonding curve complete - using PumpSwap AMM...")
+            print(f"🔄 Bonding curve COMPLETE (complete={curve_state.complete}) - using PumpSwap AMM...")
+            print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
+            print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
             return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
         else:
-            print("📈 Token on bonding curve - using Pump.fun...")
+            print(f"📈 Token on bonding curve (complete={curve_state.complete}) - using Pump.fun...")
+            print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
+            print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
             return await buy_via_pumpfun(client, payer, mint, curve_state, amount_sol, slippage, priority_fee, max_retries)
 
 
