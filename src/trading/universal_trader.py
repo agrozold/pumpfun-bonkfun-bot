@@ -53,7 +53,7 @@ class UniversalTrader:
         # Platform configuration
         platform: Platform | str = Platform.PUMP_FUN,
         # ========== CODE VERSION MARKER ==========
-        # Version: 2026-01-15-v3 - whale tracker debug
+        # Version: 2026-01-15-v5 - print debug
         # ==========================================
         # Listener configuration
         listener_type: str = "logs",
@@ -140,8 +140,12 @@ class UniversalTrader:
     ):
         """Initialize the universal trader."""
         # ========== CODE VERSION CHECK ==========
+        # Use print() with flush to guarantee output
+        print("=" * 60, flush=True)
+        print("🚀 UniversalTrader VERSION: 2026-01-15-v5", flush=True)
+        print("=" * 60, flush=True)
         logger.warning("=" * 60)
-        logger.warning("🚀 UniversalTrader VERSION: 2026-01-15-v4")
+        logger.warning("🚀 UniversalTrader VERSION: 2026-01-15-v5")
         logger.warning("=" * 60)
         
         # Store endpoints and API keys for later use
@@ -231,6 +235,13 @@ class UniversalTrader:
             )
 
         # Whale copy trading setup
+        print("=" * 50, flush=True)
+        print(f"🐋 WHALE COPY SETUP START", flush=True)
+        print(f"🐋 enable_whale_copy = {enable_whale_copy}", flush=True)
+        print(f"🐋 wallets_file = {whale_wallets_file}", flush=True)
+        print(f"🐋 min_buy_amount = {whale_min_buy_amount}", flush=True)
+        print("=" * 50, flush=True)
+        
         logger.warning("=" * 50)
         logger.warning("🐋 WHALE COPY SETUP START")
         logger.warning(f"🐋 enable_whale_copy = {enable_whale_copy}")
