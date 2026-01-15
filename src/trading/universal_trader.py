@@ -5,6 +5,7 @@ Cleaned up to remove all platform-specific hardcoding.
 
 import asyncio
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -120,6 +121,7 @@ class UniversalTrader:
         whale_min_buy_amount: float = 0.5,
         helius_api_key: str | None = None,
         birdeye_api_key: str | None = None,
+        jupiter_api_key: str | None = None,
         # Dev reputation settings
         enable_dev_check: bool = False,
         dev_max_tokens_created: int = 50,
@@ -139,12 +141,13 @@ class UniversalTrader:
         """Initialize the universal trader."""
         # ========== CODE VERSION CHECK ==========
         logger.warning("=" * 60)
-        logger.warning("🚀 UniversalTrader VERSION: 2026-01-15-v3")
+        logger.warning("🚀 UniversalTrader VERSION: 2026-01-15-v4")
         logger.warning("=" * 60)
         
-        # Store endpoints for later use
+        # Store endpoints and API keys for later use
         self.rpc_endpoint = rpc_endpoint
         self.wss_endpoint = wss_endpoint
+        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_API_KEY")
         
         # Core components
         logger.warning("=== INIT: Creating core components ===")
@@ -338,6 +341,7 @@ class UniversalTrader:
             sell_slippage,
             max_retries,
             compute_units=self.compute_units,
+            jupiter_api_key=self.jupiter_api_key,
         )
 
         # Initialize the appropriate listener with platform filtering
@@ -640,6 +644,7 @@ class UniversalTrader:
                 slippage=self.buy_slippage,
                 priority_fee=self.priority_fee_manager.fixed_fee,
                 max_retries=self.max_retries,
+                jupiter_api_key=self.jupiter_api_key,
             )
             
             success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
@@ -669,6 +674,7 @@ class UniversalTrader:
                 slippage=self.buy_slippage,
                 priority_fee=self.priority_fee_manager.fixed_fee,
                 max_retries=self.max_retries,
+                jupiter_api_key=self.jupiter_api_key,
             )
             
             success, sig, error = await fallback.buy_via_jupiter(
@@ -978,6 +984,7 @@ class UniversalTrader:
                     slippage=self.buy_slippage,
                     priority_fee=self.priority_fee_manager.fixed_fee,
                     max_retries=self.max_retries,
+                    jupiter_api_key=self.jupiter_api_key,
                 )
                 
                 # Use pair_address from DexScreener if available
