@@ -31,6 +31,7 @@ from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
+from solders.signature import Signature
 from solders.system_program import TransferParams, transfer
 from solders.transaction import Transaction, VersionedTransaction
 from spl.token.instructions import (
@@ -39,6 +40,9 @@ from spl.token.instructions import (
     get_associated_token_address,
     sync_native,
 )
+
+# API Keys
+JUPITER_API_KEY = os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
 
 load_dotenv()
 
@@ -321,6 +325,140 @@ async def get_pool_from_dexscreener(mint: str) -> tuple[str | None, str | None]:
         return None, None
 
 
+async def buy_via_jupiter(
+    payer: Keypair,
+    mint: Pubkey,
+    amount_sol: float,
+    slippage: float,
+    priority_fee: int,
+    rpc_endpoint: str,
+    max_retries: int = 3,
+) -> bool:
+    """Buy tokens via Jupiter aggregator with API key (bypasses Cloudflare)."""
+    import base64
+    
+    print("🪐 Using Jupiter aggregator...")
+    
+    buy_amount_lamports = int(amount_sol * LAMPORTS_PER_SOL)
+    slippage_bps = int(slippage * 10000)
+    
+    headers = {
+        "x-api-key": JUPITER_API_KEY,
+        "Content-Type": "application/json",
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Get quote: SOL -> Token (with retry)
+            quote_url = "https://api.jup.ag/swap/v1/quote"
+            quote_params = {
+                "inputMint": str(SOL),
+                "outputMint": str(mint),
+                "amount": str(buy_amount_lamports),
+                "slippageBps": slippage_bps,
+            }
+            
+            quote = None
+            for attempt in range(max_retries):
+                try:
+                    async with session.get(quote_url, params=quote_params, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 429:
+                            delay = 1.0 * (attempt + 1)
+                            print(f"⚠️ Jupiter rate limited, retry {attempt + 1}/{max_retries} in {delay}s...")
+                            await asyncio.sleep(delay)
+                            continue
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            print(f"❌ Jupiter quote failed: {error_text}")
+                            return False
+                        quote = await resp.json()
+                        break
+                except asyncio.TimeoutError:
+                    print(f"⚠️ Jupiter quote timeout, retry {attempt + 1}/{max_retries}...")
+                    await asyncio.sleep(1.0)
+            
+            if not quote:
+                print("❌ Failed to get Jupiter quote after retries")
+                return False
+            
+            out_amount = int(quote.get("outAmount", 0))
+            out_amount_tokens = out_amount / (10 ** TOKEN_DECIMALS)
+            print(f"💵 Jupiter expected: ~{out_amount_tokens:,.2f} tokens")
+            
+            # Get swap transaction
+            swap_url = "https://api.jup.ag/swap/v1/swap"
+            swap_body = {
+                "quoteResponse": quote,
+                "userPublicKey": str(payer.pubkey()),
+                "wrapAndUnwrapSol": True,
+                "prioritizationFeeLamports": priority_fee,
+            }
+            
+            swap_data = None
+            for attempt in range(max_retries):
+                try:
+                    async with session.post(swap_url, json=swap_body, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status == 429:
+                            delay = 1.0 * (attempt + 1)
+                            print(f"⚠️ Jupiter swap rate limited, retry {attempt + 1}/{max_retries}...")
+                            await asyncio.sleep(delay)
+                            continue
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            print(f"❌ Jupiter swap request failed: {error_text}")
+                            return False
+                        swap_data = await resp.json()
+                        break
+                except asyncio.TimeoutError:
+                    print(f"⚠️ Jupiter swap timeout, retry {attempt + 1}/{max_retries}...")
+                    await asyncio.sleep(1.0)
+            
+            if not swap_data:
+                print("❌ Failed to get Jupiter swap after retries")
+                return False
+            
+            swap_tx_base64 = swap_data.get("swapTransaction")
+            if not swap_tx_base64:
+                print("❌ No swap transaction in Jupiter response")
+                return False
+            
+            # Sign and send transaction
+            tx_bytes = base64.b64decode(swap_tx_base64)
+            tx = VersionedTransaction.from_bytes(tx_bytes)
+            signed_tx = VersionedTransaction(tx.message, [payer])
+            
+            async with AsyncClient(rpc_endpoint) as client:
+                for attempt in range(max_retries):
+                    try:
+                        print(f"🚀 Sending Jupiter transaction (attempt {attempt + 1}/{max_retries})...")
+                        result = await client.send_transaction(
+                            signed_tx,
+                            opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+                        )
+                        sig = str(result.value)
+                        
+                        print(f"📤 Signature: {sig}")
+                        print(f"🔗 https://solscan.io/tx/{sig}")
+                        
+                        await client.confirm_transaction(
+                            Signature.from_string(sig), 
+                            commitment="confirmed"
+                        )
+                        print(f"✅ Jupiter BUY confirmed! Got ~{out_amount_tokens:,.2f} tokens")
+                        return True
+                    except Exception as e:
+                        print(f"⚠️ Jupiter attempt {attempt + 1} failed: {e}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(1.0)
+                
+                print("❌ All Jupiter attempts failed")
+                return False
+                
+    except Exception as e:
+        print(f"❌ Jupiter error: {e}")
+        return False
+
+
 async def get_market_data(client: AsyncClient, market_address: Pubkey) -> dict:
     """Parse pool account data with retry."""
     async def _call():
@@ -414,7 +552,10 @@ async def buy_via_pumpswap(
     priority_fee: int,
     max_retries: int,
 ) -> bool:
-    """Buy tokens via PumpSwap/Raydium AMM."""
+    """Buy tokens via PumpSwap/Raydium AMM, fallback to Jupiter for other DEXes."""
+    
+    # Get RPC endpoint for Jupiter fallback
+    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     
     # Find market via RPC first
     market = await get_market_address_by_base_mint(client, mint)
@@ -427,11 +568,14 @@ async def buy_via_pumpswap(
         if pair_address and dex_id == "pumpswap":
             market = Pubkey.from_string(pair_address)
             print(f"📍 Using DexScreener PumpSwap pool: {market}")
+        elif pair_address and dex_id in ("raydium", "orca", "meteora", "raydium_cp"):
+            # Use Jupiter for Raydium/Orca/Meteora
+            print(f"📍 Token trades on {dex_id} - using Jupiter aggregator...")
+            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
         elif pair_address:
-            print(f"❌ Token trades on {dex_id}, not PumpSwap - manual swap not supported yet")
-            print(f"   Pool address: {pair_address}")
-            print(f"   Try swapping on https://pump.fun or https://raydium.io")
-            return False
+            # Unknown DEX - try Jupiter anyway
+            print(f"📍 Token trades on {dex_id} - trying Jupiter aggregator...")
+            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
         else:
             print("❌ No swap pool found for this token on any DEX")
             return False
