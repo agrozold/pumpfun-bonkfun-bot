@@ -207,14 +207,15 @@ async def get_token_program_id(client: AsyncClient, mint: Pubkey) -> Pubkey:
 
 
 async def get_curve_state(client: AsyncClient, curve: Pubkey) -> BondingCurveState | None:
-    """Get bonding curve state, returns None if not found with retry."""
+    """Get bonding curve state, returns None if not found with retry.
+    
+    Raises exception on RPC errors to distinguish from "not found".
+    """
     async def _call():
         return await client.get_account_info(curve, encoding="base64")
     
-    try:
-        response = await rpc_call_with_retry(_call, max_retries=5, base_delay=0.5)
-    except Exception:
-        return None
+    # Let RPC errors propagate - don't swallow them
+    response = await rpc_call_with_retry(_call, max_retries=5, base_delay=0.5)
     
     if not response.value or not response.value.data:
         return None
@@ -606,14 +607,23 @@ async def buy_token(
     async with AsyncClient(rpc_endpoint) as client:
         # Check bonding curve state
         bonding_curve, _ = get_bonding_curve_address(mint)
-        curve_state = await get_curve_state(client, bonding_curve)
+        print(f"📍 Checking bonding curve: {bonding_curve}")
+        
+        try:
+            curve_state = await get_curve_state(client, bonding_curve)
+        except Exception as e:
+            print(f"❌ Failed to check bonding curve (RPC error): {e}")
+            return False
         
         # Decide which method to use
-        if curve_state is None or curve_state.complete:
-            # Token migrated to Raydium - use PumpSwap
+        if curve_state is None:
+            print("🔄 Token migrated to Raydium - using PumpSwap AMM...")
+            return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
+        elif curve_state.complete:
+            print("🔄 Bonding curve complete - using PumpSwap AMM...")
             return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
         else:
-            # Token still on bonding curve - use Pump.fun
+            print("📈 Token on bonding curve - using Pump.fun...")
             return await buy_via_pumpfun(client, payer, mint, curve_state, amount_sol, slippage, priority_fee, max_retries)
 
 
