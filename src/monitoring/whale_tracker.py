@@ -411,15 +411,17 @@ class WhaleTracker:
         # но getTransaction может их ещё не видеть
         await asyncio.sleep(1.0)  # 1 секунда задержки
         
-        # Используем стандартный RPC вместо Helius для экономии запросов
+          # Используем стандартный RPC вместо Helius для экономии запросов
         if self.rpc_endpoint:
             tx = await self._get_tx_rpc(signature)
             if tx:
                 logger.info(f"🐋 Got TX data from RPC for {signature[:16]}...")
+                logger.warning(f"🐋 ACCOUNT KEYS: {[str(a)[:16] for a in tx.get('transaction', {}).get('message', {}).get('accountKeys', [])[:5]]}")
                 await self._process_rpc_tx(tx, signature, platform)
                 return
             else:
                 logger.info(f"🐋 RPC returned no data for {signature[:16]}...")
+
         
         # Fallback на Helius только если RPC не сработал
         if self.helius_api_key:
