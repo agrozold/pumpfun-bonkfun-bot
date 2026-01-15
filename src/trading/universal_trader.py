@@ -51,6 +51,9 @@ class UniversalTrader:
         sell_slippage: float,
         # Platform configuration
         platform: Platform | str = Platform.PUMP_FUN,
+        # ========== CODE VERSION MARKER ==========
+        # Version: 2026-01-15-v3 - whale tracker debug
+        # ==========================================
         # Listener configuration
         listener_type: str = "logs",
         geyser_endpoint: str | None = None,
@@ -134,7 +137,10 @@ class UniversalTrader:
         min_sol_balance: float = 0.03,
     ):
         """Initialize the universal trader."""
-        logger.warning("=== INIT: UniversalTrader __init__ STARTED ===")
+        # ========== CODE VERSION CHECK ==========
+        logger.warning("=" * 60)
+        logger.warning("🚀 UniversalTrader VERSION: 2026-01-15-v3")
+        logger.warning("=" * 60)
         
         # Store endpoints for later use
         self.rpc_endpoint = rpc_endpoint
@@ -222,16 +228,20 @@ class UniversalTrader:
             )
 
         # Whale copy trading setup
-        logger.warning("=== INIT: Starting whale copy trading setup ===")
+        logger.warning("=" * 50)
+        logger.warning("🐋 WHALE COPY SETUP START")
+        logger.warning(f"🐋 enable_whale_copy = {enable_whale_copy}")
+        logger.warning(f"🐋 wallets_file = {whale_wallets_file}")
+        logger.warning(f"🐋 min_buy_amount = {whale_min_buy_amount}")
+        logger.warning("=" * 50)
+        
         self.enable_whale_copy = enable_whale_copy
         self.whale_tracker: WhaleTracker | None = None
         self.helius_api_key = helius_api_key
         
-        logger.warning(f"🐋 Whale copy config: enable_whale_copy={enable_whale_copy}, wallets_file={whale_wallets_file}")
-        
         if enable_whale_copy:
             try:
-                logger.warning(f"🐋 Initializing WhaleTracker...")
+                logger.warning("🐋 Creating WhaleTracker instance...")
                 # Каждый бот слушает whale только для СВОЕЙ платформы
                 # Это избегает конфликтов WebSocket подписок между процессами
                 self.whale_tracker = WhaleTracker(
@@ -247,24 +257,22 @@ class UniversalTrader:
                 
                 # Log wallet count
                 wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
-                logger.warning(
-                    f"🐋 WhaleTracker initialized: {wallet_count} wallets loaded, "
-                    f"min_buy={whale_min_buy_amount} SOL, time_window=5 min, "
-                    f"platform={self.platform.value}"
-                )
+                logger.warning(f"🐋 WhaleTracker CREATED: {wallet_count} wallets")
+                logger.warning(f"🐋 Platform filter: {self.platform.value}")
+                logger.warning(f"🐋 WSS endpoint: {wss_endpoint[:50] if wss_endpoint else 'None'}...")
                 
                 if wallet_count == 0:
-                    logger.error(f"🐋 WARNING: No whale wallets loaded from {whale_wallets_file}!")
+                    logger.error("🐋 ERROR: No whale wallets loaded!")
                 else:
                     # Log first few wallets
                     sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
                     logger.warning(f"🐋 Sample wallets: {sample_wallets}")
                     
             except Exception as e:
-                logger.exception(f"🐋 FAILED to initialize WhaleTracker: {e}")
+                logger.exception(f"🐋 EXCEPTION creating WhaleTracker: {e}")
                 self.whale_tracker = None
         else:
-            logger.warning("🐋 Whale copy trading: DISABLED in config")
+            logger.warning("🐋 Whale copy: DISABLED in config")
 
         # Dev reputation checker setup
         self.enable_dev_check = enable_dev_check
