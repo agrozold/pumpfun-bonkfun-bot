@@ -537,8 +537,12 @@ class UniversalTrader:
         # Check token age - skip if older than 5 minutes
         if token.created_at:
             from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
-            token_age = (now - token.created_at).total_seconds()
+            now = datetime.utcnow()
+            # Handle both naive and aware datetimes
+            created = token.created_at
+            if created.tzinfo is not None:
+                created = created.replace(tzinfo=None)
+            token_age = (now - created).total_seconds()
             if token_age > 300:  # 5 minutes
                 logger.info(f"🔥 Token {token.symbol} too old ({token_age:.0f}s), skipping")
                 return
