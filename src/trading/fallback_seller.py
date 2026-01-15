@@ -316,54 +316,54 @@ class FallbackSeller:
             # Buy instruction
             buy_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
             
-            # Send transaction
+            # Send transaction ONCE, then retry confirmation
+            try:
+                blockhash = await self.client.get_cached_blockhash()
+            except RuntimeError:
+                blockhash_resp = await rpc_client.get_latest_blockhash()
+                blockhash = blockhash_resp.value.blockhash
+            
+            msg = Message.new_with_blockhash(
+                [
+                    compute_limit_ix,
+                    compute_price_ix,
+                    create_token_ata_ix,
+                    create_wsol_ata_ix,
+                    transfer_ix,
+                    sync_ix,
+                    buy_ix,
+                ],
+                self.wallet.pubkey,
+                blockhash,
+            )
+            tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
+            
+            logger.info(f"🚀 Sending PumpSwap BUY transaction...")
+            result = await rpc_client.send_transaction(
+                tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+            )
+            sig = str(result.value)
+            logger.info(f"� PumpSwap BUY signature: {sig}")
+            
+            # Retry confirmation only (NOT resending tx!)
             for attempt in range(self.max_retries):
                 try:
-                    # Use cached blockhash from SolanaClient to save RPC calls
-                    try:
-                        blockhash = await self.client.get_cached_blockhash()
-                    except RuntimeError:
-                        # Cache not ready, fetch directly
-                        blockhash_resp = await rpc_client.get_latest_blockhash()
-                        blockhash = blockhash_resp.value.blockhash
-                    
-                    msg = Message.new_with_blockhash(
-                        [
-                            compute_limit_ix,
-                            compute_price_ix,
-                            create_token_ata_ix,
-                            create_wsol_ata_ix,
-                            transfer_ix,
-                            sync_ix,
-                            buy_ix,
-                        ],
-                        self.wallet.pubkey,
-                        blockhash,
-                    )
-                    tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
-                    
-                    logger.info(f"🚀 PumpSwap BUY attempt {attempt + 1}/{self.max_retries}...")
-                    result = await rpc_client.send_transaction(
-                        tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                    )
-                    sig = str(result.value)
-                    
-                    logger.info(f"📤 PumpSwap BUY signature: {sig}")
-                    
+                    logger.info(f"⏳ Confirming tx (attempt {attempt + 1}/{self.max_retries})...")
                     await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                     logger.info(f"✅ PumpSwap BUY confirmed! Got ~{expected_tokens:,.2f} {symbol}")
                     return True, sig, None
                     
                 except Exception as e:
                     error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                    logger.warning(f"PumpSwap BUY attempt {attempt + 1} failed: {error_msg}")
-                    logger.debug(f"Full exception details:", exc_info=True)
+                    logger.warning(f"Confirm attempt {attempt + 1} failed: {error_msg}")
                     if attempt == self.max_retries - 1:
-                        return False, None, error_msg
+                        # Return signature anyway - tx might have succeeded
+                        logger.warning(f"⚠️ Confirmation failed but tx may have succeeded: {sig}")
+                        return False, sig, error_msg
                     import asyncio
-                    await asyncio.sleep(0.5 * (attempt + 1))  # Backoff between retries
+                    await asyncio.sleep(1.0 * (attempt + 1))
             
-            return False, None, "All PumpSwap BUY attempts failed"
+            return False, sig, "Confirmation timeout (tx may have succeeded)"
             
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
@@ -646,46 +646,45 @@ class FallbackSeller:
             compute_price_ix = set_compute_unit_price(self.priority_fee)
             sell_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
             
-            # Send transaction
+            # Send transaction ONCE, then retry confirmation
+            try:
+                blockhash = await self.client.get_cached_blockhash()
+            except RuntimeError:
+                blockhash_resp = await rpc_client.get_latest_blockhash()
+                blockhash = blockhash_resp.value.blockhash
+            
+            msg = Message.new_with_blockhash(
+                [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
+                self.wallet.pubkey,
+                blockhash,
+            )
+            tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
+            
+            logger.info(f"🚀 Sending PumpSwap SELL transaction...")
+            result = await rpc_client.send_transaction(
+                tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+            )
+            sig = str(result.value)
+            logger.info(f"� PumpSwap SELL signature: {sig}")
+            
+            # Retry confirmation only (NOT resending tx!)
             for attempt in range(self.max_retries):
                 try:
-                    # Use cached blockhash from SolanaClient to save RPC calls
-                    try:
-                        blockhash = await self.client.get_cached_blockhash()
-                    except RuntimeError:
-                        # Cache not ready, fetch directly
-                        blockhash_resp = await rpc_client.get_latest_blockhash()
-                        blockhash = blockhash_resp.value.blockhash
-                    
-                    msg = Message.new_with_blockhash(
-                        [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
-                        self.wallet.pubkey,
-                        blockhash,
-                    )
-                    tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
-                    
-                    logger.info(f"🚀 PumpSwap sell attempt {attempt + 1}/{self.max_retries}...")
-                    result = await rpc_client.send_transaction(
-                        tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                    )
-                    sig = str(result.value)
-                    
-                    logger.info(f"📤 PumpSwap signature: {sig}")
-                    
+                    logger.info(f"⏳ Confirming tx (attempt {attempt + 1}/{self.max_retries})...")
                     await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                     logger.info("✅ PumpSwap sell confirmed!")
                     return True, sig, None
                     
                 except Exception as e:
                     error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                    logger.warning(f"PumpSwap attempt {attempt + 1} failed: {error_msg}")
-                    logger.debug(f"Full exception details:", exc_info=True)
+                    logger.warning(f"Confirm attempt {attempt + 1} failed: {error_msg}")
                     if attempt == self.max_retries - 1:
-                        return False, None, error_msg
+                        logger.warning(f"⚠️ Confirmation failed but tx may have succeeded: {sig}")
+                        return False, sig, error_msg
                     import asyncio
-                    await asyncio.sleep(0.5 * (attempt + 1))
+                    await asyncio.sleep(1.0 * (attempt + 1))
             
-            return False, None, "All PumpSwap attempts failed"
+            return False, sig, "Confirmation timeout (tx may have succeeded)"
             
         except Exception as e:
             return False, None, str(e)
