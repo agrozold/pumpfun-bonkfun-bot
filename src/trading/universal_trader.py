@@ -405,71 +405,68 @@ class UniversalTrader:
         but still check for serial scammers (dev check).
         """
         logger.warning(
-            f"🐋 WHALE COPY: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
-            f"for {whale_buy.amount_sol:.2f} SOL - COPYING!"
+            f"🐋 WHALE COPY START: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
+            f"for {whale_buy.amount_sol:.2f} SOL"
         )
         
-        # Проверяем что не копируем один и тот же токен дважды
-        mint_str = whale_buy.token_mint
-        if mint_str in self.processed_tokens:
-            logger.info(f"🐋 Already processed {mint_str[:8]}..., skipping duplicate")
-            return
-        
-        # Только pump.fun поддерживается для whale copy
-        logger.info(f"🐋 Bot platform: {self.platform}, checking if pump_fun...")
-        if self.platform != Platform.PUMP_FUN:
+        try:
+            mint_str = whale_buy.token_mint
+            logger.info(f"🐋 Step 1: Checking if already processed: {mint_str[:8]}...")
+            
+            if mint_str in self.processed_tokens:
+                logger.info(f"🐋 Already processed {mint_str[:8]}..., skipping duplicate")
+                return
+            
+            logger.info(f"🐋 Step 2: Checking platform: {self.platform}...")
+            if self.platform != Platform.PUMP_FUN:
             logger.warning(f"🐋 Whale copy only supported for pump_fun (bot is {self.platform.value}), skipping")
             return
         
-        logger.info(f"🐋 Platform check passed, proceeding with whale copy...")
-        
-        # Создаём TokenInfo для покупки
-        try:
+            logger.info(f"🐋 Step 3: Platform check passed, proceeding...")
+            
+            # Создаём TokenInfo для покупки
             from interfaces.core import TokenInfo
             from platforms.pumpfun.address_provider import PumpFunAddresses
             from core.pubkeys import SystemAddresses
             
+            logger.info(f"🐋 Step 4: Creating mint pubkey...")
             mint = Pubkey.from_string(mint_str)
             
             # Derive bonding curve from mint (PDA)
+            logger.info(f"🐋 Step 5: Deriving bonding curve...")
             bonding_curve, _ = Pubkey.find_program_address(
                 [b"bonding-curve", bytes(mint)],
                 PumpFunAddresses.PROGRAM
             )
             
             # Получаем состояние bonding curve (включая creator)
-            try:
-                curve_manager = self.platform_implementations.curve_manager
-                logger.info(f"🐋 Getting pool state for {mint_str[:8]}...")
-                pool_state = await curve_manager.get_pool_state(bonding_curve)
-                logger.info(f"🐋 Pool state received: complete={pool_state.get('complete', False)}")
-                if pool_state.get("complete", False):
-                    logger.warning(
-                        f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping"
-                    )
-                    return
-                
-                # Получаем creator из pool_state
-                creator = pool_state.get("creator")
-                if creator and isinstance(creator, str):
-                    creator = Pubkey.from_string(creator)
-                elif not isinstance(creator, Pubkey):
-                    creator = None
-                    
-            except Exception as e:
-                # Если не можем получить состояние - токен возможно мигрировал
-                logger.warning(f"🐋 Cannot get curve state for {whale_buy.token_symbol}: {e} - skipping")
+            logger.info(f"🐋 Step 6: Getting pool state...")
+            curve_manager = self.platform_implementations.curve_manager
+            pool_state = await curve_manager.get_pool_state(bonding_curve)
+            logger.info(f"🐋 Step 7: Pool state received: complete={pool_state.get('complete', False)}")
+            
+            if pool_state.get("complete", False):
+                logger.warning(f"🐋 Token {whale_buy.token_symbol} has migrated to Raydium, skipping")
                 return
+            
+            # Получаем creator из pool_state
+            creator = pool_state.get("creator")
+            if creator and isinstance(creator, str):
+                creator = Pubkey.from_string(creator)
+            elif not isinstance(creator, Pubkey):
+                creator = None
+            
+            logger.info(f"🐋 Step 8: Creator = {str(creator)[:8] if creator else 'None'}...")
             
             # DEV CHECK - даже для whale copy проверяем на серийных скамеров!
             if self.dev_checker and creator:
+                logger.info(f"🐋 Step 9: Running dev check...")
                 try:
                     creator_str = str(creator)
                     dev_result = await self.dev_checker.check_creator(creator_str)
                     logger.info(
-                        f"🐋 Dev check for {whale_buy.token_symbol}: "
-                        f"tokens={dev_result.tokens_created}, risk={dev_result.risk_score}, "
-                        f"safe={dev_result.is_safe}"
+                        f"🐋 Dev check result: tokens={dev_result.tokens_created}, "
+                        f"risk={dev_result.risk_score}, safe={dev_result.is_safe}"
                     )
                     if not dev_result.is_safe:
                         logger.warning(
@@ -480,6 +477,8 @@ class UniversalTrader:
                 except Exception as e:
                     logger.warning(f"🐋 Dev check failed for {whale_buy.token_symbol}: {e}")
                     # Продолжаем если dev check упал - лучше купить чем пропустить
+            
+            logger.info(f"🐋 Step 10: Deriving token addresses...")
             
             # Для pump.fun используем Token2022 по умолчанию
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
@@ -498,6 +497,7 @@ class UniversalTrader:
                     PumpFunAddresses.PROGRAM
                 )
             
+            logger.info(f"🐋 Step 11: Creating TokenInfo...")
             token_info = TokenInfo(
                 name=whale_buy.token_symbol,
                 symbol=whale_buy.token_symbol,
@@ -520,11 +520,12 @@ class UniversalTrader:
             self.processed_tokens.add(mint_str)
             
             # Покупаем! skip_checks=True обходит scoring и pattern check, но dev check уже сделан выше
-            logger.warning(f"🐋 EXECUTING WHALE COPY BUY for {whale_buy.token_symbol} ({mint_str[:8]}...)")
+            logger.warning(f"🐋 Step 12: EXECUTING BUY for {whale_buy.token_symbol} ({mint_str[:8]}...)")
             await self._handle_token(token_info, skip_checks=True)
+            logger.warning(f"🐋 Step 13: _handle_token completed for {whale_buy.token_symbol}")
             
         except Exception as e:
-            logger.exception(f"🐋 Failed to copy whale trade: {e}")
+            logger.exception(f"🐋 WHALE COPY FAILED: {e}")
 
     async def _on_trending_token(self, token: TrendingToken):
         """Callback when trending scanner finds a hot token."""
