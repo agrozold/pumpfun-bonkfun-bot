@@ -412,13 +412,16 @@ class UniversalTrader:
         # Проверяем что не копируем один и тот же токен дважды
         mint_str = whale_buy.token_mint
         if mint_str in self.processed_tokens:
-            logger.info(f"🐋 Already processed {whale_buy.token_symbol}, skipping duplicate")
+            logger.info(f"🐋 Already processed {mint_str[:8]}..., skipping duplicate")
             return
         
         # Только pump.fun поддерживается для whale copy
+        logger.info(f"🐋 Bot platform: {self.platform}, checking if pump_fun...")
         if self.platform != Platform.PUMP_FUN:
-            logger.warning(f"🐋 Whale copy only supported for pump_fun, skipping")
+            logger.warning(f"🐋 Whale copy only supported for pump_fun (bot is {self.platform.value}), skipping")
             return
+        
+        logger.info(f"🐋 Platform check passed, proceeding with whale copy...")
         
         # Создаём TokenInfo для покупки
         try:
