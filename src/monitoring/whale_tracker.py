@@ -145,7 +145,19 @@ class WhaleTracker:
         self.on_whale_buy = callback
 
     def _get_wss_endpoint(self) -> str | None:
-        """Получить WSS endpoint."""
+        """Получить WSS endpoint.
+        
+        Приоритет:
+        1. Helius WSS (если есть API key) - лучшая поддержка logsSubscribe
+        2. Переданный wss_endpoint
+        3. Конвертация из rpc_endpoint
+        """
+        # Helius WSS - лучший вариант для logsSubscribe
+        if self.helius_api_key:
+            helius_wss = f"wss://mainnet.helius-rpc.com/?api-key={self.helius_api_key}"
+            logger.info(f"🐋 Using Helius WSS for whale tracking")
+            return helius_wss
+        
         if self.wss_endpoint:
             return self.wss_endpoint
         if self.rpc_endpoint:
