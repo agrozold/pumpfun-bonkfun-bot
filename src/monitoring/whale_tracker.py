@@ -145,27 +145,24 @@ class WhaleTracker:
         self.on_whale_buy = callback
 
     def _get_wss_endpoint(self) -> str | None:
-        """Получить WSS endpoint.
+        """Получить WSS endpoint для logsSubscribe.
         
-        Приоритет:
-        1. Helius WSS (если есть API key) - лучшая поддержка logsSubscribe
-        2. Переданный wss_endpoint
-        3. Конвертация из rpc_endpoint
+        ВАЖНО: Helius WSS даёт 429 rate limit на logsSubscribe!
+        Используем публичный Solana WSS для подписок.
+        Helius оставляем только для HTTP запросов (getTransaction и т.д.)
         """
-        # Helius WSS - лучший вариант для logsSubscribe
-        if self.helius_api_key:
-            helius_wss = f"wss://mainnet.helius-rpc.com/?api-key={self.helius_api_key}"
-            logger.info(f"🐋 Using Helius WSS for whale tracking")
-            return helius_wss
+        # Публичный Solana WSS - стабильный для logsSubscribe
+        # НЕ используем Helius WSS - даёт 429!
+        public_wss = "wss://api.mainnet-beta.solana.com"
         
-        if self.wss_endpoint:
+        # Если передан wss_endpoint - используем его (может быть приватный RPC)
+        if self.wss_endpoint and "helius" not in self.wss_endpoint.lower():
+            logger.info(f"🐋 Using provided WSS: {self.wss_endpoint[:50]}...")
             return self.wss_endpoint
-        if self.rpc_endpoint:
-            if "https://" in self.rpc_endpoint:
-                return self.rpc_endpoint.replace("https://", "wss://")
-            elif "http://" in self.rpc_endpoint:
-                return self.rpc_endpoint.replace("http://", "ws://")
-        return None
+        
+        # Fallback на публичный Solana WSS
+        logger.info(f"🐋 Using public Solana WSS for logsSubscribe (Helius gives 429)")
+        return public_wss
 
     async def start(self):
         """Запустить отслеживание платформ.
