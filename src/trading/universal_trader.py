@@ -428,7 +428,7 @@ class UniversalTrader:
                 )
                 return
             
-            logger.info(f"🐋 Platform match: {self.platform.value} ✅")
+            logger.warning(f"🐋 Platform match: {self.platform.value} ✅ - creating TokenInfo...")
             
             # Step 3: Create platform-specific TokenInfo
             if self.platform == Platform.PUMP_FUN:
@@ -440,13 +440,19 @@ class UniversalTrader:
                 return
             
             if token_info is None:
+                logger.warning(f"🐋 TokenInfo creation failed for {mint_str[:8]}...")
                 return  # Token creation failed (migrated, dev check failed, etc.)
+            
+            logger.warning(f"🐋 TokenInfo created successfully for {token_info.symbol}")
             
             # Step 4: Execute trade
             self.processed_tokens.add(mint_str)
-            logger.warning(f"🐋 EXECUTING BUY for {whale_buy.token_symbol} ({mint_str[:8]}...) on {self.platform.value}")
+            logger.warning(f"🐋 EXECUTING BUY for {token_info.symbol} ({mint_str[:8]}...) on {self.platform.value}")
             await self._handle_token(token_info, skip_checks=True)
-            logger.warning(f"🐋 _handle_token completed for {whale_buy.token_symbol}")
+            logger.warning(f"🐋 _handle_token completed for {token_info.symbol}")
+            
+        except Exception as e:
+            logger.exception(f"🐋 WHALE COPY FAILED: {e}")
             
         except Exception as e:
             logger.exception(f"🐋 WHALE COPY FAILED: {e}")
@@ -465,18 +471,26 @@ class UniversalTrader:
         from core.pubkeys import SystemAddresses
         
         mint_str = whale_buy.token_mint
-        mint = Pubkey.from_string(mint_str)
+        logger.info(f"🐋 Creating pump.fun TokenInfo for {mint_str[:8]}...")
+        
+        try:
+            mint = Pubkey.from_string(mint_str)
+        except Exception as e:
+            logger.error(f"🐋 Invalid mint address: {e}")
+            return None
         
         # Derive bonding curve from mint (PDA)
         bonding_curve, _ = Pubkey.find_program_address(
             [b"bonding-curve", bytes(mint)],
             PumpFunAddresses.PROGRAM
         )
+        logger.info(f"🐋 Bonding curve: {str(bonding_curve)[:8]}...")
         
         # Get pool state
         try:
             curve_manager = self.platform_implementations.curve_manager
             pool_state = await curve_manager.get_pool_state(bonding_curve)
+            logger.info(f"🐋 Pool state fetched: complete={pool_state.get('complete', False)}")
         except Exception as e:
             logger.warning(f"🐋 Failed to get pump.fun pool state: {e}")
             return None
@@ -504,6 +518,8 @@ class UniversalTrader:
                 [b"creator-vault", bytes(creator)],
                 PumpFunAddresses.PROGRAM
             )
+        
+        logger.info(f"🐋 TokenInfo ready for {whale_buy.token_symbol}")
         
         return TokenInfo(
             name=whale_buy.token_symbol,
