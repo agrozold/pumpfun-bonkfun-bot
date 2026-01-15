@@ -612,14 +612,12 @@ class UniversalTrader:
                 if success:
                     logger.warning(f"✅ TRENDING PumpSwap BUY: {token.symbol} - {sig}")
                     # Save position for tracking
-                    from trading.position import Position, save_positions
                     position = Position(
-                        mint=mint_str,
+                        mint=mint,
                         symbol=token.symbol,
-                        buy_price=0,  # Unknown for PumpSwap
-                        buy_amount=self.buy_amount,
-                        token_amount=0,  # Will be updated on sell
-                        buy_signature=sig,
+                        entry_price=0.0,  # Unknown for PumpSwap
+                        quantity=0.0,  # Will be updated on sell
+                        entry_time=datetime.utcnow(),
                         platform=self.platform.value,
                     )
                     self.active_positions.append(position)
