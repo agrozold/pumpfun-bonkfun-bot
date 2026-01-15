@@ -129,6 +129,7 @@ class PlatformAwareBuyer(Trader):
 
             # Send transaction with preflight checks enabled for reliability
             try:
+                logger.info(f"🔧 Building and sending buy transaction for {token_info.symbol}...")
                 tx_signature = await self.client.build_and_send_transaction(
                     instructions,
                     self.wallet.keypair,
@@ -144,6 +145,7 @@ class PlatformAwareBuyer(Trader):
                         "account_data_size", token_info.platform
                     ),
                 )
+                logger.info(f"🔧 Transaction sent: {tx_signature}")
             except ValueError as e:
                 # Insufficient funds - don't retry
                 logger.error(f"Buy failed - insufficient funds: {e}")
@@ -151,6 +153,14 @@ class PlatformAwareBuyer(Trader):
                     success=False,
                     platform=token_info.platform,
                     error_message=f"Insufficient funds: {e}",
+                )
+            except RuntimeError as e:
+                # All retries failed
+                logger.error(f"Buy failed - all retries exhausted: {e}")
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=f"Transaction failed: {e}",
                 )
 
             success = await self.client.confirm_transaction(tx_signature, timeout=45.0)
