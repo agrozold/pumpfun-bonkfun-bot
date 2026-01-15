@@ -94,7 +94,7 @@ class FallbackSeller:
         sol_amount: float,
         symbol: str = "TOKEN",
         market_address: Pubkey | None = None,  # Optional - skip lookup if provided
-    ) -> tuple[bool, str | None, str | None]:
+    ) -> tuple[bool, str | None, str | None, float, float]:
         """Buy token via PumpSwap AMM - for migrated tokens.
         
         Args:
@@ -104,7 +104,7 @@ class FallbackSeller:
             market_address: Optional pool address (skip lookup if provided)
             
         Returns:
-            Tuple of (success, tx_signature, error_message)
+            Tuple of (success, tx_signature, error_message, token_amount, price)
         """
         from solders.system_program import TransferParams, transfer
         from spl.token.instructions import (
@@ -133,11 +133,11 @@ class FallbackSeller:
                     )
                 except Exception as e:
                     logger.error(f"📍 get_program_accounts failed: {e}")
-                    return False, None, f"RPC error looking up market: {e}"
+                    return False, None, f"RPC error looking up market: {e}", 0.0, 0.0
                 
                 if not response.value:
                     logger.warning(f"📍 No PumpSwap market found for {symbol}")
-                    return False, None, f"PumpSwap market not found for {mint}"
+                    return False, None, f"PumpSwap market not found for {mint}", 0.0, 0.0
                 
                 market = response.value[0].pubkey
                 logger.info(f"📍 Found PumpSwap market: {market}")
@@ -157,11 +157,11 @@ class FallbackSeller:
                         await asyncio.sleep(0.5 * (retry + 1))
                         continue
                     logger.error(f"📍 get_account_info failed for market {market}: {e}")
-                    return False, None, f"Failed to fetch market data: {e}"
+                    return False, None, f"Failed to fetch market data: {e}", 0.0, 0.0
             
             if not market_response or not market_response.value:
                 logger.error(f"📍 Market account {market} not found on chain")
-                return False, None, f"Market account {market} not found on chain"
+                return False, None, f"Market account {market} not found on chain", 0.0, 0.0
             
             data = market_response.value.data
             # Handle both bytes and tuple (base64 encoded)
@@ -178,7 +178,7 @@ class FallbackSeller:
                 logger.info(f"📍 Market data parsed: base_mint={market_data.get('base_mint', 'N/A')[:8]}...")
             except Exception as e:
                 logger.error(f"📍 Failed to parse market data: {e}")
-                return False, None, f"Failed to parse market data: {e}"
+                return False, None, f"Failed to parse market data: {e}", 0.0, 0.0
             
             try:
                 token_program_id = await self._get_token_program_id(mint)
@@ -193,7 +193,7 @@ class FallbackSeller:
                     logger.info(f"📍 Token program (retry): {token_program_id}")
                 except Exception as e2:
                     logger.error(f"📍 Failed to get token program: {e2}")
-                    return False, None, f"Failed to get token program: {e2}"
+                    return False, None, f"Failed to get token program: {e2}", 0.0, 0.0
             
             # Get user token accounts
             user_base_ata = get_associated_token_address(
@@ -249,7 +249,7 @@ class FallbackSeller:
                         await asyncio.sleep(0.5 * (balance_retry + 1))
                     else:
                         logger.error(f"📍 Failed to get pool balances: {e}")
-                        return False, None, f"Failed to get pool balances: {e}"
+                        return False, None, f"Failed to get pool balances: {e}", 0.0, 0.0
             
             # Calculate expected tokens
             expected_tokens = sol_amount / price
@@ -457,31 +457,31 @@ class FallbackSeller:
                     if meta and meta.err is not None:
                         error_msg = f"Transaction FAILED on-chain: {meta.err}"
                         logger.error(f"FAILED: {error_msg}")
-                        return False, sig, error_msg
+                        return False, sig, error_msg, 0.0, 0.0
                     
                     logger.info(f"PumpSwap BUY SUCCESS! Got ~{expected_tokens:,.2f} {symbol}")
-                    return True, sig, None
+                    return True, sig, None, expected_tokens, price
                     
                 except Exception as e:
                     error_str = str(e).lower()
                     # If rate limited, return signature - user can check on solscan
                     if "429" in error_str or "rate" in error_str or "too many" in error_str:
                         logger.warning(f"RPC rate limited - check tx on solscan: {sig}")
-                        return True, sig, None  # Assume success, user verifies
+                        return True, sig, None, expected_tokens, price  # Return calculated amounts
                     
                     error_msg = str(e) if str(e) else f"{type(e).__name__}"
                     logger.warning(f"Status check failed: {error_msg}")
                     if attempt == 2:  # Last attempt
                         logger.warning(f"Could not verify - check solscan: {sig}")
-                        return True, sig, None  # Assume success
+                        return True, sig, None, expected_tokens, price  # Return calculated amounts
             
             # If we get here, tx was sent but status unknown
             logger.warning(f"Status unknown - check solscan: {sig}")
-            return True, sig, None  # Assume success
+            return True, sig, None, expected_tokens, price  # Return calculated amounts
             
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
-            return False, None, str(e)
+            return False, None, str(e), 0.0, 0.0
 
     async def buy_via_jupiter(
         self,

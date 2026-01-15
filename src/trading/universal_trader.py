@@ -602,7 +602,7 @@ class UniversalTrader:
                 if not market_address:
                     logger.info(f"🔥 No pair_address, will lookup PumpSwap market via RPC")
                 
-                success, sig, error = await fallback.buy_via_pumpswap(
+                success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
                     mint=mint,
                     sol_amount=self.buy_amount,
                     symbol=token.symbol,
@@ -611,12 +611,13 @@ class UniversalTrader:
                 
                 if success:
                     logger.warning(f"✅ TRENDING PumpSwap BUY: {token.symbol} - {sig}")
-                    # Save position for tracking
+                    logger.info(f"✅ Got {token_amount:,.2f} tokens at price {price:.10f} SOL")
+                    # Save position with REAL price and quantity
                     position = Position(
                         mint=mint,
                         symbol=token.symbol,
-                        entry_price=0.0,  # Unknown for PumpSwap
-                        quantity=0.0,  # Will be updated on sell
+                        entry_price=price,  # ✅ REAL price from pool
+                        quantity=token_amount,  # ✅ REAL token amount
                         entry_time=datetime.utcnow(),
                         platform=self.platform.value,
                     )
