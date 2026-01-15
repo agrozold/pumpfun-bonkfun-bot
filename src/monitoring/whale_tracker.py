@@ -1,6 +1,9 @@
 """
-Whale Tracker - отслеживает транзакции китов в реальном времени.
-Когда кит покупает токен - отправляет сигнал на покупку.
+Whale Tracker - отслеживает транзакции китов в РЕАЛЬНОМ ВРЕМЕНИ.
+Когда кит покупает токен - отправляет сигнал на копирование.
+
+ВАЖНО: Копируем ТОЛЬКО свежие покупки (в пределах time_window_minutes).
+Старые/исторические покупки игнорируются!
 
 Использует ОДНО WebSocket соединение к Solana RPC с подпиской на логи pump.fun.
 Фильтрует транзакции по кошелькам китов локально.
@@ -9,6 +12,7 @@ Whale Tracker - отслеживает транзакции китов в реа
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,10 +37,15 @@ class WhaleBuy:
     timestamp: datetime
     tx_signature: str
     whale_label: str = "whale"
+    block_time: int | None = None  # Unix timestamp транзакции
+    age_seconds: float = 0  # Сколько секунд назад была покупка
 
 
 class WhaleTracker:
-    """Отслеживает покупки китов через одно WebSocket соединение к pump.fun."""
+    """Отслеживает покупки китов через одно WebSocket соединение к pump.fun.
+    
+    REAL-TIME копирование: только свежие покупки (< time_window_minutes).
+    """
 
     def __init__(
         self,
@@ -45,12 +54,15 @@ class WhaleTracker:
         helius_api_key: str | None = None,
         rpc_endpoint: str | None = None,
         wss_endpoint: str | None = None,
+        time_window_minutes: float = 5.0,  # Копируем только покупки за последние N минут
     ):
         self.wallets_file = wallets_file
         self.min_buy_amount = min_buy_amount
         self.helius_api_key = helius_api_key
         self.rpc_endpoint = rpc_endpoint
         self.wss_endpoint = wss_endpoint
+        self.time_window_minutes = time_window_minutes
+        self.time_window_seconds = time_window_minutes * 60
         
         self.whale_wallets: dict[str, dict] = {}  # wallet -> info
         self.on_whale_buy: Callable | None = None
@@ -61,7 +73,10 @@ class WhaleTracker:
         
         self._load_wallets()
         
-        logger.info(f"WhaleTracker initialized with {len(self.whale_wallets)} wallets")
+        logger.info(
+            f"WhaleTracker initialized: {len(self.whale_wallets)} wallets, "
+            f"min_buy={min_buy_amount} SOL, time_window={time_window_minutes} min"
+        )
 
     def _load_wallets(self):
         """Загрузить список кошельков китов."""
@@ -302,6 +317,9 @@ class WhaleTracker:
             whale_info = self.whale_wallets[fee_payer]
             signature = tx.get("signature", "")
             
+            # Получаем block_time для проверки свежести
+            block_time = tx.get("timestamp")
+            
             # Считаем SOL
             sol_spent = 0
             token_mint = None
@@ -322,6 +340,7 @@ class WhaleTracker:
                     sol_spent=sol_spent,
                     signature=signature,
                     whale_label=whale_info.get("label", "whale"),
+                    block_time=block_time,
                 )
                 
         except Exception as e:
@@ -346,6 +365,9 @@ class WhaleTracker:
             whale_info = self.whale_wallets[fee_payer]
             meta = tx.get("meta", {})
             
+            # Получаем block_time для проверки свежести
+            block_time = tx.get("blockTime")
+            
             # Считаем SOL
             pre = meta.get("preBalances", [])
             post = meta.get("postBalances", [])
@@ -365,13 +387,50 @@ class WhaleTracker:
                     sol_spent=sol_spent,
                     signature=signature,
                     whale_label=whale_info.get("label", "whale"),
+                    block_time=block_time,
                 )
                 
         except Exception as e:
             logger.debug(f"Error processing RPC tx: {e}")
 
-    async def _emit_whale_buy(self, wallet: str, token_mint: str, sol_spent: float, signature: str, whale_label: str):
-        """Отправить сигнал о покупке кита."""
+    async def _emit_whale_buy(
+        self, 
+        wallet: str, 
+        token_mint: str, 
+        sol_spent: float, 
+        signature: str, 
+        whale_label: str,
+        block_time: int | None = None,
+    ):
+        """Отправить сигнал о покупке кита.
+        
+        ВАЖНО: Проверяем что покупка СВЕЖАЯ (в пределах time_window).
+        Старые покупки игнорируются!
+        """
+        now = time.time()
+        age_seconds = 0.0
+        
+        # Проверяем время покупки
+        if block_time:
+            age_seconds = now - block_time
+            
+            # ГЛАВНЫЙ ФИЛЬТР: Пропускаем старые покупки!
+            if age_seconds > self.time_window_seconds:
+                logger.info(
+                    f"⏰ SKIP OLD: {whale_label} ({wallet[:8]}...) "
+                    f"bought {token_mint[:8]}... {age_seconds:.0f}s ago "
+                    f"(outside {self.time_window_minutes} min window)"
+                )
+                return
+            
+            logger.info(
+                f"🐋 FRESH BUY: {whale_label} bought {age_seconds:.1f}s ago "
+                f"(within {self.time_window_minutes} min window ✅)"
+            )
+        else:
+            # Если нет block_time - это real-time событие, копируем
+            logger.info(f"🐋 REAL-TIME BUY: {whale_label} (no block_time, assuming fresh)")
+        
         whale_buy = WhaleBuy(
             whale_wallet=wallet,
             token_mint=token_mint,
@@ -380,11 +439,14 @@ class WhaleTracker:
             timestamp=datetime.utcnow(),
             tx_signature=signature,
             whale_label=whale_label,
+            block_time=block_time,
+            age_seconds=age_seconds,
         )
         
         logger.warning(
             f"🐋 WHALE BUY: {whale_label} ({wallet[:8]}...) "
-            f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL"
+            f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL "
+            f"({age_seconds:.1f}s ago)"
         )
         
         if self.on_whale_buy:

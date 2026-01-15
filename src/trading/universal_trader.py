@@ -217,11 +217,12 @@ class UniversalTrader:
                 helius_api_key=helius_api_key,
                 rpc_endpoint=rpc_endpoint,
                 wss_endpoint=wss_endpoint,
+                time_window_minutes=5.0,  # Only copy buys from last 5 minutes
             )
             self.whale_tracker.set_callback(self._on_whale_buy)
             logger.info(
                 f"Whale copy trading enabled: wallets_file={whale_wallets_file}, "
-                f"min_buy={whale_min_buy_amount} SOL"
+                f"min_buy={whale_min_buy_amount} SOL, time_window=5 min"
             )
 
         # Dev reputation checker setup
