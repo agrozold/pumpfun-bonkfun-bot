@@ -185,6 +185,19 @@ async def start_bot(config_path: str):
             pattern_only_mode=cfg.get("pattern_detection", {}).get(
                 "pattern_only_mode", False
             ),
+            # High Volume Sideways pattern configuration
+            pattern_high_volume_buys_1h=cfg.get("pattern_detection", {}).get(
+                "high_volume_buys_1h", 300
+            ),
+            pattern_high_volume_sells_1h=cfg.get("pattern_detection", {}).get(
+                "high_volume_sells_1h", 200
+            ),
+            pattern_high_volume_alt_buys_1h=cfg.get("pattern_detection", {}).get(
+                "high_volume_alt_buys_1h", 100
+            ),
+            pattern_high_volume_alt_max_sells_1h=cfg.get("pattern_detection", {}).get(
+                "high_volume_alt_max_sells_1h", 100
+            ),
             # Token scoring configuration
             enable_scoring=cfg.get("scoring", {}).get("enabled", False),
             scoring_min_score=cfg.get("scoring", {}).get("min_score", 70),

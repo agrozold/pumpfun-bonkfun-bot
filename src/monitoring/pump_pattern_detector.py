@@ -52,6 +52,11 @@ class TokenMetrics:
     buy_volume_5m: float = 0.0
     sell_volume_5m: float = 0.0
     
+    # 1-hour accumulated trade data (from 5-min snapshots)
+    buys_1h: int = 0
+    sells_1h: int = 0
+    trade_history_5m: list = field(default_factory=list)  # [(timestamp, buys, sells)]
+    
     # History for pattern detection
     price_history: list = field(default_factory=list)
     volume_history: list = field(default_factory=list)
@@ -92,6 +97,11 @@ class PumpPatternDetector:
         min_whale_buys: int = 2,
         whale_window_seconds: int = 60,
         min_whale_amount: float = 0.5,
+        # High Volume Sideways pattern thresholds
+        high_volume_buys_1h: int = 300,  # Min buys in 1 hour
+        high_volume_sells_1h: int = 200,  # Min sells in 1 hour
+        high_volume_alt_buys_1h: int = 100,  # Alternative: buys > 100
+        high_volume_alt_max_sells_1h: int = 100,  # Alternative: sells <= 100
         # Signal settings
         min_patterns_to_signal: int = 1,
         update_interval: float = 5.0,  # seconds between updates
@@ -119,6 +129,12 @@ class PumpPatternDetector:
         self.min_whale_amount = min_whale_amount
         self.min_patterns_to_signal = min_patterns_to_signal
         self.update_interval = update_interval
+        
+        # High Volume Sideways thresholds
+        self.high_volume_buys_1h = high_volume_buys_1h
+        self.high_volume_sells_1h = high_volume_sells_1h
+        self.high_volume_alt_buys_1h = high_volume_alt_buys_1h
+        self.high_volume_alt_max_sells_1h = high_volume_alt_max_sells_1h
 
         self.tokens: dict[str, TokenMetrics] = {}
         self.on_pump_signal: Callable | None = None
@@ -267,10 +283,20 @@ class PumpPatternDetector:
         if metrics.volume_24h > 0:
             metrics.volume_history.append((now, metrics.buy_volume_5m + metrics.sell_volume_5m))
         
-        # Cleanup old history
-        cutoff = now - timedelta(minutes=10)
-        metrics.price_history = [(t, p) for t, p in metrics.price_history if t > cutoff][-50:]
-        metrics.volume_history = [(t, v) for t, v in metrics.volume_history if t > cutoff][-50:]
+        # Record 5-min trade data for 1-hour accumulation
+        if metrics.buys_5m > 0 or metrics.sells_5m > 0:
+            metrics.trade_history_5m.append((now, metrics.buys_5m, metrics.sells_5m))
+        
+        # Cleanup old history (keep 1 hour for trade history)
+        cutoff_10m = now - timedelta(minutes=10)
+        cutoff_1h = now - timedelta(hours=1)
+        metrics.price_history = [(t, p) for t, p in metrics.price_history if t > cutoff_10m][-50:]
+        metrics.volume_history = [(t, v) for t, v in metrics.volume_history if t > cutoff_10m][-50:]
+        metrics.trade_history_5m = [(t, b, s) for t, b, s in metrics.trade_history_5m if t > cutoff_1h]
+        
+        # Calculate 1-hour totals from accumulated 5-min snapshots
+        metrics.buys_1h = sum(b for _, b, _ in metrics.trade_history_5m)
+        metrics.sells_1h = sum(s for _, _, s in metrics.trade_history_5m)
         
         metrics.last_update = now
         
@@ -430,6 +456,9 @@ class PumpPatternDetector:
         # 5. Whale Cluster
         await self._check_whale_cluster(mint, metrics, now)
         
+        # 6. High Volume Sideways
+        await self._check_high_volume_sideways(mint, metrics)
+        
         # Evaluate signal
         await self._evaluate_signal(mint)
 
@@ -501,6 +530,47 @@ class PumpPatternDetector:
                 pattern_type="WHALE_CLUSTER",
                 strength=min(len(recent) / 5, 1.0),
                 description=f"{len(recent)} whale buys ({total:.1f} SOL) in {self.whale_window.seconds}s",
+            ))
+
+    async def _check_high_volume_sideways(self, mint: str, metrics: TokenMetrics):
+        """Проверить паттерн High Volume Sideways.
+        
+        Условия срабатывания:
+        1. BUY >= 300 за 1 час И SELL >= 200 за 1 час (активная торговля)
+        2. ИЛИ: BUY > 100 за 1 час И SELL <= 100 (накопление)
+        
+        Это указывает на токен с высокой активностью но без резкого роста цены -
+        потенциальный кандидат на пробой.
+        """
+        buys_1h = metrics.buys_1h
+        sells_1h = metrics.sells_1h
+        
+        # Condition 1: High volume both sides (active trading)
+        condition1 = (
+            buys_1h >= self.high_volume_buys_1h and 
+            sells_1h >= self.high_volume_sells_1h
+        )
+        
+        # Condition 2: Accumulation (more buys, few sells)
+        condition2 = (
+            buys_1h > self.high_volume_alt_buys_1h and 
+            sells_1h <= self.high_volume_alt_max_sells_1h
+        )
+        
+        if condition1 or condition2:
+            # Calculate strength based on volume
+            total_trades = buys_1h + sells_1h
+            strength = min(total_trades / 500, 1.0)  # Max strength at 500 trades
+            
+            if condition1:
+                desc = f"High volume sideways: {buys_1h} buys, {sells_1h} sells in 1h"
+            else:
+                desc = f"Accumulation: {buys_1h} buys, {sells_1h} sells in 1h"
+            
+            await self._add_pattern(mint, PatternSignal(
+                pattern_type="HIGH_VOLUME_SIDEWAYS",
+                strength=strength,
+                description=desc,
             ))
 
     async def _add_pattern(self, mint: str, signal: PatternSignal):
