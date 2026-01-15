@@ -496,9 +496,10 @@ class UniversalTrader:
         """Buy token on ANY available DEX - universal liquidity finder.
         
         Порядок попыток:
-        1. Pump.Fun bonding curve (самый быстрый, если не мигрировал)
-        2. PumpSwap (для мигрированных pump.fun токенов)
-        3. Jupiter (универсальный aggregator - найдет любую ликвидность)
+        1. Pump.Fun bonding curve (если бот на pump_fun)
+        2. LetsBonk bonding curve (если бот на lets_bonk)
+        3. PumpSwap (для мигрированных pump.fun токенов)
+        4. Jupiter (универсальный aggregator - найдет любую ликвидность)
         
         Args:
             mint_str: Token mint address as string
@@ -509,54 +510,91 @@ class UniversalTrader:
             Tuple of (success, tx_signature, dex_used, token_amount, price)
         """
         from trading.fallback_seller import FallbackSeller
-        from platforms.pumpfun.address_provider import PumpFunAddresses
         
         mint = Pubkey.from_string(mint_str)
         
         # ============================================
-        # 1️⃣ TRY PUMP.FUN BONDING CURVE (fastest)
+        # 1️⃣ TRY PLATFORM-SPECIFIC BONDING CURVE
         # ============================================
-        logger.info(f"🔍 [1/3] Checking Pump.Fun bonding curve for {symbol}...")
-        
-        try:
-            # Derive bonding curve
-            bonding_curve, _ = Pubkey.find_program_address(
-                [b"bonding-curve", bytes(mint)],
-                PumpFunAddresses.PROGRAM
-            )
-            
-            # Check if bonding curve exists and not migrated
-            curve_manager = self.platform_implementations.curve_manager
-            pool_state = await curve_manager.get_pool_state(bonding_curve)
-            
-            if pool_state and not pool_state.get("complete", False):
-                # Bonding curve available! Use normal pump.fun buy
-                logger.info(f"✅ Pump.Fun bonding curve available for {symbol}")
+        if self.platform == Platform.PUMP_FUN:
+            logger.info(f"🔍 [1/4] Checking Pump.Fun bonding curve for {symbol}...")
+            try:
+                from platforms.pumpfun.address_provider import PumpFunAddresses
                 
-                # Create TokenInfo for pump.fun buy
-                token_info = await self._create_pumpfun_token_info_from_mint(
-                    mint_str, symbol, bonding_curve, pool_state
+                # Derive bonding curve
+                bonding_curve, _ = Pubkey.find_program_address(
+                    [b"bonding-curve", bytes(mint)],
+                    PumpFunAddresses.PROGRAM
                 )
                 
-                if token_info:
-                    # Execute buy via normal flow
-                    buy_result = await self.buyer.execute(token_info)
-                    
-                    if buy_result.success:
-                        logger.warning(f"✅ Pump.Fun BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
-                        return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
-                    else:
-                        logger.warning(f"⚠️ Pump.Fun buy failed: {buy_result.error_message}")
-            else:
-                logger.info(f"⚠️ Pump.Fun bonding curve migrated or unavailable for {symbol}")
+                # Check if bonding curve exists and not migrated
+                curve_manager = self.platform_implementations.curve_manager
+                pool_state = await curve_manager.get_pool_state(bonding_curve)
                 
-        except Exception as e:
-            logger.info(f"⚠️ Pump.Fun check failed: {e}")
+                if pool_state and not pool_state.get("complete", False):
+                    # Bonding curve available! Use normal pump.fun buy
+                    logger.info(f"✅ Pump.Fun bonding curve available for {symbol}")
+                    
+                    # Create TokenInfo for pump.fun buy
+                    token_info = await self._create_pumpfun_token_info_from_mint(
+                        mint_str, symbol, bonding_curve, pool_state
+                    )
+                    
+                    if token_info:
+                        # Execute buy via normal flow
+                        buy_result = await self.buyer.execute(token_info)
+                        
+                        if buy_result.success:
+                            logger.warning(f"✅ Pump.Fun BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                            return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
+                        else:
+                            logger.warning(f"⚠️ Pump.Fun buy failed: {buy_result.error_message}")
+                else:
+                    logger.info(f"⚠️ Pump.Fun bonding curve migrated or unavailable for {symbol}")
+                    
+            except Exception as e:
+                logger.info(f"⚠️ Pump.Fun check failed: {e}")
+        
+        elif self.platform == Platform.LETS_BONK:
+            logger.info(f"🔍 [1/4] Checking LetsBonk bonding curve for {symbol}...")
+            try:
+                from platforms.letsbonk.address_provider import LetsBonkAddressProvider
+                
+                address_provider = LetsBonkAddressProvider()
+                pool_address = address_provider.derive_pool_address(mint)
+                
+                # Check if pool exists and not migrated
+                curve_manager = self.platform_implementations.curve_manager
+                pool_state = await curve_manager.get_pool_state(pool_address)
+                
+                if pool_state and not pool_state.get("complete", False) and pool_state.get("status") != "migrated":
+                    # Bonding curve available! Use normal letsbonk buy
+                    logger.info(f"✅ LetsBonk bonding curve available for {symbol}")
+                    
+                    # Create TokenInfo for letsbonk buy
+                    token_info = await self._create_letsbonk_token_info_from_mint(
+                        mint_str, symbol, pool_address, pool_state
+                    )
+                    
+                    if token_info:
+                        # Execute buy via normal flow
+                        buy_result = await self.buyer.execute(token_info)
+                        
+                        if buy_result.success:
+                            logger.warning(f"✅ LetsBonk BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                            return True, buy_result.tx_signature, "lets_bonk", buy_result.amount or 0, buy_result.price or 0
+                        else:
+                            logger.warning(f"⚠️ LetsBonk buy failed: {buy_result.error_message}")
+                else:
+                    logger.info(f"⚠️ LetsBonk bonding curve migrated or unavailable for {symbol}")
+                    
+            except Exception as e:
+                logger.info(f"⚠️ LetsBonk check failed: {e}")
         
         # ============================================
         # 2️⃣ TRY PUMPSWAP (for migrated tokens)
         # ============================================
-        logger.info(f"🔍 [2/3] Trying PumpSwap for {symbol}...")
+        logger.info(f"🔍 [2/4] Trying PumpSwap for {symbol}...")
         
         try:
             fallback = FallbackSeller(
@@ -585,7 +623,7 @@ class UniversalTrader:
         # ============================================
         # 3️⃣ TRY JUPITER (universal fallback)
         # ============================================
-        logger.info(f"🔍 [3/3] Trying Jupiter aggregator for {symbol}...")
+        logger.info(f"🔍 [3/4] Trying Jupiter aggregator for {symbol}...")
         
         try:
             fallback = FallbackSeller(
@@ -687,6 +725,81 @@ class UniversalTrader:
             
         except Exception as e:
             logger.warning(f"Failed to create TokenInfo from mint: {e}")
+            return None
+
+    async def _create_letsbonk_token_info_from_mint(
+        self,
+        mint_str: str,
+        symbol: str,
+        pool_address: Pubkey,
+        pool_state: dict,
+    ) -> "TokenInfo | None":
+        """Create TokenInfo for LetsBonk from mint address (for universal buy).
+        
+        Args:
+            mint_str: Token mint address as string
+            symbol: Token symbol
+            pool_address: Derived pool address
+            pool_state: Pool state from curve manager
+            
+        Returns:
+            TokenInfo or None if creation fails
+        """
+        from interfaces.core import TokenInfo
+        from platforms.letsbonk.address_provider import (
+            LetsBonkAddressProvider,
+            LetsBonkAddresses,
+        )
+        from core.pubkeys import SystemAddresses
+        
+        try:
+            mint = Pubkey.from_string(mint_str)
+            address_provider = LetsBonkAddressProvider()
+            
+            # Extract creator
+            creator = pool_state.get("creator")
+            if creator and isinstance(creator, str):
+                creator = Pubkey.from_string(creator)
+            elif not isinstance(creator, Pubkey):
+                creator = None
+            
+            # Derive addresses
+            base_vault = address_provider.derive_base_vault(mint)
+            quote_vault = address_provider.derive_quote_vault(mint)
+            
+            # Get global_config and platform_config
+            global_config = pool_state.get("global_config") or LetsBonkAddresses.GLOBAL_CONFIG
+            platform_config = pool_state.get("platform_config") or LetsBonkAddresses.PLATFORM_CONFIG
+            
+            if isinstance(global_config, str):
+                global_config = Pubkey.from_string(global_config)
+            if isinstance(platform_config, str):
+                platform_config = Pubkey.from_string(platform_config)
+            
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+            
+            return TokenInfo(
+                name=symbol,
+                symbol=symbol,
+                uri="",
+                mint=mint,
+                platform=Platform.LETS_BONK,
+                pool_state=pool_address,
+                base_vault=base_vault,
+                quote_vault=quote_vault,
+                global_config=global_config,
+                platform_config=platform_config,
+                creator=creator,
+                user=None,
+                bonding_curve=None,
+                associated_bonding_curve=None,
+                creator_vault=None,
+                token_program_id=token_program_id,
+                creation_timestamp=0,
+            )
+            
+        except Exception as e:
+            logger.warning(f"Failed to create LetsBonk TokenInfo from mint: {e}")
             return None
 
     def _extract_creator(self, pool_state: dict) -> Pubkey | None:
