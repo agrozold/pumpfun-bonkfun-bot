@@ -381,11 +381,14 @@ class WhaleTracker:
             if not is_buy:
                 return
             
+            # Логируем что нашли Buy транзакцию
+            logger.info(f"🐋 BUY TX detected on {platform}: {signature[:16]}...")
+            
             # Получаем детали транзакции и проверяем кошелёк
             await self._check_if_whale_tx(signature, platform)
             
         except Exception as e:
-            logger.debug(f"Error handling log: {e}")
+            logger.warning(f"🐋 Error handling log: {e}")
 
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
@@ -401,19 +404,28 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
+        logger.info(f"🐋 Checking TX {signature[:16]}... on {platform}")
+        
         # Используем стандартный RPC вместо Helius для экономии запросов
         if self.rpc_endpoint:
             tx = await self._get_tx_rpc(signature)
             if tx:
+                logger.info(f"🐋 Got TX data from RPC for {signature[:16]}...")
                 await self._process_rpc_tx(tx, signature, platform)
                 return
+            else:
+                logger.info(f"🐋 RPC returned no data for {signature[:16]}...")
         
         # Fallback на Helius только если RPC не сработал
         if self.helius_api_key:
+            logger.info(f"🐋 Trying Helius for {signature[:16]}...")
             tx = await self._get_tx_helius(signature)
             if tx:
+                logger.info(f"🐋 Got TX data from Helius for {signature[:16]}...")
                 await self._process_helius_tx(tx, platform)
                 return
+            else:
+                logger.info(f"🐋 Helius returned no data for {signature[:16]}...")
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""
@@ -513,13 +525,17 @@ class WhaleTracker:
             account_keys = message.get("accountKeys", [])
             
             if not account_keys:
+                logger.info(f"🐋 No account keys in TX {signature[:16]}...")
                 return
             
             # fee_payer - первый аккаунт
             first_key = account_keys[0]
             fee_payer = first_key.get("pubkey", "") if isinstance(first_key, dict) else str(first_key)
             
+            logger.info(f"🐋 TX {signature[:16]}... fee_payer: {fee_payer[:8]}...")
+            
             if fee_payer not in self.whale_wallets:
+                logger.info(f"🐋 Fee payer {fee_payer[:8]}... NOT in whale list")
                 return
             
             # 🐋 НАШЛИ КИТА!
@@ -536,7 +552,7 @@ class WhaleTracker:
             post = meta.get("postBalances", [])
             sol_spent = (pre[0] - post[0]) / 1e9 if pre and post else 0
             
-            logger.info(f"🐋 Whale spent: {sol_spent:.4f} SOL (min: {self.min_buy_amount})")
+            logger.warning(f"🐋 Whale spent: {sol_spent:.4f} SOL (min: {self.min_buy_amount})")
             
             # Ищем токен
             token_mint = None
@@ -544,6 +560,11 @@ class WhaleTracker:
                 if bal.get("owner") == fee_payer:
                     token_mint = bal.get("mint")
                     break
+            
+            if token_mint:
+                logger.warning(f"🐋 Token mint: {token_mint[:16]}...")
+            else:
+                logger.warning(f"🐋 No token mint found in postTokenBalances")
             
             if sol_spent >= self.min_buy_amount and token_mint:
                 logger.warning(f"🐋 WHALE BUY QUALIFIES: {sol_spent:.2f} SOL >= {self.min_buy_amount} SOL on {platform}")
@@ -556,9 +577,14 @@ class WhaleTracker:
                     block_time=block_time,
                     platform=platform,
                 )
+            else:
+                if sol_spent < self.min_buy_amount:
+                    logger.info(f"🐋 Amount too small: {sol_spent:.4f} < {self.min_buy_amount}")
+                if not token_mint:
+                    logger.info(f"🐋 No token mint found")
                 
         except Exception as e:
-            logger.debug(f"Error processing RPC tx: {e}")
+            logger.warning(f"🐋 Error processing RPC tx: {e}")
 
     async def _emit_whale_buy(
         self, 
