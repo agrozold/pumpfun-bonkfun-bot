@@ -632,15 +632,15 @@ class UniversalTrader:
             return True
         
         try:
-            dev_result = await self.dev_checker.check_creator(str(creator))
+            dev_result = await self.dev_checker.check_dev(str(creator))
             logger.info(
-                f"🐋 Dev check: tokens={dev_result.tokens_created}, "
-                f"risk={dev_result.risk_score}, safe={dev_result.is_safe}"
+                f"🐋 Dev check: tokens={dev_result.get('tokens_created', -1)}, "
+                f"risk={dev_result.get('risk_score', 0)}, safe={dev_result.get('is_safe', True)}"
             )
-            if not dev_result.is_safe:
+            if not dev_result.get("is_safe", True):
                 logger.warning(
                     f"🐋 Skipping {symbol} - Serial token creator: "
-                    f"{dev_result.tokens_created} tokens"
+                    f"{dev_result.get('tokens_created', 'unknown')} tokens"
                 )
                 return False
         except Exception as e:
@@ -1163,13 +1163,13 @@ class UniversalTrader:
             
             try:
                 buy_result: TradeResult = await self.buyer.execute(token_info)
-                logger.info(f"Buy result: success={buy_result.success}, signature={buy_result.signature}")
+                logger.info(f"Buy result: success={buy_result.success}, tx_signature={buy_result.tx_signature}")
             except Exception as e:
                 logger.exception(f"❌ Buy execution failed with exception: {e}")
                 return
 
             if buy_result.success:
-                logger.warning(f"✅ BUY SUCCESS: {token_info.symbol} - {buy_result.signature}")
+                logger.warning(f"✅ BUY SUCCESS: {token_info.symbol} - {buy_result.tx_signature}")
                 await self._handle_successful_buy(token_info, buy_result)
             else:
                 logger.error(f"❌ BUY FAILED: {token_info.symbol} - {buy_result.error}")
