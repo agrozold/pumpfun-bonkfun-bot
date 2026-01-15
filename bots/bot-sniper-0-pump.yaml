@@ -43,6 +43,11 @@ pattern_detection:
   min_patterns_to_buy: 1           # 1 паттерн достаточно! (было 2)
   min_signal_strength: 0.5         # 50% сила (было 70%)
   pattern_only_mode: true          # ТОЛЬКО по паттернам!
+  # High Volume Sideways pattern - покупка при высокой активности
+  high_volume_buys_1h: 300         # BUY >= 300 за 1 час
+  high_volume_sells_1h: 200        # SELL >= 200 за 1 час
+  high_volume_alt_buys_1h: 100     # ИЛИ: BUY > 100
+  high_volume_alt_max_sells_1h: 100  # И SELL <= 100 (накопление)
 
 # Token Scoring - filter tokens by Dexscreener metrics
 scoring:
