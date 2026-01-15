@@ -59,6 +59,7 @@ whale_copy:
   enabled: true
   wallets_file: "smart_money_wallets.json"
   min_buy_amount: 0.5
+  helius_api_key: ${HELIUS_API_KEY}
 
 # Dev Reputation Check - filter out serial scammers
 dev_check:
