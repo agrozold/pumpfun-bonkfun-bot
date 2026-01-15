@@ -221,10 +221,11 @@ class UniversalTrader:
         self.whale_tracker: WhaleTracker | None = None
         self.helius_api_key = helius_api_key
         
-        logger.info(f"Whale copy config: enable_whale_copy={enable_whale_copy}")
+        logger.warning(f"🐋 Whale copy config: enable_whale_copy={enable_whale_copy}, wallets_file={whale_wallets_file}")
         
         if enable_whale_copy:
             try:
+                logger.warning(f"🐋 Initializing WhaleTracker...")
                 # Каждый бот слушает whale только для СВОЕЙ платформы
                 # Это избегает конфликтов WebSocket подписок между процессами
                 self.whale_tracker = WhaleTracker(
@@ -237,16 +238,27 @@ class UniversalTrader:
                     platform=self.platform.value,  # Слушаем только свою платформу!
                 )
                 self.whale_tracker.set_callback(self._on_whale_buy)
+                
+                # Log wallet count
+                wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
                 logger.warning(
-                    f"🐋 Whale copy trading enabled: wallets_file={whale_wallets_file}, "
+                    f"🐋 WhaleTracker initialized: {wallet_count} wallets loaded, "
                     f"min_buy={whale_min_buy_amount} SOL, time_window=5 min, "
                     f"platform={self.platform.value}"
                 )
+                
+                if wallet_count == 0:
+                    logger.error(f"🐋 WARNING: No whale wallets loaded from {whale_wallets_file}!")
+                else:
+                    # Log first few wallets
+                    sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
+                    logger.warning(f"🐋 Sample wallets: {sample_wallets}")
+                    
             except Exception as e:
-                logger.exception(f"Failed to initialize WhaleTracker: {e}")
+                logger.exception(f"🐋 FAILED to initialize WhaleTracker: {e}")
                 self.whale_tracker = None
         else:
-            logger.info("Whale copy trading: DISABLED")
+            logger.warning("🐋 Whale copy trading: DISABLED in config")
 
         # Dev reputation checker setup
         self.enable_dev_check = enable_dev_check
