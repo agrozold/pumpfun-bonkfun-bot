@@ -134,11 +134,14 @@ class UniversalTrader:
         min_sol_balance: float = 0.03,
     ):
         """Initialize the universal trader."""
+        logger.warning("=== INIT: UniversalTrader __init__ STARTED ===")
+        
         # Store endpoints for later use
         self.rpc_endpoint = rpc_endpoint
         self.wss_endpoint = wss_endpoint
         
         # Core components
+        logger.warning("=== INIT: Creating core components ===")
         self.solana_client = SolanaClient(rpc_endpoint)
         self.wallet = Wallet(private_key)
         self.min_sol_balance = min_sol_balance
@@ -157,7 +160,7 @@ class UniversalTrader:
         else:
             self.platform = platform
 
-        logger.info(f"Initialized Universal Trader for platform: {self.platform.value}")
+        logger.warning(f"=== INIT: Platform set to {self.platform.value} ===")
 
         # Validate platform support
         try:
@@ -170,6 +173,7 @@ class UniversalTrader:
             raise
 
         # Pattern detection setup
+        logger.warning("=== INIT: Starting pattern detection setup ===")
         self.enable_pattern_detection = enable_pattern_detection
         self.pattern_only_mode = pattern_only_mode
         self.pattern_min_signal_strength = pattern_min_signal_strength
@@ -199,6 +203,7 @@ class UniversalTrader:
             )
 
         # Token scoring setup
+        logger.warning("=== INIT: Starting token scoring setup ===")
         self.enable_scoring = enable_scoring
         self.token_scorer: TokenScorer | None = None
         
@@ -217,6 +222,7 @@ class UniversalTrader:
             )
 
         # Whale copy trading setup
+        logger.warning("=== INIT: Starting whale copy trading setup ===")
         self.enable_whale_copy = enable_whale_copy
         self.whale_tracker: WhaleTracker | None = None
         self.helius_api_key = helius_api_key
