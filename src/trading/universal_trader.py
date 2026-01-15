@@ -419,9 +419,9 @@ class UniversalTrader:
             
             logger.info(f"🐋 Step 2: Checking platform: {self.platform}...")
             if self.platform != Platform.PUMP_FUN:
-            logger.warning(f"🐋 Whale copy only supported for pump_fun (bot is {self.platform.value}), skipping")
-            return
-        
+                logger.warning(f"🐋 Whale copy only supported for pump_fun (bot is {self.platform.value}), skipping")
+                return
+            
             logger.info(f"🐋 Step 3: Platform check passed, proceeding...")
             
             # Создаём TokenInfo для покупки
