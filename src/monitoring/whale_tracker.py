@@ -299,6 +299,11 @@ class WhaleTracker:
             if not platform:
                 return
             
+            # ФИЛЬТР: Если указана target_platform - игнорируем другие платформы
+            # Это критично для multi-bot setup где каждый бот слушает свою платформу
+            if self.target_platform and platform != self.target_platform:
+                return
+            
             # Проверяем что это Buy инструкция (работает для обеих платформ)
             is_buy = False
             for log in logs:
