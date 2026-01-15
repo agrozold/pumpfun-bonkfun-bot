@@ -14,6 +14,7 @@ from solders.compute_budget import set_compute_unit_limit, set_compute_unit_pric
 from solders.instruction import AccountMeta, Instruction
 from solders.message import Message
 from solders.pubkey import Pubkey
+from solders.signature import Signature
 from solders.transaction import VersionedTransaction
 from spl.token.instructions import get_associated_token_address
 
@@ -349,7 +350,7 @@ class FallbackSeller:
                     
                     logger.info(f"📤 PumpSwap BUY signature: {sig}")
                     
-                    await rpc_client.confirm_transaction(sig, commitment="confirmed")
+                    await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                     logger.info(f"✅ PumpSwap BUY confirmed! Got ~{expected_tokens:,.2f} {symbol}")
                     return True, sig, None
                     
@@ -446,7 +447,7 @@ class FallbackSeller:
                         
                         logger.info(f"📤 Jupiter BUY signature: {sig}")
                         
-                        await rpc_client.confirm_transaction(sig, commitment="confirmed")
+                        await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                         logger.info(f"✅ Jupiter BUY confirmed! Got ~{out_amount_tokens:,.2f} {symbol}")
                         return True, sig, None
                         
@@ -665,7 +666,7 @@ class FallbackSeller:
                     
                     logger.info(f"📤 PumpSwap signature: {sig}")
                     
-                    await rpc_client.confirm_transaction(sig, commitment="confirmed")
+                    await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                     logger.info("✅ PumpSwap sell confirmed!")
                     return True, sig, None
                     
@@ -780,7 +781,7 @@ class FallbackSeller:
                         
                         logger.info(f"📤 Jupiter signature: {sig}")
                         
-                        await rpc_client.confirm_transaction(sig, commitment="confirmed")
+                        await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                         logger.info("✅ Jupiter sell confirmed!")
                         return True, sig, None
                         
