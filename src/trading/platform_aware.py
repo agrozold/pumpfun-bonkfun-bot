@@ -297,6 +297,7 @@ class PlatformAwareSeller(Trader):
         slippage: float = 0.25,
         max_retries: int = 5,
         compute_units: dict | None = None,
+        jupiter_api_key: str | None = None,
     ):
         """Initialize platform-aware token seller."""
         self.client = client
@@ -305,6 +306,7 @@ class PlatformAwareSeller(Trader):
         self.slippage = slippage
         self.max_retries = max_retries
         self.compute_units = compute_units or {}
+        self.jupiter_api_key = jupiter_api_key
 
     async def execute(
         self, token_info: TokenInfo, token_amount: float, token_price: float
@@ -504,6 +506,7 @@ class PlatformAwareSeller(Trader):
                 slippage=self.slippage,
                 priority_fee=100_000,  # Default priority fee for fallback
                 max_retries=self.max_retries,
+                jupiter_api_key=self.jupiter_api_key,
             )
             
             success, tx_signature, error = await fallback_seller.sell(
