@@ -1178,8 +1178,13 @@ class UniversalTrader:
                 )
             
             try:
+                logger.info(f"🔧 Calling buyer.execute for {token_info.symbol}...")
                 buy_result: TradeResult = await self.buyer.execute(token_info)
-                logger.info(f"Buy result: success={buy_result.success}, tx_signature={buy_result.tx_signature}")
+                logger.info(
+                    f"Buy result: success={buy_result.success}, "
+                    f"tx_signature={buy_result.tx_signature}, "
+                    f"error_message={buy_result.error_message}"
+                )
             except Exception as e:
                 logger.exception(f"❌ Buy execution failed with exception: {e}")
                 return
@@ -1188,7 +1193,7 @@ class UniversalTrader:
                 logger.warning(f"✅ BUY SUCCESS: {token_info.symbol} - {buy_result.tx_signature}")
                 await self._handle_successful_buy(token_info, buy_result)
             else:
-                logger.error(f"❌ BUY FAILED: {token_info.symbol} - {buy_result.error}")
+                logger.error(f"❌ BUY FAILED: {token_info.symbol} - {buy_result.error_message or 'Unknown error'}")
                 await self._handle_failed_buy(token_info, buy_result)
 
             # Only wait for next token in yolo mode
