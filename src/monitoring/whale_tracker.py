@@ -129,20 +129,20 @@ class WhaleTracker:
     async def start(self):
         """Запустить отслеживание."""
         if not self.whale_wallets:
-            logger.warning("No whale wallets to track")
+            logger.warning("🐋 No whale wallets to track")
             return
         
         wss_url = self._get_wss_endpoint()
         if not wss_url:
-            logger.error("Cannot start whale tracker without WSS endpoint")
+            logger.error("🐋 Cannot start whale tracker without WSS endpoint")
             return
         
         self.running = True
         self._session = aiohttp.ClientSession()
         
-        logger.info(f"Starting whale tracker (single connection mode)")
-        logger.info(f"Tracking {len(self.whale_wallets)} whale wallets")
-        logger.info(f"Min buy amount: {self.min_buy_amount} SOL")
+        logger.warning(f"🐋 WHALE TRACKER STARTED - tracking {len(self.whale_wallets)} wallets")
+        logger.warning(f"🐋 Min buy: {self.min_buy_amount} SOL, Time window: {self.time_window_minutes} min")
+        logger.info(f"🐋 WSS endpoint: {wss_url[:50]}...")
         
         # Одно соединение, подписка на pump.fun программу
         await self._track_pump_fun_logs(wss_url)
@@ -162,6 +162,7 @@ class WhaleTracker:
         """Отслеживание через подписку на логи pump.fun программы."""
         while self.running:
             try:
+                logger.info(f"🐋 Connecting to WSS for whale tracking...")
                 async with self._session.ws_connect(
                     wss_url,
                     heartbeat=30,
@@ -181,7 +182,7 @@ class WhaleTracker:
                     }
                     
                     await ws.send_json(subscribe_msg)
-                    logger.info(f"Subscribed to pump.fun logs (filtering {len(self.whale_wallets)} whales locally)")
+                    logger.warning(f"🐋 SUBSCRIBED to pump.fun logs - filtering {len(self.whale_wallets)} whale wallets")
                     
                     async for msg in ws:
                         if not self.running:
@@ -257,6 +258,15 @@ class WhaleTracker:
         if self.rpc_endpoint:
             tx = await self._get_tx_rpc(signature)
             if tx:
+                await self._process_rpc_tx(tx, signature)
+                return
+        
+        # Fallback на Helius только если RPC не сработал
+        if self.helius_api_key:
+            tx = await self._get_tx_helius(signature)
+            if tx:
+                await self._process_helius_tx(tx)
+                return
                 await self._process_rpc_tx(tx, signature)
                 return
         
@@ -362,7 +372,10 @@ class WhaleTracker:
             if fee_payer not in self.whale_wallets:
                 return
             
+            # 🐋 НАШЛИ КИТА!
             whale_info = self.whale_wallets[fee_payer]
+            logger.warning(f"🐋 WHALE TX DETECTED: {whale_info.get('label', 'whale')} ({fee_payer[:8]}...)")
+            
             meta = tx.get("meta", {})
             
             # Получаем block_time для проверки свежести
@@ -373,6 +386,8 @@ class WhaleTracker:
             post = meta.get("postBalances", [])
             sol_spent = (pre[0] - post[0]) / 1e9 if pre and post else 0
             
+            logger.info(f"🐋 Whale spent: {sol_spent:.4f} SOL (min: {self.min_buy_amount})")
+            
             # Ищем токен
             token_mint = None
             for bal in meta.get("postTokenBalances", []):
@@ -381,6 +396,7 @@ class WhaleTracker:
                     break
             
             if sol_spent >= self.min_buy_amount and token_mint:
+                logger.warning(f"🐋 WHALE BUY QUALIFIES: {sol_spent:.2f} SOL >= {self.min_buy_amount} SOL")
                 await self._emit_whale_buy(
                     wallet=fee_payer,
                     token_mint=token_mint,
