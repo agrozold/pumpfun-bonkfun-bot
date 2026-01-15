@@ -710,7 +710,7 @@ async def sell_token(
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
         return False
     if not rpc_endpoint:
-        print("❌ SOLANA_NODE_RPC_ENDPOINT not set in .env")
+        print("❌ ALCHEMY_RPC_ENDPOINT or SOLANA_NODE_RPC_ENDPOINT not set in .env")
         return False
 
     payer = Keypair.from_bytes(base58.b58decode(private_key))
