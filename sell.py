@@ -178,21 +178,24 @@ def _is_rate_limit_error(e: Exception) -> bool:
     return False
 
 
-async def retry_rpc_call(func, *args, max_retries=MAX_RETRIES, **kwargs):
-    """Retry RPC call with exponential backoff on rate limit errors."""
+async def retry_rpc_call(func, *args, max_retries=2, **kwargs):
+    """Fast retry RPC call - fail quickly on rate limit to use DexScreener fallback."""
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
             if _is_rate_limit_error(e):
-                wait_time = (2 ** attempt) + random.uniform(0, 1)
-                print(f"⏳ Rate limited, waiting {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...")
-                await asyncio.sleep(wait_time)
-                if attempt == max_retries - 1:
+                if attempt == 0:
+                    # First 429 - try once more with short delay
+                    print(f"⚠️ RPC rate limited, quick retry...")
+                    await asyncio.sleep(0.5)
+                else:
+                    # Second 429 - fail fast, let DexScreener handle it
+                    print(f"⚠️ RPC still rate limited, switching to DexScreener")
                     raise
             else:
                 raise
-    raise Exception(f"Max retries ({max_retries}) exceeded for RPC call")
+    raise Exception(f"RPC call failed after {max_retries} attempts")
 
 
 async def get_pool_from_dexscreener(mint: str) -> tuple[str | None, str | None]:
