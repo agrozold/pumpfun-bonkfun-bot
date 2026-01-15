@@ -58,11 +58,11 @@ scoring:
   enabled: true
   min_score: 40
 
-# Whale Copy Trading - DISABLED for letsbonk (only works with pump.fun)
+# Whale Copy Trading - ENABLED for letsbonk (multi-platform support added)
 whale_copy:
-  enabled: false
+  enabled: true
   wallets_file: "smart_money_wallets.json"
-  min_buy_amount: 0.1
+  min_buy_amount: 0.5
 
 # Dev Reputation Check - filter out serial scammers
 dev_check:

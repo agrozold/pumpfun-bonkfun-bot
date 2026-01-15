@@ -5,8 +5,9 @@ Whale Tracker - отслеживает транзакции китов в РЕА
 ВАЖНО: Копируем ТОЛЬКО свежие покупки (в пределах time_window_minutes).
 Старые/исторические покупки игнорируются!
 
-Использует ОДНО WebSocket соединение к Solana RPC с подпиской на логи pump.fun.
-Фильтрует транзакции по кошелькам китов локально.
+Поддерживает ВСЕ платформы:
+- pump.fun (6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P)
+- letsbonk/Raydium LaunchLab (LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj)
 """
 
 import asyncio
@@ -23,8 +24,18 @@ from solders.pubkey import Pubkey
 
 logger = logging.getLogger(__name__)
 
-# pump.fun program ID
+# Program IDs for all supported platforms
 PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+LETS_BONK_PROGRAM = "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
+
+# All programs to monitor
+ALL_PROGRAMS = [PUMP_FUN_PROGRAM, LETS_BONK_PROGRAM]
+
+# Program ID to platform mapping
+PROGRAM_TO_PLATFORM: dict[str, str] = {
+    PUMP_FUN_PROGRAM: "pump_fun",
+    LETS_BONK_PROGRAM: "lets_bonk",
+}
 
 
 @dataclass
@@ -39,12 +50,14 @@ class WhaleBuy:
     whale_label: str = "whale"
     block_time: int | None = None  # Unix timestamp транзакции
     age_seconds: float = 0  # Сколько секунд назад была покупка
+    platform: str = "pump_fun"  # Платформа: pump_fun или lets_bonk
 
 
 class WhaleTracker:
-    """Отслеживает покупки китов через одно WebSocket соединение к pump.fun.
+    """Отслеживает покупки китов через WebSocket соединения ко ВСЕМ платформам.
     
     REAL-TIME копирование: только свежие покупки (< time_window_minutes).
+    Поддерживает: pump.fun, letsbonk
     """
 
     def __init__(
@@ -127,7 +140,7 @@ class WhaleTracker:
         return None
 
     async def start(self):
-        """Запустить отслеживание."""
+        """Запустить отслеживание ВСЕХ платформ."""
         if not self.whale_wallets:
             logger.warning("🐋 No whale wallets to track")
             return
@@ -142,10 +155,11 @@ class WhaleTracker:
         
         logger.warning(f"🐋 WHALE TRACKER STARTED - tracking {len(self.whale_wallets)} wallets")
         logger.warning(f"🐋 Min buy: {self.min_buy_amount} SOL, Time window: {self.time_window_minutes} min")
+        logger.warning(f"🐋 Monitoring {len(ALL_PROGRAMS)} platforms: pump.fun, letsbonk")
         logger.info(f"🐋 WSS endpoint: {wss_url[:50]}...")
         
-        # Одно соединение, подписка на pump.fun программу
-        await self._track_pump_fun_logs(wss_url)
+        # Подписываемся на ВСЕ программы
+        await self._track_all_programs(wss_url)
 
     async def stop(self):
         """Остановить отслеживание."""
@@ -158,8 +172,8 @@ class WhaleTracker:
             self._session = None
         logger.info("Whale tracker stopped")
 
-    async def _track_pump_fun_logs(self, wss_url: str):
-        """Отслеживание через подписку на логи pump.fun программы."""
+    async def _track_all_programs(self, wss_url: str):
+        """Отслеживание через подписку на логи ВСЕХ программ."""
         while self.running:
             try:
                 logger.info(f"🐋 Connecting to WSS for whale tracking...")
@@ -170,19 +184,22 @@ class WhaleTracker:
                 ) as ws:
                     self._ws = ws
                     
-                    # Подписываемся на ВСЕ логи pump.fun программы
-                    subscribe_msg = {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "logsSubscribe",
-                        "params": [
-                            {"mentions": [PUMP_FUN_PROGRAM]},
-                            {"commitment": "processed"}
-                        ]
-                    }
+                    # Подписываемся на КАЖДУЮ программу отдельно
+                    for i, program in enumerate(ALL_PROGRAMS):
+                        subscribe_msg = {
+                            "jsonrpc": "2.0",
+                            "id": i + 1,
+                            "method": "logsSubscribe",
+                            "params": [
+                                {"mentions": [program]},
+                                {"commitment": "processed"}
+                            ]
+                        }
+                        await ws.send_json(subscribe_msg)
+                        platform_name = "pump.fun" if program == PUMP_FUN_PROGRAM else "letsbonk"
+                        logger.warning(f"🐋 SUBSCRIBED to {platform_name} logs")
                     
-                    await ws.send_json(subscribe_msg)
-                    logger.warning(f"🐋 SUBSCRIBED to pump.fun logs - filtering {len(self.whale_wallets)} whale wallets")
+                    logger.warning(f"🐋 Filtering {len(self.whale_wallets)} whale wallets across ALL platforms")
                     
                     async for msg in ws:
                         if not self.running:
@@ -191,26 +208,45 @@ class WhaleTracker:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 data = json.loads(msg.data)
-                                await self._handle_pump_log(data)
+                                await self._handle_log(data)
                             except json.JSONDecodeError:
                                 pass
                         elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
-                            logger.warning("WebSocket closed, reconnecting...")
+                            logger.warning("🐋 WebSocket closed, reconnecting...")
                             break
                     
                     self._ws = None
                     
             except aiohttp.ClientError as e:
-                logger.warning(f"WebSocket error: {e}")
+                logger.warning(f"🐋 WebSocket error: {e}")
             except Exception as e:
-                logger.exception(f"Error in pump.fun log subscription: {e}")
+                logger.exception(f"🐋 Error in log subscription: {e}")
             
             if self.running:
                 logger.info("Reconnecting in 3s...")
                 await asyncio.sleep(3)
 
-    async def _handle_pump_log(self, data: dict):
-        """Обработать лог от pump.fun."""
+    def _detect_platform_from_logs(self, logs: list[str]) -> str | None:
+        """Определить платформу по логам транзакции.
+        
+        Args:
+            logs: Список строк логов транзакции
+            
+        Returns:
+            Строка платформы ("pump_fun" или "lets_bonk") или None
+        """
+        for log in logs:
+            for program_id, platform in PROGRAM_TO_PLATFORM.items():
+                if program_id in log:
+                    return platform
+        return None
+
+    async def _handle_log(self, data: dict):
+        """Роутинг логов на соответствующий обработчик платформы.
+        
+        Args:
+            data: Сырые данные лог-нотификации от WebSocket
+        """
         if data.get("method") != "logsNotification":
             return
         
@@ -229,10 +265,16 @@ class WhaleTracker:
             if signature in self._processed_txs:
                 return
             
-            # Проверяем что это Buy инструкция
+            # Определяем платформу по логам
+            platform = self._detect_platform_from_logs(logs)
+            if not platform:
+                return
+            
+            # Проверяем что это Buy инструкция (работает для обеих платформ)
             is_buy = False
             for log in logs:
-                if "Instruction: Buy" in log:
+                # pump.fun и letsbonk оба используют "Instruction: Buy"
+                if "Instruction: Buy" in log or "Instruction: buy" in log.lower():
                     is_buy = True
                     break
             
@@ -240,13 +282,18 @@ class WhaleTracker:
                 return
             
             # Получаем детали транзакции и проверяем кошелёк
-            await self._check_if_whale_tx(signature)
+            await self._check_if_whale_tx(signature, platform)
             
         except Exception as e:
-            logger.debug(f"Error handling pump log: {e}")
+            logger.debug(f"Error handling log: {e}")
 
-    async def _check_if_whale_tx(self, signature: str):
-        """Проверить, является ли транзакция покупкой кита."""
+    async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
+        """Проверить, является ли транзакция покупкой кита.
+        
+        Args:
+            signature: Сигнатура транзакции
+            platform: Платформа ("pump_fun" или "lets_bonk")
+        """
         if signature in self._processed_txs:
             return
         
@@ -258,23 +305,14 @@ class WhaleTracker:
         if self.rpc_endpoint:
             tx = await self._get_tx_rpc(signature)
             if tx:
-                await self._process_rpc_tx(tx, signature)
+                await self._process_rpc_tx(tx, signature, platform)
                 return
         
         # Fallback на Helius только если RPC не сработал
         if self.helius_api_key:
             tx = await self._get_tx_helius(signature)
             if tx:
-                await self._process_helius_tx(tx)
-                return
-                await self._process_rpc_tx(tx, signature)
-                return
-        
-        # Fallback на Helius только если RPC не сработал
-        if self.helius_api_key:
-            tx = await self._get_tx_helius(signature)
-            if tx:
-                await self._process_helius_tx(tx)
+                await self._process_helius_tx(tx, platform)
                 return
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
@@ -315,8 +353,13 @@ class WhaleTracker:
             logger.debug(f"RPC error: {e}")
         return None
 
-    async def _process_helius_tx(self, tx: dict):
-        """Обработать транзакцию от Helius."""
+    async def _process_helius_tx(self, tx: dict, platform: str = "pump_fun"):
+        """Обработать транзакцию от Helius.
+        
+        Args:
+            tx: Данные транзакции от Helius
+            platform: Платформа ("pump_fun" или "lets_bonk")
+        """
         try:
             fee_payer = tx.get("feePayer", "")
             
@@ -351,13 +394,20 @@ class WhaleTracker:
                     signature=signature,
                     whale_label=whale_info.get("label", "whale"),
                     block_time=block_time,
+                    platform=platform,
                 )
                 
         except Exception as e:
             logger.debug(f"Error processing Helius tx: {e}")
 
-    async def _process_rpc_tx(self, tx: dict, signature: str):
-        """Обработать транзакцию от RPC."""
+    async def _process_rpc_tx(self, tx: dict, signature: str, platform: str = "pump_fun"):
+        """Обработать транзакцию от RPC.
+        
+        Args:
+            tx: Данные транзакции от RPC
+            signature: Сигнатура транзакции
+            platform: Платформа ("pump_fun" или "lets_bonk")
+        """
         try:
             message = tx.get("transaction", {}).get("message", {})
             account_keys = message.get("accountKeys", [])
@@ -374,7 +424,7 @@ class WhaleTracker:
             
             # 🐋 НАШЛИ КИТА!
             whale_info = self.whale_wallets[fee_payer]
-            logger.warning(f"🐋 WHALE TX DETECTED: {whale_info.get('label', 'whale')} ({fee_payer[:8]}...)")
+            logger.warning(f"🐋 WHALE TX DETECTED: {whale_info.get('label', 'whale')} ({fee_payer[:8]}...) on {platform}")
             
             meta = tx.get("meta", {})
             
@@ -396,7 +446,7 @@ class WhaleTracker:
                     break
             
             if sol_spent >= self.min_buy_amount and token_mint:
-                logger.warning(f"🐋 WHALE BUY QUALIFIES: {sol_spent:.2f} SOL >= {self.min_buy_amount} SOL")
+                logger.warning(f"🐋 WHALE BUY QUALIFIES: {sol_spent:.2f} SOL >= {self.min_buy_amount} SOL on {platform}")
                 await self._emit_whale_buy(
                     wallet=fee_payer,
                     token_mint=token_mint,
@@ -404,6 +454,7 @@ class WhaleTracker:
                     signature=signature,
                     whale_label=whale_info.get("label", "whale"),
                     block_time=block_time,
+                    platform=platform,
                 )
                 
         except Exception as e:
@@ -417,11 +468,21 @@ class WhaleTracker:
         signature: str, 
         whale_label: str,
         block_time: int | None = None,
+        platform: str = "pump_fun",
     ):
         """Отправить сигнал о покупке кита.
         
         ВАЖНО: Проверяем что покупка СВЕЖАЯ (в пределах time_window).
         Старые покупки игнорируются!
+        
+        Args:
+            wallet: Кошелёк кита
+            token_mint: Адрес токена
+            sol_spent: Сколько SOL потрачено
+            signature: Сигнатура транзакции
+            whale_label: Метка кита
+            block_time: Unix timestamp транзакции
+            platform: Платформа ("pump_fun" или "lets_bonk")
         """
         now = time.time()
         age_seconds = 0.0
@@ -457,12 +518,13 @@ class WhaleTracker:
             whale_label=whale_label,
             block_time=block_time,
             age_seconds=age_seconds,
+            platform=platform,
         )
         
         logger.warning(
             f"🐋 WHALE BUY: {whale_label} ({wallet[:8]}...) "
             f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL "
-            f"({age_seconds:.1f}s ago)"
+            f"on {platform} ({age_seconds:.1f}s ago)"
         )
         
         if self.on_whale_buy:
