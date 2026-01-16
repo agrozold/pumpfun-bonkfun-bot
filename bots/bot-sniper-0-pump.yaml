@@ -13,7 +13,7 @@ filters:
   bro_address: null
   listener_type: fallback
   match_string: null
-  max_token_age: 60
+  max_token_age: 315360000  # 10 лет в секундах
   yolo_mode: true
 
 # RPC

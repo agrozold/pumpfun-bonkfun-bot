@@ -9,11 +9,13 @@ platform: lets_bonk
 separate_process: true
 
 # Listener
+# IMPORTANT: PumpPortal does NOT send bonk.fun tokens!
+# Use 'bonk_logs' listener which subscribes directly to Raydium LaunchLab program
 filters:
   bro_address: null
-  listener_type: fallback
+  listener_type: bonk_logs  # Specialized listener for bonk.fun
   match_string: null
-  max_token_age: 60
+  max_token_age: 315360000  # 10 лет в секундах
   yolo_mode: true
 
 # RPC
