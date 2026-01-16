@@ -81,7 +81,7 @@ class FallbackSeller:
         
         Priority:
         1. ALCHEMY_RPC_ENDPOINT (if set) - fast, high limits
-        2. Public Ankr RPC - free, no rate limit, slower
+        2. Public Solana RPC - official, reliable
         3. Main client (Helius) - last resort, may be rate limited
         """
         import os
@@ -95,13 +95,13 @@ class FallbackSeller:
                 logger.info(f"[FALLBACK] Using Alchemy RPC: {alt_endpoint[:40]}...")
             return self._alt_client
         
-        # Fallback to public Ankr RPC (free, no rate limit)
+        # Fallback to public Solana RPC (official, reliable)
         # This avoids consuming Helius quota for PumpSwap operations
-        public_rpc = "https://rpc.ankr.com/solana"
+        public_rpc = "https://api.mainnet-beta.solana.com"
         if self._alt_client is None:
             from solana.rpc.async_api import AsyncClient
             self._alt_client = AsyncClient(public_rpc)
-            logger.info(f"[FALLBACK] Using public Ankr RPC (no ALCHEMY_RPC_ENDPOINT set)")
+            logger.info("[FALLBACK] Using public Solana RPC (no ALCHEMY_RPC_ENDPOINT set)")
         return self._alt_client
 
     async def buy_via_pumpswap(
