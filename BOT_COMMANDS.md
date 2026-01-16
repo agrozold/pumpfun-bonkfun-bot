@@ -44,6 +44,15 @@ alias bot-edit-bonk='nano $BOT_DIR/bots/bot-sniper-0-bonkfun.yaml'
 alias bot-whales-list='cat $BOT_DIR/smart_money_wallets.json | jq ".whales[].wallet"'
 alias bot-whales-count='cat $BOT_DIR/smart_money_wallets.json | jq ".whales | length"'
 
+# Trending scanner
+alias bot-trending='grep -h "TRENDING" $BOT_DIR/logs/*.log | tail -20'
+alias bot-trending-stats='grep -h "Daily budget\|API Budget" $BOT_DIR/logs/*.log | tail -10'
+alias bot-rotated='grep -h "Rotated" $BOT_DIR/logs/*.log | tail -10'
+
+# Whale copy trading
+alias bot-whale-buys='grep -h "whale buy\|WHALE" $BOT_DIR/logs/*.log | tail -20'
+alias bot-whale-skip='grep -h "Skipping whale" $BOT_DIR/logs/*.log | tail -10'
+
 # Быстрые проверки
 alias bot-balance='grep -h "SOL balance" $BOT_DIR/logs/*.log | tail -5'
 alias bot-last-trade='grep -h "Successfully" $BOT_DIR/logs/*.log | tail -1'
@@ -91,11 +100,50 @@ source ~/.bashrc
 | `bot-whales` | Whale покупки |
 | `bot-signals` | Pump сигналы (🚀) |
 
+### Trending Scanner
+| Команда | Описание |
+|---------|----------|
+| `bot-trending` | Найденные трендовые токены |
+| `bot-trending-stats` | Статистика API бюджетов |
+| `bot-rotated` | Ротация токенов |
+
+### Whale Copy Trading
+| Команда | Описание |
+|---------|----------|
+| `bot-whale-buys` | Скопированные whale покупки |
+| `bot-whale-skip` | Пропущенные whale сигналы |
+
 ### Отладка
 | Команда | Описание |
 |---------|----------|
 | `bot-errors` | Последние ошибки |
 | `bot-warnings` | Последние предупреждения |
+
+---
+
+## ⚙️ Конфигурация Trending Scanner
+
+Добавь в YAML конфиг бота:
+
+```yaml
+# Trending Scanner - мониторинг трендовых токенов
+trending_scanner:
+  enabled: true                    # Включить сканер
+  min_volume_1h: 50000            # Минимум $50k объёма за час
+  min_market_cap: 10000           # Минимум $10k маркеткап
+  max_market_cap: 5000000         # Максимум $5M маркеткап
+  min_price_change_5m: 5          # Минимум +5% за 5 минут
+  min_price_change_1h: 20         # Минимум +20% за час
+  min_buy_pressure: 0.65          # 65% покупок
+  scan_interval: 30               # Сканировать каждые 30 сек
+```
+
+### Источники данных
+| Источник | Лимит | Описание |
+|----------|-------|----------|
+| DexScreener | unlimited | Основной источник |
+| Jupiter | 10k/day | Pump.fun токены |
+| Birdeye | 1k/day | Требует API key |
 
 ---
 
@@ -177,6 +225,18 @@ grep "STOP_LOSS" /opt/pumpfun-bonkfun-bot/logs/*.log
 
 # Moon bag продажи
 grep "moon bag" /opt/pumpfun-bonkfun-bot/logs/*.log
+
+# Trending токены
+grep "TRENDING" /opt/pumpfun-bonkfun-bot/logs/*.log | tail -20
+
+# API бюджет статус
+grep "Daily budget" /opt/pumpfun-bonkfun-bot/logs/*.log | tail -5
+
+# Whale copy trades
+grep "whale buy" /opt/pumpfun-bonkfun-bot/logs/*.log | tail -20
+
+# Ротация токенов
+grep "Rotated" /opt/pumpfun-bonkfun-bot/logs/*.log | tail -10
 ```
 
 ---
