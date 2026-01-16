@@ -76,6 +76,8 @@ class FallbackListener(BaseTokenListener):
                     pumpportal_url=self.pumpportal_url,
                     platforms=self.platforms,
                     api_key=self.pumpportal_api_key,
+                    raise_on_max_errors=True,  # Allow FallbackListener to switch
+                    max_consecutive_errors=3,  # Switch faster
                 )
             elif listener_type == "logs":
                 from monitoring.universal_logs_listener import UniversalLogsListener

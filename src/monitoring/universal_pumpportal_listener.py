@@ -23,6 +23,8 @@ class UniversalPumpPortalListener(BaseTokenListener):
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         platforms: list[Platform] | None = None,
         api_key: str | None = None,
+        raise_on_max_errors: bool = False,
+        max_consecutive_errors: int = 5,
     ):
         """Initialize universal PumpPortal listener.
 
@@ -30,6 +32,8 @@ class UniversalPumpPortalListener(BaseTokenListener):
             pumpportal_url: PumpPortal WebSocket URL
             platforms: List of platforms to monitor (if None, monitor all supported platforms)
             api_key: PumpPortal API key for PumpSwap data (requires 0.02 SOL on linked wallet)
+            raise_on_max_errors: If True, raise exception after max errors (for FallbackListener)
+            max_consecutive_errors: Max errors before raising/resetting
         """
         super().__init__()
         # Add API key to URL if provided
@@ -39,6 +43,8 @@ class UniversalPumpPortalListener(BaseTokenListener):
         else:
             self.pumpportal_url = pumpportal_url
         self.ping_interval = 20  # seconds
+        self.raise_on_max_errors = raise_on_max_errors
+        self.max_consecutive_errors = max_consecutive_errors
 
         # Get platform-specific processors
         from platforms.letsbonk.pumpportal_processor import LetsBonkPumpPortalProcessor
@@ -83,7 +89,6 @@ class UniversalPumpPortalListener(BaseTokenListener):
             creator_address: Optional creator address to filter by
         """
         consecutive_errors = 0
-        max_consecutive_errors = 10
         
         while True:
             try:
@@ -163,13 +168,17 @@ class UniversalPumpPortalListener(BaseTokenListener):
                 raise
             except asyncio.TimeoutError:
                 consecutive_errors += 1
-                logger.warning(f"PumpPortal WebSocket timeout (error {consecutive_errors}/{max_consecutive_errors})")
-            except Exception:
+                logger.warning(f"PumpPortal WebSocket timeout (error {consecutive_errors}/{self.max_consecutive_errors})")
+            except Exception as e:
                 consecutive_errors += 1
-                logger.exception(f"PumpPortal WebSocket connection error (error {consecutive_errors}/{max_consecutive_errors})")
+                logger.exception(f"PumpPortal WebSocket connection error (error {consecutive_errors}/{self.max_consecutive_errors})")
             
-            # Exponential backoff with max 30s
-            if consecutive_errors >= max_consecutive_errors:
+            # Check if we should raise for FallbackListener
+            if consecutive_errors >= self.max_consecutive_errors:
+                if self.raise_on_max_errors:
+                    raise ConnectionError(
+                        f"PumpPortal failed after {consecutive_errors} consecutive errors"
+                    )
                 logger.error(f"Too many consecutive errors ({consecutive_errors}), waiting 30s...")
                 await asyncio.sleep(30)
                 consecutive_errors = 0
