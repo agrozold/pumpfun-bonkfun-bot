@@ -124,6 +124,13 @@ class Position:
         stop_loss_price = None
         if stop_loss_percentage is not None:
             stop_loss_price = entry_price * (1 - stop_loss_percentage)
+            # CRITICAL: Log SL calculation for debugging
+            from utils.logger import get_logger
+            _logger = get_logger(__name__)
+            _logger.warning(
+                f"[SL CALC] entry={entry_price:.10f}, sl_pct={stop_loss_percentage*100:.1f}%, "
+                f"sl_price={stop_loss_price:.10f}"
+            )
 
         return cls(
             mint=mint,
