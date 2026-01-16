@@ -839,7 +839,7 @@ class TrendingScanner:
             return 0, []
         if token.market_cap < self.min_market_cap:
             return 0, []
-        if token.market_cap > self.max_market_cap:
+        if self.max_market_cap > 0 and token.market_cap > self.max_market_cap:
             return 0, []
         if token.liquidity < self.min_liquidity:
             return 0, []
