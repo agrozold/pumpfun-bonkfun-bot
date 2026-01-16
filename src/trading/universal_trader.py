@@ -554,7 +554,11 @@ class UniversalTrader:
             )
             
             if success:
-                logger.warning(f"[OK] WHALE COPY SUCCESS on {dex_used}: {whale_buy.token_symbol} - {tx_sig}")
+                logger.warning(
+                    f"[OK] WHALE COPY SUCCESS on {dex_used}: "
+                    f"{whale_buy.token_symbol} | mint: {mint_str} | "
+                    f"whale: {whale_buy.wallet} | tx: {tx_sig}"
+                )
                 
                 # Save position
                 mint = Pubkey.from_string(mint_str)
