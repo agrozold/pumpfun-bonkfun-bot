@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 # Import RPC Manager for optimized requests
 try:
-    from src.core.rpc_manager import get_rpc_manager, RPCManager
+    from core.rpc_manager import get_rpc_manager, RPCManager
 
     RPC_MANAGER_AVAILABLE = True
 except ImportError:
