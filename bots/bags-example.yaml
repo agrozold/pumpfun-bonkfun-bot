@@ -49,12 +49,12 @@ priority_fees:
   enable_fixed: true
   fixed_amount: 300000  # microlamports
 
-# Pattern Detection for BAGS tokens
+# Pattern Detection for BAGS tokens - Ужесточённые фильтры
 pattern_detection:
   enabled: true
-  buy_pressure_threshold: 0.6
-  trade_velocity_threshold: 20
-  price_momentum_threshold: 0.05
+  buy_pressure_threshold: 0.70     # 70% покупок
+  trade_velocity_threshold: 200    # 200 сделок за 5 мин
+  price_momentum_threshold: 0.05   # 5% рост
   volume_spike_threshold: 2.5
   min_whale_buys: 1
   min_patterns_to_buy: 2
