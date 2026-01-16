@@ -485,7 +485,6 @@ class WhaleTracker:
                     await asyncio.sleep(1.0)
                 tx = await self._get_tx_from_endpoint(signature, alchemy_endpoint, timeout=5.0)
                 if tx:
-                    logger.info(f"[WHALE] Got TX from Alchemy (attempt {attempt + 1})")
                     self._cache_tx(signature, tx)
                     await self._process_rpc_tx(tx, signature, platform)
                     return
