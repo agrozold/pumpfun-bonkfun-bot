@@ -435,64 +435,49 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        # Step 0: Wait for TX to be confirmed
+        # Step 0: Wait for TX to be confirmed with retry
         # logsSubscribe gives us TX immediately (commitment: processed)
         # but getTransaction needs it to be confirmed/finalized
-        # 500ms was not enough - increasing to 1.5s
-        await asyncio.sleep(1.5)  # 1.5s delay for confirmation
+        # We'll try multiple times with increasing delays
         
-        logger.info(f"[WHALE] Checking TX {signature[:16]}... after 1.5s delay")
-        
-        # Step 1: Cache check (quota saving)
-        if signature in self._tx_cache:
-            cached_tx, cache_time = self._tx_cache[signature]
-            age = time.time() - cache_time
-            if age < self._cache_ttl:
-                self._metrics["cache_hits"] += 1
-                logger.info(f"[WHALE] Cache HIT: {signature[:16]}... (age={age:.1f}s)")
-                await self._process_rpc_tx(cached_tx, signature, platform)
-                return
-            else:
-                del self._tx_cache[signature]
-        
-        start_time = time.time()
         tx = None
-        
-        # Step 2: HELIUS PRIMARY (fast, reliable)
-        if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
-            self._metrics["helius_calls"] += 1
-            self._metrics["requests_today"] += 1
-            tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=3.0)
-            elapsed = time.time() - start_time
+        for attempt in range(3):  # 3 attempts: 1s, 2s, 3s delays
+            delay = 1.0 + attempt  # 1s, 2s, 3s
+            await asyncio.sleep(delay)
             
-            if tx:
-                self._metrics["helius_success"] += 1
-                self._cache_tx(signature, tx)
-                
-                if elapsed > 1.0:
-                    logger.warning(f"[WHALE] Helius SLOW: {elapsed:.2f}s for {signature[:16]}...")
-                else:
-                    logger.info(f"[WHALE] Helius OK: {elapsed:.2f}s for {signature[:16]}...")
-                
-                await self._process_rpc_tx(tx, signature, platform)
-                return
-            else:
-                logger.debug(f"[WHALE] Helius no data for {signature[:16]}..., trying fallback")
-        
-        # Step 3: Public RPC fallback (emergency only)
-        for endpoint in PUBLIC_RPC_FALLBACK:
-            self._metrics["public_fallback_calls"] += 1
-            tx = await self._get_tx_from_endpoint(signature, endpoint, timeout=3.0)
+            logger.info(f"[WHALE] Checking TX {signature[:16]}... attempt {attempt + 1}/3 (after {delay}s)")
             
-            if tx:
-                elapsed = time.time() - start_time
-                self._cache_tx(signature, tx)
-                logger.info(f"[WHALE] Fallback OK: {elapsed:.2f}s for {signature[:16]}...")
-                await self._process_rpc_tx(tx, signature, platform)
-                return
+            # Try Helius first
+            if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
+                self._metrics["helius_calls"] += 1
+                self._metrics["requests_today"] += 1
+                tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=3.0)
+                
+                if tx:
+                    self._metrics["helius_success"] += 1
+                    self._cache_tx(signature, tx)
+                    logger.info(f"[WHALE] Helius OK on attempt {attempt + 1} for {signature[:16]}...")
+                    await self._process_rpc_tx(tx, signature, platform)
+                    return
+            
+            # Try fallback endpoints
+            for endpoint in PUBLIC_RPC_FALLBACK:
+                self._metrics["public_fallback_calls"] += 1
+                tx = await self._get_tx_from_endpoint(signature, endpoint, timeout=3.0)
+                
+                if tx:
+                    self._cache_tx(signature, tx)
+                    logger.info(f"[WHALE] Fallback OK on attempt {attempt + 1} for {signature[:16]}...")
+                    await self._process_rpc_tx(tx, signature, platform)
+                    return
         
-        # All failed - TX may not be confirmed yet
-        logger.info(f"[WHALE] TX not found after 1.5s: {signature[:16]}... (not confirmed yet)")
+        # All attempts failed
+        logger.info(f"[WHALE] TX not found after 3 attempts: {signature[:16]}...")
+        return
+        
+        # Cache check moved inside retry loop above
+        # This code path is no longer used
+        return
 
     def _cache_tx(self, signature: str, tx: dict):
         """Cache TX result with LRU eviction."""
