@@ -478,7 +478,10 @@ class TrendingScanner:
                         base = pair.get("baseToken", {})
                         mint = base.get("address", "")
 
-                        if mint in seen_mints or not mint.endswith("pump"):
+                        # Support both pump.fun and bonk.fun tokens
+                        if mint in seen_mints:
+                            continue
+                        if not (mint.endswith("pump") or mint.endswith("bonk")):
                             continue
 
                         seen_mints.add(mint)
@@ -522,7 +525,9 @@ class TrendingScanner:
                         continue
 
                     base = pair.get("baseToken", {})
-                    if not base.get("address", "").endswith("pump"):
+                    mint_addr = base.get("address", "")
+                    # Support both pump.fun and bonk.fun tokens
+                    if not (mint_addr.endswith("pump") or mint_addr.endswith("bonk")):
                         continue
 
                     token = self._parse_dexscreener_pair(pair)
@@ -656,8 +661,8 @@ class TrendingScanner:
 
                 mints = await resp.json()
 
-                # Filter pump.fun tokens (end with "pump")
-                pump_mints = [m for m in mints if m.endswith("pump")][:25]
+                # Filter pump.fun and bonk.fun tokens (end with "pump" or "bonk")
+                pump_mints = [m for m in mints if m.endswith("pump") or m.endswith("bonk")][:25]
 
                 if pump_mints:
                     prices = await self._fetch_jupiter_prices(pump_mints)
@@ -774,7 +779,8 @@ class TrendingScanner:
 
                 for item in data.get("data", {}).get("items", [])[:30]:
                     token = self._parse_birdeye_token(item)
-                    if token and token.mint.endswith("pump"):
+                    # Support both pump.fun and bonk.fun tokens
+                    if token and (token.mint.endswith("pump") or token.mint.endswith("bonk")):
                         tokens.append(token)
 
         except Exception as e:
