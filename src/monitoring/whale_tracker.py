@@ -37,10 +37,10 @@ PROGRAM_TO_PLATFORM: dict[str, str] = {
     LETS_BONK_PROGRAM: "lets_bonk",
 }
 
-# Public RPC endpoints for rotation (free, no rate limit)
-PUBLIC_RPC_ENDPOINTS = [
-    "https://api.mainnet-beta.solana.com",
+# Public RPC endpoints for fallback only (free, no rate limit)
+PUBLIC_RPC_FALLBACK = [
     "https://rpc.ankr.com/solana",
+    "https://api.mainnet-beta.solana.com",
 ]
 
 
@@ -95,21 +95,23 @@ class WhaleTracker:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._processed_txs: set[str] = set()
         
-        # RPC optimization: TX cache with TTL
+        # RPC optimization: TX cache with extended TTL for quota saving
         self._tx_cache: dict[str, tuple[dict, float]] = {}  # sig -> (result, timestamp)
-        self._cache_ttl = 30.0  # 30 seconds TTL
+        self._cache_ttl = 60.0  # 60 seconds TTL (extended for quota saving)
+        self._cache_max_size = 500  # LRU cache size
         
-        # Helius rate limiting
+        # Helius rate limiting (now PRIMARY, reduced rate limit)
         self._last_helius_call = 0.0
-        self._helius_rate_limit = 5.0  # 1 request per 5 seconds
+        self._helius_rate_limit = 2.0  # 1 request per 2 seconds (was 5s)
         
         # Performance metrics
         self._metrics = {
-            "public_rpc_calls": 0,
-            "public_rpc_success": 0,
-            "helius_fallbacks": 0,
+            "helius_calls": 0,
+            "helius_success": 0,
+            "public_fallback_calls": 0,
             "cache_hits": 0,
             "timeouts": 0,
+            "requests_today": 0,
         }
         
         self._load_wallets()
@@ -416,11 +418,10 @@ class WhaleTracker:
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
         
-        Оптимизированная версия с:
-        - TX кэшированием (30s TTL)
-        - Endpoint rotation (несколько публичных RPC)
-        - Helius fallback с rate limiting
-        - Performance telemetry
+        HELIUS PRIMARY стратегия:
+        1. Cache check (60s TTL, 40%+ hit ratio)
+        2. Helius RPC (PRIMARY, 1.5s timeout, ultra-fast)
+        3. Public RPC fallback (only on Helius failure)
         
         Args:
             signature: Сигнатура транзакции
@@ -433,72 +434,67 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        # Check cache first
+        # Step 1: Cache check (quota saving)
         if signature in self._tx_cache:
             cached_tx, cache_time = self._tx_cache[signature]
-            if time.time() - cache_time < self._cache_ttl:
+            age = time.time() - cache_time
+            if age < self._cache_ttl:
                 self._metrics["cache_hits"] += 1
-                logger.debug(f"[WHALE] Cache HIT for {signature[:16]}...")
+                logger.info(f"[WHALE] Cache HIT: {signature[:16]}... (age={age:.1f}s)")
                 await self._process_rpc_tx(cached_tx, signature, platform)
                 return
+            else:
+                del self._tx_cache[signature]
         
         start_time = time.time()
         tx = None
         
-        # Try all public RPC endpoints with rotation
-        for endpoint in PUBLIC_RPC_ENDPOINTS:
-            self._metrics["public_rpc_calls"] += 1
-            tx = await self._get_tx_from_endpoint(signature, endpoint, timeout=2.0)
+        # Step 2: HELIUS PRIMARY (fast, reliable)
+        if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
+            self._metrics["helius_calls"] += 1
+            self._metrics["requests_today"] += 1
+            tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=1.5)
             elapsed = time.time() - start_time
             
             if tx:
-                self._metrics["public_rpc_success"] += 1
-                # Cache successful result
-                self._tx_cache[signature] = (tx, time.time())
-                # Clean old cache entries
-                if len(self._tx_cache) > 200:
-                    oldest = sorted(self._tx_cache.items(), key=lambda x: x[1][1])[:100]
-                    for k, _ in oldest:
-                        del self._tx_cache[k]
+                self._metrics["helius_success"] += 1
+                self._cache_tx(signature, tx)
                 
                 if elapsed > 1.0:
-                    logger.warning(f"[WHALE] SLOW RPC: {elapsed:.2f}s for {signature[:16]}...")
+                    logger.warning(f"[WHALE] Helius SLOW: {elapsed:.2f}s for {signature[:16]}...")
                 else:
-                    logger.info(f"[WHALE] RPC OK: {elapsed:.2f}s for {signature[:16]}...")
+                    logger.info(f"[WHALE] Helius OK: {elapsed:.2f}s for {signature[:16]}...")
                 
                 await self._process_rpc_tx(tx, signature, platform)
                 return
-        
-        # All public endpoints failed - try Helius fallback with rate limiting
-        if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
-            now = time.time()
-            time_since_last = now - self._last_helius_call
-            
-            if time_since_last >= self._helius_rate_limit:
-                self._last_helius_call = now
-                self._metrics["helius_fallbacks"] += 1
-                
-                tx = await self._get_tx_from_endpoint(
-                    signature, self.rpc_endpoint, timeout=3.0
-                )
-                elapsed = time.time() - start_time
-                
-                if tx:
-                    self._tx_cache[signature] = (tx, time.time())
-                    logger.warning(
-                        f"[WHALE] Helius fallback OK: {elapsed:.2f}s for {signature[:16]}..."
-                    )
-                    await self._process_rpc_tx(tx, signature, platform)
-                    return
-                else:
-                    logger.warning(
-                        f"[WHALE] Helius fallback FAILED for {signature[:16]}..."
-                    )
             else:
-                wait_time = self._helius_rate_limit - time_since_last
-                logger.debug(
-                    f"[WHALE] Helius rate limited, wait {wait_time:.1f}s"
-                )
+                logger.warning(f"[WHALE] Helius failed for {signature[:16]}..., trying fallback")
+        
+        # Step 3: Public RPC fallback (emergency only)
+        for endpoint in PUBLIC_RPC_FALLBACK:
+            self._metrics["public_fallback_calls"] += 1
+            tx = await self._get_tx_from_endpoint(signature, endpoint, timeout=2.0)
+            
+            if tx:
+                elapsed = time.time() - start_time
+                self._cache_tx(signature, tx)
+                logger.warning(f"[WHALE] Fallback OK: {elapsed:.2f}s for {signature[:16]}...")
+                await self._process_rpc_tx(tx, signature, platform)
+                return
+        
+        # All failed
+        elapsed = time.time() - start_time
+        self._metrics["timeouts"] += 1
+        logger.error(f"[WHALE] All RPC failed after {elapsed:.2f}s for {signature[:16]}...")
+
+    def _cache_tx(self, signature: str, tx: dict):
+        """Cache TX result with LRU eviction."""
+        self._tx_cache[signature] = (tx, time.time())
+        
+        # LRU eviction if over size limit
+        if len(self._tx_cache) > self._cache_max_size:
+            oldest = min(self._tx_cache.keys(), key=lambda k: self._tx_cache[k][1])
+            del self._tx_cache[oldest]
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""
