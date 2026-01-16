@@ -46,6 +46,9 @@ PUBLIC_RPC_FALLBACK = [
 # Helius RPC - PRIMARY endpoint (fast, reliable)
 HELIUS_RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=a53d15c7-d5f5-40fc-81fe-49942d03d4f3"
 
+# Helius Enhanced API - парсит транзакции автоматически (лучше чем getTransaction!)
+HELIUS_PARSE_TX_URL = "https://api-mainnet.helius-rpc.com/v0/transactions/?api-key=a53d15c7-d5f5-40fc-81fe-49942d03d4f3"
+
 
 @dataclass
 class WhaleBuy:
@@ -428,10 +431,8 @@ class WhaleTracker:
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
         
-        QUOTA CONSERVATION MODE:
-        - Max 1 RPC request per 10 seconds (6/min, 360/hour, 8640/day)
-        - Skip if queue is full (>50 pending TXs)
-        - This uses ~32% of daily Helius budget
+        Использует Helius Enhanced API (парсит TX автоматически).
+        Rate limit: 1 запрос в 15 секунд (~5760/день).
         
         Args:
             signature: Сигнатура транзакции
@@ -444,33 +445,36 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        # QUOTA CONSERVATION: Strict rate limiting
+        # STRICT RATE LIMIT: 1 request per 15 seconds
         now = time.time()
         time_since_last = now - self._last_helius_call
         
         if time_since_last < self._helius_rate_limit:
-            # Skip this TX - rate limited
-            # We can't queue all TXs, just skip older ones
-            logger.debug(f"[WHALE] Skipped {signature[:16]}... (rate limit, {time_since_last:.1f}s < {self._helius_rate_limit}s)")
             return
         
-        # Wait for TX confirmation (3 seconds minimum)
-        await asyncio.sleep(3.0)
+        # Wait for TX confirmation
+        await asyncio.sleep(2.0)
         
-        self._last_helius_call = time.time()
+        # Double-check rate limit after sleep
+        now = time.time()
+        if now - self._last_helius_call < self._helius_rate_limit:
+            return
+        
+        self._last_helius_call = now
         self._metrics["helius_calls"] += 1
         self._metrics["requests_today"] += 1
         
-        logger.info(f"[WHALE] Checking TX {signature[:16]}... (req #{self._metrics['requests_today']} today)")
-        tx = await self._get_tx_from_endpoint(signature, HELIUS_RPC_ENDPOINT, timeout=5.0)
+        logger.info(f"[WHALE] Checking TX {signature[:16]}... (req #{self._metrics['requests_today']})")
+        
+        # Use Helius Enhanced API (парсит TX автоматически!)
+        tx = await self._get_tx_helius(signature)
         
         if tx:
             self._metrics["helius_success"] += 1
-            self._cache_tx(signature, tx)
-            logger.info(f"[WHALE] Helius OK for {signature[:16]}...")
-            await self._process_rpc_tx(tx, signature, platform)
+            logger.info(f"[WHALE] Got parsed TX {signature[:16]}...")
+            await self._process_helius_tx(tx, platform)
         else:
-            logger.debug(f"[WHALE] TX not found: {signature[:16]}...")
+            logger.debug(f"[WHALE] TX {signature[:16]}... not found")
         return
         
         # Cache check moved inside retry loop above
@@ -487,20 +491,30 @@ class WhaleTracker:
             del self._tx_cache[oldest]
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
-        """Получить транзакцию через Helius."""
-        url = "https://api.helius.xyz/v0/transactions"
-        params = {"api-key": self.helius_api_key}
-        
+        """Получить транзакцию через Helius Enhanced API (парсит автоматически!)."""
         try:
             async with self._session.post(
-                url, params=params, json={"transactions": [signature]},
-                timeout=aiohttp.ClientTimeout(total=3)
+                HELIUS_PARSE_TX_URL,
+                json={"transactions": [signature]},
+                timeout=aiohttp.ClientTimeout(total=5),
+                headers={"Content-Type": "application/json"}
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    return data[0] if data else None
+                    if data and len(data) > 0:
+                        return data[0]
+                    return None
+                elif resp.status == 429:
+                    logger.warning("[WHALE] Helius Enhanced API rate limited (429)")
+                    return None
+                else:
+                    logger.debug(f"[WHALE] Helius Enhanced API HTTP {resp.status}")
+                    return None
+        except asyncio.TimeoutError:
+            logger.warning("[WHALE] Helius Enhanced API timeout")
+            return None
         except Exception as e:
-            logger.debug(f"Helius error: {e}")
+            logger.debug(f"[WHALE] Helius Enhanced API error: {e}")
         return None
 
     async def _get_tx_from_endpoint(
