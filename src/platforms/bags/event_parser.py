@@ -200,12 +200,8 @@ class BagsEventParser(EventParser):
                 return None
             quote_vault = Pubkey.from_bytes(data[offset:offset + 32])
             
-            # Verify this is a BAGS token (mint ends with "bags")
-            mint_str = str(mint)
-            if not mint_str.lower().endswith("bags"):
-                logger.debug(f"Token {mint_str} is not a BAGS token (doesn't end with 'bags')")
-                return None
-            
+            # Note: bags.fm tokens are identified by being created via Meteora DBC program,
+            # NOT by mint address suffix. The "bags" suffix is just a common pattern but not required.
             logger.info(f"🎒 BAGS token created: {name} ({symbol}) - {mint}")
             
             return TokenInfo(
@@ -305,11 +301,7 @@ class BagsEventParser(EventParser):
             if not all([creator, pool, base_mint]):
                 return None
 
-            # Verify this is a BAGS token
-            mint_str = str(base_mint)
-            if not mint_str.lower().endswith("bags"):
-                return None
-
+            # Note: bags.fm tokens are identified by Meteora DBC program, not mint suffix
             return TokenInfo(
                 name=name,
                 symbol=symbol,

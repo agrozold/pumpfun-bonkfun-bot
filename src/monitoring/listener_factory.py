@@ -120,7 +120,8 @@ class ListenerFactory:
             )
 
             # Validate that requested platforms support PumpPortal
-            supported_pumpportal_platforms = [Platform.PUMP_FUN, Platform.LETS_BONK, Platform.BAGS]
+            # Note: BAGS (bags.fm) is NOT supported by PumpPortal!
+            supported_pumpportal_platforms = [Platform.PUMP_FUN, Platform.LETS_BONK]
 
             if platforms:
                 unsupported = [
@@ -128,7 +129,8 @@ class ListenerFactory:
                 ]
                 if unsupported:
                     logger.warning(
-                        f"Platforms {[p.value for p in unsupported]} do not support PumpPortal"
+                        f"Platforms {[p.value for p in unsupported]} do not support PumpPortal. "
+                        f"Use 'logs' listener for bags.fm tokens."
                     )
 
                 # Filter to only supported platforms
@@ -179,9 +181,11 @@ class ListenerFactory:
         if platform == Platform.PUMP_FUN:
             return ["logs", "blocks", "geyser", "pumpportal"]
         elif platform == Platform.LETS_BONK:
-            return ["blocks", "geyser", "pumpportal"]  # Added pumpportal support
+            return ["logs", "blocks", "geyser", "pumpportal"]
         elif platform == Platform.BAGS:
-            return ["blocks", "geyser", "pumpportal"]  # BAGS supports same as letsbonk
+            # BAGS uses Meteora DBC - PumpPortal does NOT support bags.fm!
+            # Use logs listener to subscribe to Meteora DBC program directly.
+            return ["logs", "blocks", "geyser"]
         else:
             return ["blocks", "geyser"]  # Default universal listeners
 
@@ -191,5 +195,9 @@ class ListenerFactory:
 
         Returns:
             List of platforms with PumpPortal support
+            
+        Note:
+            BAGS (bags.fm) is NOT supported by PumpPortal!
+            bags.fm uses Meteora DBC which requires logsSubscribe.
         """
-        return [Platform.PUMP_FUN, Platform.LETS_BONK, Platform.BAGS]
+        return [Platform.PUMP_FUN, Platform.LETS_BONK]  # BAGS removed - not supported

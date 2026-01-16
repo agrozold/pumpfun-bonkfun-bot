@@ -124,6 +124,18 @@ class TokenScorer:
         # МИНИМУМ: $500 ликвидности
         min_liquidity_ok = liquidity >= 500
         
+        # ============================================
+        # НОВЫЙ ФИЛЬТР: BUY PRESSURE RATIO
+        # Если покупок примерно столько же сколько продаж = МУСОР!
+        # Нужно минимум 65% покупок
+        # ============================================
+        buy_pressure_5m = buys_5m / total_trades_5m if total_trades_5m > 0 else 0
+        buy_pressure_1h = buys_1h / total_trades_1h if total_trades_1h > 0 else 0
+        
+        # Берём лучший из двух периодов
+        best_buy_pressure = max(buy_pressure_5m, buy_pressure_1h)
+        min_buy_pressure_ok = best_buy_pressure >= 0.65  # Минимум 65% покупок
+        
         if not min_trades_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO FEW TRADES: "
@@ -185,6 +197,37 @@ class TokenScorer:
                 details={
                     "error": f"Too low liquidity: ${liquidity:.2f}",
                     "liquidity_usd": liquidity,
+                },
+                timestamp=datetime.utcnow(),
+                recommendation="SKIP",
+            )
+        
+        # ============================================
+        # НОВЫЙ ФИЛЬТР: BUY PRESSURE CHECK
+        # Токен с 55 покупок / 43 продажи = 56% = МУСОР!
+        # ============================================
+        if not min_buy_pressure_ok:
+            logger.warning(
+                f"[SKIP] {symbol} - TOO LOW BUY PRESSURE: "
+                f"5m={buy_pressure_5m:.1%} ({buys_5m}b/{sells_5m}s), "
+                f"1h={buy_pressure_1h:.1%} ({buys_1h}b/{sells_1h}s) - need 65%+"
+            )
+            return TokenScore(
+                mint=mint,
+                symbol=symbol,
+                total_score=0,
+                volume_score=0,
+                buy_pressure_score=0,
+                momentum_score=0,
+                liquidity_score=0,
+                details={
+                    "error": f"Too low buy pressure: best={best_buy_pressure:.1%} (need 65%)",
+                    "buys_5m": buys_5m,
+                    "sells_5m": sells_5m,
+                    "buys_1h": buys_1h,
+                    "sells_1h": sells_1h,
+                    "buy_pressure_5m": buy_pressure_5m,
+                    "buy_pressure_1h": buy_pressure_1h,
                 },
                 timestamp=datetime.utcnow(),
                 recommendation="SKIP",
