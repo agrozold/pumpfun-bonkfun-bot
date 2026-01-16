@@ -111,6 +111,7 @@ class WhaleTracker:
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._processed_txs: set[str] = set()
+        self._emitted_tokens: set[str] = set()  # Tokens already emitted to prevent duplicates
         
         # RPC optimization: TX cache with extended TTL for quota saving
         self._tx_cache: dict[str, tuple[dict, float]] = {}  # sig -> (result, timestamp)
@@ -775,6 +776,10 @@ class WhaleTracker:
         ВАЖНО: Проверяем что покупка СВЕЖАЯ (в пределах time_window).
         Старые покупки игнорируются!
         
+        ANTI-DUPLICATE: Каждый токен эмитится только один раз.
+        Если кит купил токен несколько раз или несколько китов купили
+        один токен - отправляем сигнал только для первой покупки.
+        
         Args:
             wallet: Кошелёк кита
             token_mint: Адрес токена
@@ -784,6 +789,14 @@ class WhaleTracker:
             block_time: Unix timestamp транзакции
             platform: Платформа ("pump_fun" или "lets_bonk")
         """
+        # ANTI-DUPLICATE: Check if token already emitted
+        if token_mint in self._emitted_tokens:
+            logger.info(
+                f"[WHALE] SKIP DUPLICATE: {whale_label} bought {token_mint[:8]}... "
+                f"but signal already emitted for this token"
+            )
+            return
+        
         now = time.time()
         age_seconds = 0.0
         
@@ -807,6 +820,15 @@ class WhaleTracker:
         else:
             # Если нет block_time - это real-time событие, копируем
             logger.info(f"[WHALE] REAL-TIME BUY: {whale_label} (no block_time, assuming fresh)")
+        
+        # Mark token as emitted BEFORE sending signal
+        self._emitted_tokens.add(token_mint)
+        
+        # Cleanup old emitted tokens (keep last 500)
+        if len(self._emitted_tokens) > 500:
+            # Convert to list, keep last 400
+            tokens_list = list(self._emitted_tokens)
+            self._emitted_tokens = set(tokens_list[-400:])
         
         whale_buy = WhaleBuy(
             whale_wallet=wallet,
