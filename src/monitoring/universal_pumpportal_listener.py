@@ -204,17 +204,26 @@ class UniversalPumpPortalListener(BaseTokenListener):
         Args:
             websocket: Active WebSocket connection
         """
+        ping_failures = 0
+        max_ping_failures = 3  # Allow 3 failed pings before closing
+        
         try:
             while True:
                 await asyncio.sleep(self.ping_interval)
                 try:
                     pong_waiter = await websocket.ping()
-                    await asyncio.wait_for(pong_waiter, timeout=10)
+                    await asyncio.wait_for(pong_waiter, timeout=30)  # Increased to 30s
+                    ping_failures = 0  # Reset on success
                 except TimeoutError:
-                    logger.warning("Ping timeout - PumpPortal server not responding")
-                    # Force reconnection
-                    await websocket.close()
-                    return
+                    ping_failures += 1
+                    logger.warning(
+                        f"Ping timeout ({ping_failures}/{max_ping_failures})"
+                    )
+                    if ping_failures >= max_ping_failures:
+                        logger.warning("Too many ping failures, closing connection")
+                        await websocket.close()
+                        return
+                    # Continue trying instead of immediately closing
         except asyncio.CancelledError:
             pass
         except Exception:
