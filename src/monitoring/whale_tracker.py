@@ -419,9 +419,10 @@ class WhaleTracker:
         """Проверить, является ли транзакция покупкой кита.
         
         HELIUS PRIMARY стратегия:
-        1. Cache check (60s TTL, 40%+ hit ratio)
-        2. Helius RPC (PRIMARY, 1.5s timeout, ultra-fast)
-        3. Public RPC fallback (only on Helius failure)
+        1. Wait for TX confirmation (500ms delay)
+        2. Cache check (60s TTL, 40%+ hit ratio)
+        3. Helius RPC (PRIMARY, 1.5s timeout, ultra-fast)
+        4. Public RPC fallback (only on Helius failure)
         
         Args:
             signature: Сигнатура транзакции
@@ -433,6 +434,11 @@ class WhaleTracker:
         self._processed_txs.add(signature)
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
+        
+        # Step 0: Wait for TX to be confirmed
+        # logsSubscribe gives us TX immediately (commitment: processed)
+        # but getTransaction needs it to be confirmed/finalized
+        await asyncio.sleep(0.5)  # 500ms delay for confirmation
         
         # Step 1: Cache check (quota saving)
         if signature in self._tx_cache:
@@ -453,7 +459,7 @@ class WhaleTracker:
         if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
             self._metrics["helius_calls"] += 1
             self._metrics["requests_today"] += 1
-            tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=1.5)
+            tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=3.0)
             elapsed = time.time() - start_time
             
             if tx:
@@ -468,24 +474,22 @@ class WhaleTracker:
                 await self._process_rpc_tx(tx, signature, platform)
                 return
             else:
-                logger.warning(f"[WHALE] Helius failed for {signature[:16]}..., trying fallback")
+                logger.debug(f"[WHALE] Helius no data for {signature[:16]}..., trying fallback")
         
         # Step 3: Public RPC fallback (emergency only)
         for endpoint in PUBLIC_RPC_FALLBACK:
             self._metrics["public_fallback_calls"] += 1
-            tx = await self._get_tx_from_endpoint(signature, endpoint, timeout=2.0)
+            tx = await self._get_tx_from_endpoint(signature, endpoint, timeout=3.0)
             
             if tx:
                 elapsed = time.time() - start_time
                 self._cache_tx(signature, tx)
-                logger.warning(f"[WHALE] Fallback OK: {elapsed:.2f}s for {signature[:16]}...")
+                logger.info(f"[WHALE] Fallback OK: {elapsed:.2f}s for {signature[:16]}...")
                 await self._process_rpc_tx(tx, signature, platform)
                 return
         
-        # All failed
-        elapsed = time.time() - start_time
-        self._metrics["timeouts"] += 1
-        logger.error(f"[WHALE] All RPC failed after {elapsed:.2f}s for {signature[:16]}...")
+        # All failed - TX may not be confirmed yet, this is normal
+        logger.debug(f"[WHALE] TX not found: {signature[:16]}... (may not be confirmed)")
 
     def _cache_tx(self, signature: str, tx: dict):
         """Cache TX result with LRU eviction."""
