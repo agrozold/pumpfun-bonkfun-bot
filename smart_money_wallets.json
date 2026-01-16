@@ -513,14 +513,7 @@
       "source": "manual",
       "added_date": "2026-01-16T11:00:00Z"
     },
-    {
-      "wallet": "5U3e1oEPWSADLmGxHsudDEpp1mP2kKoBJcdHRCsVEuTy",
-      "win_rate": 0.7,
-      "trades_count": 0,
-      "label": "whale",
-      "source": "manual",
-      "added_date": "2026-01-16T11:00:00Z"
-    },
+
     {
       "wallet": "G95D2EC53xaw1QxYYSA2MWaAFRGk24P9wgoPr4SUDP4F",
       "win_rate": 0.7,
