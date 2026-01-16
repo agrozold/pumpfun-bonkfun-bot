@@ -1,7 +1,7 @@
 """
 Test script to verify BONK (letsbonk.fun) token detection via PumpPortal.
 
-NOTE: This test will NOT detect bonk.fun tokens because PumpPortal
+WARNING: This test will NOT detect bonk.fun tokens because PumpPortal
 does NOT send them! Use test_bonk_logs_listener.py instead.
 
 This script is kept for reference to show that PumpPortal only sends pump.fun tokens.

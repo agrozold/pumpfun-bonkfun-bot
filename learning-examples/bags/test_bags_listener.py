@@ -7,6 +7,9 @@ created on bags.fm (Meteora DBC program).
 IMPORTANT: bags.fm tokens are identified by Meteora DBC program activity,
 NOT by mint address suffix!
 
+NOTE: Use test_bags_logs_listener.py for the specialized BagsLogsListener.
+This script uses the generic UniversalLogsListener for comparison.
+
 Usage:
     uv run learning-examples/bags/test_bags_listener.py
 """
