@@ -9,8 +9,9 @@ NOTE: This check is OPTIONAL. If Helius API is unavailable or rate limited,
 the check is skipped and trading continues (better to trade than miss gems).
 """
 
+import asyncio
 import os
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import aiohttp
 
@@ -220,8 +221,8 @@ class DevReputationChecker:
         # Вычисляем возраст аккаунта
         account_age_days = 0
         if oldest_tx_time:
-            oldest_dt = datetime.fromtimestamp(oldest_tx_time, tz=UTC)
-            now = datetime.now(tz=UTC)
+            oldest_dt = datetime.fromtimestamp(oldest_tx_time, tz=timezone.utc)
+            now = datetime.now(tz=timezone.utc)
             account_age_days = (now - oldest_dt).days
 
         # Вычисляем risk score
