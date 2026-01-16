@@ -48,6 +48,9 @@ pattern_detection:
   high_volume_sells_1h: 200        # SELL >= 200 за 1 час
   high_volume_alt_buys_1h: 100     # ИЛИ: BUY > 100
   high_volume_alt_max_sells_1h: 100  # И SELL <= 100 (накопление)
+  # EXTREME BUY PRESSURE 5min - СИЛЬНЫЙ СИГНАЛ!
+  extreme_buy_pressure_min_buys_5m: 500   # >= 500 покупок за 5 мин
+  extreme_buy_pressure_max_sells_5m: 200  # <= 200 продаж за 5 мин
 
 # Token Scoring - filter tokens by Dexscreener metrics
 scoring:
