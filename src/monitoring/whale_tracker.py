@@ -404,41 +404,35 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        logger.info(f"[WHALE] Checking TX {signature[:16]}... on {platform}")
-        
-        # ВАЖНО: Даём транзакции время подтвердиться
-        # logsSubscribe даёт нам TX сразу (commitment: processed)
-        # но getTransaction может их ещё не видеть
-        await asyncio.sleep(2.0)  # 2 секунды задержки
+        start_time = time.time()
         
         # ПРИОРИТЕТ 1: Публичный Solana RPC (бесплатный, без rate limit)
         public_rpc = "https://api.mainnet-beta.solana.com"
-        tx = await self._get_tx_from_endpoint(signature, public_rpc)
+        tx = await self._get_tx_from_endpoint(signature, public_rpc, timeout=3.0)
+        
+        elapsed = time.time() - start_time
         if tx:
-            logger.info(f"[WHALE] Got TX from public RPC for {signature[:16]}...")
+            if elapsed > 1.0:
+                logger.warning(f"[WHALE] SLOW RPC: {elapsed:.2f}s for {signature[:16]}...")
+            else:
+                logger.info(f"[WHALE] RPC OK: {elapsed:.2f}s for {signature[:16]}...")
             await self._process_rpc_tx(tx, signature, platform)
             return
         
         # ПРИОРИТЕТ 2: Helius RPC (fallback с rate limiting)
-        # Используем только если публичный не сработал
-        # Rate limit: max 1 запрос в 5 секунд для экономии квоты
+        # Rate limit: max 1 запрос в 2 секунды для экономии квоты
         if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
             now = time.time()
             if not hasattr(self, "_last_helius_call"):
                 self._last_helius_call = 0
             
-            # Rate limit: 1 запрос в 5 секунд = ~720 запросов/час = ~17k/день
-            if now - self._last_helius_call >= 5.0:
+            if now - self._last_helius_call >= 2.0:
                 self._last_helius_call = now
-                tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint)
+                tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=3.0)
                 if tx:
-                    logger.info(f"[WHALE] Got TX from Helius RPC for {signature[:16]}...")
+                    logger.info(f"[WHALE] Got TX from Helius fallback for {signature[:16]}...")
                     await self._process_rpc_tx(tx, signature, platform)
                     return
-            else:
-                logger.debug(f"[WHALE] Helius rate limited, skipping {signature[:16]}...")
-        
-        logger.debug(f"[WHALE] No TX data for {signature[:16]}...")
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""
@@ -457,12 +451,15 @@ class WhaleTracker:
             logger.debug(f"Helius error: {e}")
         return None
 
-    async def _get_tx_from_endpoint(self, signature: str, endpoint: str) -> dict | None:
+    async def _get_tx_from_endpoint(
+        self, signature: str, endpoint: str, timeout: float = 3.0
+    ) -> dict | None:
         """Получить транзакцию через указанный RPC endpoint.
         
         Args:
             signature: Сигнатура транзакции
             endpoint: URL RPC endpoint
+            timeout: Таймаут запроса в секундах
             
         Returns:
             Данные транзакции или None
@@ -477,7 +474,7 @@ class WhaleTracker:
         try:
             async with self._session.post(
                 endpoint, json=payload,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=timeout),
                 headers={"Content-Type": "application/json"}
             ) as resp:
                 if resp.status == 200:
@@ -494,7 +491,7 @@ class WhaleTracker:
                     logger.debug(f"[WHALE] HTTP {resp.status} from {endpoint[:30]}...")
                     return None
         except asyncio.TimeoutError:
-            logger.debug(f"[WHALE] Timeout from {endpoint[:30]}...")
+            logger.warning(f"[WHALE] TIMEOUT ({timeout}s) from {endpoint[:30]}...")
             return None
         except Exception as e:
             logger.debug(f"[WHALE] Error from {endpoint[:30]}: {e}")
