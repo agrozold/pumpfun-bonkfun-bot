@@ -95,9 +95,9 @@ class BagsLogsListener(BaseTokenListener):
             try:
                 async with websockets.connect(
                     self.wss_endpoint,
-                    ping_interval=20,
-                    ping_timeout=10,
-                    close_timeout=5,
+                    ping_interval=30,  # Send ping every 30s
+                    ping_timeout=60,   # Wait 60s for pong (public Solana is slow)
+                    close_timeout=10,
                 ) as websocket:
                     await self._subscribe_to_logs(websocket)
                     ping_task = asyncio.create_task(self._ping_loop(websocket))

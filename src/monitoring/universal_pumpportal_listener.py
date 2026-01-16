@@ -94,9 +94,9 @@ class UniversalPumpPortalListener(BaseTokenListener):
             try:
                 async with websockets.connect(
                     self.pumpportal_url,
-                    ping_interval=20,
-                    ping_timeout=10,
-                    close_timeout=5,
+                    ping_interval=30,  # Send ping every 30s
+                    ping_timeout=60,   # Wait 60s for pong
+                    close_timeout=10,
                 ) as websocket:
                     await self._subscribe_to_new_tokens(websocket)
                     ping_task = asyncio.create_task(self._ping_loop(websocket))
