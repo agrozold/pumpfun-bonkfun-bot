@@ -709,27 +709,65 @@ class UniversalTrader:
                 logger.warning(f"  TX:        {tx_sig}")
                 logger.warning("=" * 70)
                 
-                # Save position
+                # Save position WITH TP/SL settings!
                 mint = Pubkey.from_string(mint_str)
-                position = Position(
+                entry_price = price if price > 0 else self.buy_amount / max(token_amount, 1)
+                
+                # CRITICAL: Create position with TP/SL using same method as regular buys!
+                position = Position.create_from_buy_result(
                     mint=mint,
                     symbol=whale_buy.token_symbol,
-                    entry_price=price if price > 0 else self.buy_amount / max(token_amount, 1),
+                    entry_price=entry_price,
                     quantity=token_amount,
-                    entry_time=datetime.utcnow(),
-                    platform=dex_used,  # Save which DEX was used
+                    take_profit_percentage=self.take_profit_percentage,
+                    stop_loss_percentage=self.stop_loss_percentage,
+                    max_hold_time=self.max_hold_time,
+                    platform=dex_used,
+                    bonding_curve=None,  # Will be derived if needed
                 )
+                
                 self.active_positions.append(position)
                 save_positions(self.active_positions)
+                
+                # Log TP/SL targets
+                if position.take_profit_price:
+                    logger.warning(f"[WHALE] Take profit target: {position.take_profit_price:.10f} SOL")
+                if position.stop_loss_price:
+                    logger.warning(f"[WHALE] Stop loss target: {position.stop_loss_price:.10f} SOL")
                 
                 self._log_trade(
                     "buy",
                     None,  # No TokenInfo for universal buy
-                    price,
+                    entry_price,
                     token_amount,
                     tx_sig,
                     extra=f"whale_copy:{dex_used}:{whale_buy.token_symbol}",
                 )
+                
+                # ============================================
+                # CRITICAL: START SL/TP MONITORING!
+                # Without this, stop loss will NEVER trigger!
+                # ============================================
+                if self.exit_strategy == "tp_sl" and not self.marry_mode:
+                    logger.warning(f"[WHALE] Starting TP/SL monitor for {whale_buy.token_symbol}")
+                    
+                    # Create minimal TokenInfo for monitoring
+                    from interfaces.core import TokenInfo
+                    token_info = TokenInfo(
+                        name=whale_buy.token_symbol,
+                        symbol=whale_buy.token_symbol,
+                        uri="",
+                        mint=mint,
+                        platform=self.platform,
+                        user=None,
+                        creator=None,
+                        creation_timestamp=0,
+                    )
+                    
+                    # Start monitoring in background task (don't await - let it run)
+                    asyncio.create_task(
+                        self._monitor_whale_position(token_info, position, dex_used)
+                    )
             else:
                 # Clean readable failure log
                 logger.error("=" * 70)
@@ -745,6 +783,60 @@ class UniversalTrader:
         finally:
             # Remove from "buying" set (either succeeded or failed)
             self._buying_tokens.discard(mint_str)
+
+    async def _monitor_whale_position(
+        self, 
+        token_info: "TokenInfo", 
+        position: Position, 
+        dex_used: str
+    ) -> None:
+        """Monitor whale copy position for TP/SL exit.
+        
+        This is a wrapper around _monitor_position_until_exit that handles
+        whale-specific monitoring with Jupiter fallback for selling.
+        
+        Args:
+            token_info: Token information
+            position: Position to monitor
+            dex_used: DEX where token was bought (for logging)
+        """
+        logger.warning(
+            f"[WHALE MONITOR] Starting TP/SL monitor for {token_info.symbol} "
+            f"(bought on {dex_used})"
+        )
+        logger.warning(
+            f"[WHALE MONITOR] Entry: {position.entry_price:.10f} SOL, "
+            f"TP: {position.take_profit_price:.10f if position.take_profit_price else 'None'} SOL, "
+            f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'None'} SOL"
+        )
+        
+        try:
+            # Use the same monitoring logic as regular positions
+            await self._monitor_position_until_exit(token_info, position)
+        except Exception as e:
+            logger.exception(
+                f"[WHALE MONITOR] CRASHED for {token_info.symbol}! Error: {e}. "
+                f"Attempting emergency sell..."
+            )
+            # Try emergency sell on crash
+            try:
+                fallback_success = await self._emergency_fallback_sell(
+                    token_info, position, position.entry_price
+                )
+                if fallback_success:
+                    logger.warning(
+                        f"[WHALE MONITOR] Emergency sell SUCCESS for {token_info.symbol}"
+                    )
+                else:
+                    logger.error(
+                        f"[WHALE MONITOR] Emergency sell FAILED for {token_info.symbol}! "
+                        f"MANUAL SELL REQUIRED! Mint: {token_info.mint}"
+                    )
+            except Exception as e2:
+                logger.exception(
+                    f"[WHALE MONITOR] Emergency sell also crashed: {e2}. "
+                    f"MANUAL SELL REQUIRED for {token_info.symbol}! Mint: {token_info.mint}"
+                )
 
     async def _buy_any_dex(
         self,
