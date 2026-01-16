@@ -62,7 +62,7 @@ scoring:
 whale_copy:
   enabled: true
   wallets_file: "smart_money_wallets.json"
-  min_buy_amount: 0.5
+  min_buy_amount: 0.3
 
 # Dev Reputation Check - filter out serial scammers
 dev_check:
