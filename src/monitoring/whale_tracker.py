@@ -432,7 +432,7 @@ class WhaleTracker:
         """Проверить, является ли транзакция покупкой кита.
         
         Использует Alchemy RPC (ALCHEMY_RPC_ENDPOINT) для getTransaction.
-        Helius используется только как fallback.
+        Публичный Solana RPC как fallback.
         
         Args:
             signature: Сигнатура транзакции
@@ -467,18 +467,23 @@ class WhaleTracker:
         tx = None
         
         if alchemy_endpoint:
+            logger.info(f"[WHALE] Trying Alchemy for TX {signature[:16]}...")
             tx = await self._get_tx_from_endpoint(signature, alchemy_endpoint, timeout=5.0)
             if tx:
-                logger.debug(f"[WHALE] Got TX from Alchemy")
+                logger.info(f"[WHALE] Got TX from Alchemy - checking if whale")
                 self._cache_tx(signature, tx)
                 await self._process_rpc_tx(tx, signature, platform)
                 return
+            else:
+                logger.warning(f"[WHALE] Alchemy returned no data for {signature[:16]}...")
+        else:
+            logger.warning(f"[WHALE] ALCHEMY_RPC_ENDPOINT not set! Using public RPC")
         
-        # Fallback to public Ankr RPC (free, no rate limit)
-        ankr_endpoint = "https://rpc.ankr.com/solana"
-        tx = await self._get_tx_from_endpoint(signature, ankr_endpoint, timeout=5.0)
+        # Fallback to public Solana RPC (free, slower)
+        public_endpoint = "https://api.mainnet-beta.solana.com"
+        tx = await self._get_tx_from_endpoint(signature, public_endpoint, timeout=5.0)
         if tx:
-            logger.debug(f"[WHALE] Got TX from Ankr")
+            logger.info(f"[WHALE] Got TX from public Solana RPC")
             self._cache_tx(signature, tx)
             await self._process_rpc_tx(tx, signature, platform)
             return
