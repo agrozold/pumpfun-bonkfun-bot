@@ -1295,6 +1295,7 @@ class UniversalTrader:
     async def _process_token_queue(self) -> None:
         """Continuously process tokens from the queue, only if they're fresh."""
         while True:
+            token_info = None
             try:
                 token_info = await self.token_queue.get()
                 token_key = str(token_info.mint)
@@ -1310,6 +1311,7 @@ class UniversalTrader:
                     logger.info(
                         f"Skipping token {token_info.symbol} - too old ({token_age:.1f}s > {self.max_token_age}s)"
                     )
+                    self.token_queue.task_done()
                     continue
 
                 self.processed_tokens.add(token_key)
@@ -1318,14 +1320,15 @@ class UniversalTrader:
                     f"Processing fresh token: {token_info.symbol} (age: {token_age:.1f}s)"
                 )
                 await self._handle_token(token_info)
+                self.token_queue.task_done()
 
             except asyncio.CancelledError:
                 logger.info("Token queue processor was cancelled")
                 break
             except Exception:
                 logger.exception("Error in token queue processor")
-            finally:
-                self.token_queue.task_done()
+                if token_info is not None:
+                    self.token_queue.task_done()
 
     async def _handle_token(self, token_info: TokenInfo, skip_checks: bool = False) -> None:
         """Handle a new token creation event.
@@ -1348,14 +1351,24 @@ class UniversalTrader:
             if self.pattern_detector:
                 self.pattern_detector.start_tracking(mint_str, token_info.symbol)
 
-            # Check pattern_only_mode - skip if no pump signal detected (unless skip_checks)
-            if not skip_checks and self.pattern_only_mode and not self._has_pump_signal(mint_str):
-                logger.info(
-                    f"Pattern only mode: skipping {token_info.symbol} - no pump signal detected"
-                )
-                # Store token_info for later if signal arrives
-                self.pending_tokens[mint_str] = token_info
-                return
+            # Check pattern_only_mode - wait for Birdeye data before checking patterns
+            if not skip_checks and self.pattern_only_mode:
+                # Wait for pattern detector to fetch data from Birdeye (up to 3 seconds)
+                logger.info(f"Pattern mode: waiting for Birdeye data for {token_info.symbol}...")
+                for _ in range(6):  # 6 x 0.5s = 3 seconds max
+                    await asyncio.sleep(0.5)
+                    if self._has_pump_signal(mint_str):
+                        logger.warning(f"🚀 PUMP SIGNAL detected for {token_info.symbol}!")
+                        break
+                
+                # Check if signal arrived
+                if not self._has_pump_signal(mint_str):
+                    logger.info(
+                        f"Pattern only mode: skipping {token_info.symbol} - no pump signal detected"
+                    )
+                    # Store token_info for later if signal arrives
+                    self.pending_tokens[mint_str] = token_info
+                    return
 
             # Token scoring check (runs in parallel with wait time) - skip if whale copy
             scoring_task = None
