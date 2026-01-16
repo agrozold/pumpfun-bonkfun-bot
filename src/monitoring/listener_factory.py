@@ -28,6 +28,27 @@ class ListenerFactory:
         """Create a token listener based on the specified type.
 
         Args:
+            listener_type: Type of listener ('logs', 'blocks', 'geyser', 'pumpportal',
+                          'bonk_logs', 'bags_logs', or 'fallback')
+            wss_endpoint: WebSocket endpoint URL (for logs/blocks listeners)
+            rpc_endpoint: HTTP RPC endpoint (for bonk/bags listener transaction fetching)
+            geyser_endpoint: Geyser gRPC endpoint URL (for geyser listener)
+            geyser_api_token: Geyser API token (for geyser listener)
+            geyser_auth_type: Geyser authentication type
+            pumpportal_url: PumpPortal WebSocket URL (for pumpportal listener)
+            pumpportal_api_key: PumpPortal API key for PumpSwap data
+            platforms: List of platforms to monitor (if None, monitor all)
+            enable_fallback: If True and listener fails, auto-switch to fallback
+
+        Returns:
+            Configured token listener
+
+        Raises:
+            ValueError: If listener type is invalid or required parameters are missing
+        """
+        """Create a token listener based on the specified type.
+
+        Args:
             listener_type: Type of listener ('logs', 'blocks', 'geyser', 'pumpportal', or 'fallback')
             wss_endpoint: WebSocket endpoint URL (for logs/blocks listeners)
             rpc_endpoint: HTTP RPC endpoint (for bonk listener transaction fetching)
@@ -47,17 +68,39 @@ class ListenerFactory:
         """
         listener_type = listener_type.lower()
 
+        # Explicit bags_logs listener type
+        if listener_type == "bags_logs":
+            if not wss_endpoint:
+                raise ValueError("WebSocket endpoint required for bags_logs listener")
+
+            from monitoring.bags_logs_listener import BagsLogsListener
+
+            # Try to get RPC endpoint from WSS endpoint
+            if not rpc_endpoint and wss_endpoint:
+                rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace(
+                    "ws://", "http://"
+                )
+
+            listener = BagsLogsListener(
+                wss_endpoint=wss_endpoint,
+                rpc_endpoint=rpc_endpoint or "",
+            )
+            logger.info("Created BagsLogsListener for bags.fm tokens")
+            return listener
+
         # Explicit bonk_logs listener type
         if listener_type == "bonk_logs":
             if not wss_endpoint:
                 raise ValueError("WebSocket endpoint required for bonk_logs listener")
-            
+
             from monitoring.bonk_logs_listener import BonkLogsListener
-            
+
             # Try to get RPC endpoint from WSS endpoint
             if not rpc_endpoint and wss_endpoint:
-                rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace("ws://", "http://")
-            
+                rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace(
+                    "ws://", "http://"
+                )
+
             listener = BonkLogsListener(
                 wss_endpoint=wss_endpoint,
                 rpc_endpoint=rpc_endpoint or "",
@@ -65,40 +108,66 @@ class ListenerFactory:
             logger.info("Created BonkLogsListener for bonk.fun tokens")
             return listener
 
+        # Check if ONLY bags platform is requested - use specialized listener
+        if platforms and len(platforms) == 1 and platforms[0] == Platform.BAGS:
+            if listener_type in ["logs", "fallback", "pumpportal"]:
+                if not wss_endpoint:
+                    raise ValueError("WebSocket endpoint required for bags listener")
+
+                # Use specialized BagsLogsListener for better detection
+                from monitoring.bags_logs_listener import BagsLogsListener
+
+                # Try to get RPC endpoint from WSS endpoint
+                if not rpc_endpoint and wss_endpoint:
+                    rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace(
+                        "ws://", "http://"
+                    )
+
+                listener = BagsLogsListener(
+                    wss_endpoint=wss_endpoint,
+                    rpc_endpoint=rpc_endpoint or "",
+                )
+                logger.info("Created specialized BagsLogsListener for bags platform")
+                return listener
+
         # Check if ONLY lets_bonk platform is requested - use specialized listener
         if platforms and len(platforms) == 1 and platforms[0] == Platform.LETS_BONK:
             if listener_type in ["logs", "fallback", "pumpportal"]:
                 if not wss_endpoint:
                     raise ValueError("WebSocket endpoint required for bonk listener")
-                
+
                 # Use specialized BonkLogsListener for better detection
                 from monitoring.bonk_logs_listener import BonkLogsListener
-                
+
                 # Try to get RPC endpoint from WSS endpoint
                 if not rpc_endpoint and wss_endpoint:
-                    rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace("ws://", "http://")
-                
+                    rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace(
+                        "ws://", "http://"
+                    )
+
                 listener = BonkLogsListener(
                     wss_endpoint=wss_endpoint,
                     rpc_endpoint=rpc_endpoint or "",
                 )
                 logger.info(
-                    f"Created specialized BonkLogsListener for lets_bonk platform"
+                    "Created specialized BonkLogsListener for lets_bonk platform"
                 )
                 return listener
 
         # Fallback listener - auto-switches between sources
-        if listener_type == "fallback" or (enable_fallback and listener_type in ["pumpportal", "logs"]):
+        if listener_type == "fallback" or (
+            enable_fallback and listener_type in ["pumpportal", "logs"]
+        ):
             if not wss_endpoint:
                 raise ValueError("WebSocket endpoint required for fallback listener")
-            
+
             from monitoring.fallback_listener import FallbackListener
-            
+
             # Determine primary based on requested type
             primary = listener_type if listener_type != "fallback" else "pumpportal"
             fallbacks = ["logs", "pumpportal", "blocks"]
             fallbacks = [f for f in fallbacks if f != primary]
-            
+
             listener = FallbackListener(
                 wss_endpoint=wss_endpoint,
                 platforms=platforms,
@@ -208,7 +277,7 @@ class ListenerFactory:
         Returns:
             List of supported listener type strings
         """
-        return ["logs", "blocks", "geyser", "pumpportal", "bonk_logs"]
+        return ["logs", "blocks", "geyser", "pumpportal", "bonk_logs", "bags_logs"]
 
     @staticmethod
     def get_platform_compatible_listeners(platform: Platform) -> list[str]:
@@ -228,8 +297,8 @@ class ListenerFactory:
             return ["bonk_logs", "logs", "blocks", "geyser"]
         elif platform == Platform.BAGS:
             # BAGS uses Meteora DBC - PumpPortal does NOT support bags.fm!
-            # Use logs listener to subscribe to Meteora DBC program directly.
-            return ["logs", "blocks", "geyser"]
+            # Use bags_logs for direct Meteora DBC subscription.
+            return ["bags_logs", "logs", "blocks", "geyser"]
         else:
             return ["blocks", "geyser"]  # Default universal listeners
 
@@ -239,7 +308,7 @@ class ListenerFactory:
 
         Returns:
             List of platforms with PumpPortal support
-            
+
         Note:
             BAGS (bags.fm) is NOT supported by PumpPortal!
             LETS_BONK (bonk.fun) is NOT supported by PumpPortal!

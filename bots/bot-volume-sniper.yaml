@@ -1,0 +1,80 @@
+# Volume Pattern Sniper Bot
+# Стратегия: ловим паттерны объёмов по ВСЕМ токенам (не только новым)
+# Возраст токена НЕ имеет значения - важны паттерны!
+
+name: "bot-volume-sniper"
+platform: "pump_fun"  # Основная платформа, но анализируем все
+enabled: true
+separate_process: true
+
+# Environment
+env_file: ".env"
+rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
+wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
+private_key: "${SOLANA_PRIVATE_KEY}"
+
+# Strategy: volume_pattern (новая стратегия!)
+strategy: "volume_pattern"
+
+# Volume Pattern Analyzer Settings
+volume_pattern:
+  # Минимальные пороги
+  min_volume_1h: 10000        # $10k минимум объёма за час
+  volume_spike_threshold: 3.0  # 3x от среднего = spike
+  min_trades_5m: 20           # Минимум 20 сделок за 5 мин
+  min_buy_pressure: 0.55      # Минимум 55% покупок
+  
+  # Risk management
+  max_wallet_concentration: 0.70  # > 70% = rug risk, skip
+  
+  # Scan settings
+  scan_interval: 30           # Сканировать каждые 30 сек
+  max_tokens_per_scan: 50     # Макс токенов за скан
+  
+  # Signal thresholds
+  min_health_score: 60        # Минимум health score для входа
+  min_opportunity_score: 70   # Минимум opportunity score
+  
+  # Patterns to look for (все включены по умолчанию)
+  patterns:
+    volume_spike: true
+    whale_accumulation: true
+    organic_growth: true
+    smart_money_entry: true
+    breakout_pattern: true
+    # coordinated_buys: false  # Отключено - высокий риск rug
+
+# Trading parameters
+trade:
+  buy_amount: 0.01            # SOL на покупку
+  buy_slippage: 0.25          # 25% slippage
+  sell_slippage: 0.30         # 30% slippage
+  
+  # Exit strategy
+  exit_strategy: "tp_sl"
+  take_profit: 0.50           # +50% = продаём
+  stop_loss: 0.20             # -20% = стоп
+  
+  # Timeouts
+  max_hold_time: 3600         # Макс 1 час держим
+  
+  # Safety
+  min_sol_balance: 0.05       # Минимум SOL на балансе
+  max_concurrent_positions: 3  # Макс 3 позиции одновременно
+
+# Filters (дополнительные)
+filters:
+  # Market cap limits (0 = no limit)
+  min_market_cap: 5000        # $5k минимум
+  max_market_cap: 0           # Без верхнего лимита
+  
+  # Liquidity
+  min_liquidity: 3000         # $3k минимум ликвидности
+  
+  # Age - НЕ ВАЖЕН для этой стратегии!
+  # max_token_age_hours: 0    # 0 = любой возраст
+
+# Logging
+logging:
+  level: "INFO"
+  file: "logs/volume-sniper.log"

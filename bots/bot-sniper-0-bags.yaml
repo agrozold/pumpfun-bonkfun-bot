@@ -11,12 +11,12 @@ name: bot-sniper-bags
 platform: bags
 separate_process: true
 
-# Listener - ВАЖНО: для bags.fm используем logs, НЕ pumpportal!
+# Listener - ВАЖНО: для bags.fm используем bags_logs, НЕ pumpportal!
 # PumpPortal не поддерживает bags.fm токены.
-# logs listener подписывается на Meteora DBC программу напрямую.
+# bags_logs listener подписывается на Meteora DBC программу напрямую.
 filters:
   bro_address: null
-  listener_type: logs  # ИЗМЕНЕНО: logs вместо fallback/pumpportal
+  listener_type: bags_logs  # ИЗМЕНЕНО: bags_logs для прямой подписки на Meteora DBC
   match_string: null
   max_token_age: 315360000  # 10 лет в секундах
   yolo_mode: true

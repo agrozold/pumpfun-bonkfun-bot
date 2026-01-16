@@ -49,30 +49,32 @@ class FallbackListener(BaseTokenListener):
         """
         super().__init__()
         self.wss_endpoint = wss_endpoint
-        self.rpc_endpoint = rpc_endpoint or wss_endpoint.replace("wss://", "https://").replace("ws://", "http://")
+        self.rpc_endpoint = rpc_endpoint or wss_endpoint.replace(
+            "wss://", "https://"
+        ).replace("ws://", "http://")
         self.platforms = platforms
         self.pumpportal_url = pumpportal_url
         self.pumpportal_api_key = pumpportal_api_key
         self.primary_listener = primary_listener
         self.fallback_listeners = fallback_listeners or ["logs", "pumpportal"]
         self.max_errors_before_fallback = max_errors_before_fallback
-        
+
         self._current_listener: BaseTokenListener | None = None
         self._current_listener_type: str = ""
         self._error_count = 0
         self._listener_index = -1  # Start with primary
-        
+
         # Check if we need specialized bonk listener
-        self._needs_bonk_listener = (
-            platforms and 
-            Platform.LETS_BONK in platforms
-        )
-        
+        self._needs_bonk_listener = platforms and Platform.LETS_BONK in platforms
+
+        # Check if we need specialized bags listener
+        self._needs_bags_listener = platforms and Platform.BAGS in platforms
+
         # Build listener order: primary first, then fallbacks
         self._listener_order = [primary_listener] + [
             l for l in self.fallback_listeners if l != primary_listener
         ]
-        
+
         # For bonk platform, add bonk_logs as high priority fallback
         if self._needs_bonk_listener and "bonk_logs" not in self._listener_order:
             # Insert bonk_logs right after primary (or as primary if pumpportal)
@@ -80,18 +82,38 @@ class FallbackListener(BaseTokenListener):
                 self._listener_order.insert(1, "bonk_logs")
             else:
                 self._listener_order.append("bonk_logs")
-        
+
+        # For bags platform, add bags_logs as high priority fallback
+        if self._needs_bags_listener and "bags_logs" not in self._listener_order:
+            # Insert bags_logs right after primary (or as primary if pumpportal)
+            if primary_listener == "pumpportal":
+                self._listener_order.insert(1, "bags_logs")
+            else:
+                self._listener_order.append("bags_logs")
+
         logger.info(
             f"FallbackListener initialized: primary={primary_listener}, "
-            f"fallbacks={self.fallback_listeners}, needs_bonk={self._needs_bonk_listener}"
+            f"fallbacks={self.fallback_listeners}, needs_bonk={self._needs_bonk_listener}, "
+            f"needs_bags={self._needs_bags_listener}"
         )
 
     def _create_listener(self, listener_type: str) -> BaseTokenListener | None:
         """Create a specific listener type."""
         try:
-            if listener_type == "bonk_logs":
+            if listener_type == "bags_logs":
+                # Specialized listener for bags.fm tokens
+                from monitoring.bags_logs_listener import BagsLogsListener
+
+                return BagsLogsListener(
+                    wss_endpoint=self.wss_endpoint,
+                    rpc_endpoint=self.rpc_endpoint,
+                    raise_on_max_errors=True,
+                    max_consecutive_errors=3,
+                )
+            elif listener_type == "bonk_logs":
                 # Specialized listener for bonk.fun tokens
                 from monitoring.bonk_logs_listener import BonkLogsListener
+
                 return BonkLogsListener(
                     wss_endpoint=self.wss_endpoint,
                     rpc_endpoint=self.rpc_endpoint,
@@ -102,14 +124,19 @@ class FallbackListener(BaseTokenListener):
                 from monitoring.universal_pumpportal_listener import (
                     UniversalPumpPortalListener,
                 )
+
                 # Filter out LETS_BONK from pumpportal - it doesn't support bonk.fun!
                 pumpportal_platforms = self.platforms
                 if pumpportal_platforms and Platform.LETS_BONK in pumpportal_platforms:
-                    pumpportal_platforms = [p for p in pumpportal_platforms if p != Platform.LETS_BONK]
+                    pumpportal_platforms = [
+                        p for p in pumpportal_platforms if p != Platform.LETS_BONK
+                    ]
                     if not pumpportal_platforms:
-                        logger.warning("PumpPortal doesn't support bonk.fun, skipping...")
+                        logger.warning(
+                            "PumpPortal doesn't support bonk.fun, skipping..."
+                        )
                         return None
-                
+
                 return UniversalPumpPortalListener(
                     pumpportal_url=self.pumpportal_url,
                     platforms=pumpportal_platforms,
@@ -119,12 +146,14 @@ class FallbackListener(BaseTokenListener):
                 )
             elif listener_type == "logs":
                 from monitoring.universal_logs_listener import UniversalLogsListener
+
                 return UniversalLogsListener(
                     wss_endpoint=self.wss_endpoint,
                     platforms=self.platforms,
                 )
             elif listener_type == "blocks":
                 from monitoring.universal_block_listener import UniversalBlockListener
+
                 return UniversalBlockListener(
                     wss_endpoint=self.wss_endpoint,
                     platforms=self.platforms,
@@ -139,23 +168,23 @@ class FallbackListener(BaseTokenListener):
     def _switch_to_next_listener(self) -> bool:
         """Switch to next available listener. Returns True if switched."""
         self._listener_index += 1
-        
+
         while self._listener_index < len(self._listener_order):
             listener_type = self._listener_order[self._listener_index]
             listener = self._create_listener(listener_type)
-            
+
             if listener:
                 self._current_listener = listener
                 self._current_listener_type = listener_type
                 self._error_count = 0
                 logger.warning(
                     f"[SWITCH] Switched to {listener_type} listener "
-                    f"(index {self._listener_index}/{len(self._listener_order)-1})"
+                    f"(index {self._listener_index}/{len(self._listener_order) - 1})"
                 )
                 return True
-            
+
             self._listener_index += 1
-        
+
         # All listeners exhausted, restart from beginning
         logger.warning("All listeners failed, restarting from primary...")
         self._listener_index = -1
@@ -168,7 +197,7 @@ class FallbackListener(BaseTokenListener):
         creator_address: str | None = None,
     ) -> None:
         """Listen for tokens with automatic fallback."""
-        
+
         while True:
             # Initialize or switch listener
             if self._current_listener is None:
@@ -176,15 +205,15 @@ class FallbackListener(BaseTokenListener):
                     logger.error("No listeners available, waiting 30s...")
                     await asyncio.sleep(30)
                     continue
-            
+
             try:
                 logger.info(f"📡 Starting {self._current_listener_type} listener...")
-                
+
                 # Run listener with error tracking wrapper
                 await self._run_with_error_tracking(
                     token_callback, match_string, creator_address
                 )
-                
+
             except asyncio.CancelledError:
                 logger.info("FallbackListener cancelled")
                 raise
@@ -194,7 +223,7 @@ class FallbackListener(BaseTokenListener):
                 logger.warning(
                     f"[WARN] {self._current_listener_type} connection failed: {e}"
                 )
-                logger.warning(f"[SWITCH] Switching to next listener...")
+                logger.warning("[SWITCH] Switching to next listener...")
                 self._current_listener = None
                 # No sleep - switch immediately
             except Exception as e:
@@ -203,7 +232,7 @@ class FallbackListener(BaseTokenListener):
                     f"[ERROR] {self._current_listener_type} error ({self._error_count}/"
                     f"{self.max_errors_before_fallback}): {e}"
                 )
-                
+
                 if self._error_count >= self.max_errors_before_fallback:
                     logger.warning(
                         f"[WARN] {self._current_listener_type} failed "
@@ -223,18 +252,20 @@ class FallbackListener(BaseTokenListener):
         """Run current listener and track errors."""
         if not self._current_listener:
             return
-        
+
         # Reset error count on successful connection
         connected = False
-        
+
         async def wrapped_callback(token_info: TokenInfo) -> None:
             nonlocal connected
             if not connected:
                 connected = True
                 self._error_count = 0  # Reset on first successful token
-                logger.info(f"[OK] {self._current_listener_type} connected and receiving data")
+                logger.info(
+                    f"[OK] {self._current_listener_type} connected and receiving data"
+                )
             await token_callback(token_info)
-        
+
         await self._current_listener.listen_for_tokens(
             wrapped_callback, match_string, creator_address
         )
