@@ -520,6 +520,10 @@ class UniversalTrader:
         2. PumpSwap (для мигрированных токенов)
         3. Jupiter (универсальный fallback)
         
+        RETRY LOGIC: Для свежих токенов (< 10 секунд) делаем до 3 попыток
+        с задержкой 2 секунды между ними, т.к. RPC может не успеть
+        проиндексировать bonding curve.
+        
         Whale copy trades bypass scoring and pattern checks.
         
         ANTI-DUPLICATE: Uses lock to prevent race condition when multiple
@@ -565,14 +569,39 @@ class UniversalTrader:
             if not balance_ok:
                 return
             
-            # Try to buy on ANY available DEX
-            logger.warning(f"[WHALE] UNIVERSAL BUY: Searching for liquidity for {mint_str[:8]}...")
+            # RETRY LOGIC: Для свежих токенов RPC может не успеть проиндексировать
+            # bonding curve. Делаем до 3 попыток с задержкой.
+            max_retries = 3
+            retry_delay = 2.0  # секунды между попытками
             
-            success, tx_sig, dex_used, token_amount, price = await self._buy_any_dex(
-                mint_str=mint_str,
-                symbol=whale_buy.token_symbol,
-                sol_amount=self.buy_amount,
-            )
+            success = False
+            tx_sig = None
+            dex_used = "none"
+            token_amount = 0.0
+            price = 0.0
+            last_error = ""
+            
+            for attempt in range(1, max_retries + 1):
+                logger.warning(
+                    f"[WHALE] UNIVERSAL BUY attempt {attempt}/{max_retries}: "
+                    f"Searching for liquidity for {mint_str[:8]}..."
+                )
+                
+                success, tx_sig, dex_used, token_amount, price = await self._buy_any_dex(
+                    mint_str=mint_str,
+                    symbol=whale_buy.token_symbol,
+                    sol_amount=self.buy_amount,
+                )
+                
+                if success:
+                    break
+                
+                # Если не последняя попытка - ждём и пробуем снова
+                if attempt < max_retries:
+                    logger.warning(
+                        f"[WHALE] Attempt {attempt} failed, waiting {retry_delay}s before retry..."
+                    )
+                    await asyncio.sleep(retry_delay)
             
             if success:
                 logger.warning(
