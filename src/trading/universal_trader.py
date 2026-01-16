@@ -429,6 +429,10 @@ class UniversalTrader:
         # This is checked INSIDE the lock to prevent duplicates
         self._buying_tokens: set[str] = set()  # Tokens currently being bought (in progress)
         self._bought_tokens: set[str] = set()  # Tokens successfully bought (completed)
+        
+        # CRITICAL BALANCE PROTECTION
+        # When balance <= 0.02 SOL, bot stops completely
+        self._critical_low_balance: bool = False
 
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
@@ -532,6 +536,13 @@ class UniversalTrader:
         ANTI-DUPLICATE: Uses unified _buy_lock and _buying_tokens/_bought_tokens
         to prevent ANY duplicate purchases across ALL buy paths.
         """
+        # ============================================
+        # CRITICAL BALANCE CHECK - STOP BOT
+        # ============================================
+        if self._critical_low_balance:
+            logger.warning("[WHALE] Bot stopped due to critical low balance, ignoring whale signal")
+            return
+        
         mint_str = whale_buy.token_mint
         
         # ============================================
@@ -1586,6 +1597,14 @@ class UniversalTrader:
     async def _process_token_queue(self) -> None:
         """Continuously process tokens from the queue, only if they're fresh."""
         while True:
+            # ============================================
+            # CRITICAL BALANCE CHECK - STOP BOT
+            # ============================================
+            if self._critical_low_balance:
+                logger.error("🛑 Bot stopped due to critical low balance (≤ 0.02 SOL)")
+                logger.error("🛑 Please top up your wallet and restart the bot.")
+                break
+            
             token_info = None
             try:
                 token_info = await self.token_queue.get()
@@ -1800,11 +1819,27 @@ class UniversalTrader:
         
         Returns:
             True if balance is sufficient, False if bot should stop buying.
+            
+        CRITICAL STOP: If balance <= 0.02 SOL, sets self._critical_low_balance = True
+        which signals the bot to stop completely (not just skip buys).
         """
         try:
             client = await self.solana_client.get_client()
             balance_resp = await client.get_balance(self.wallet.pubkey)
             balance_sol = balance_resp.value / 1_000_000_000  # LAMPORTS_PER_SOL
+            
+            # CRITICAL BALANCE CHECK: Stop bot completely if balance <= 0.02 SOL
+            # This applies to ALL platforms: PUMP, BONK, BAGS
+            CRITICAL_BALANCE_THRESHOLD = 0.02
+            if balance_sol <= CRITICAL_BALANCE_THRESHOLD:
+                logger.error("=" * 70)
+                logger.error(f"🛑 CRITICAL LOW BALANCE: {balance_sol:.4f} SOL <= {CRITICAL_BALANCE_THRESHOLD} SOL")
+                logger.error("🛑 BOT STOPPING - Not enough SOL for gas fees!")
+                logger.error("🛑 Please top up your wallet to continue trading.")
+                logger.error("=" * 70)
+                # Set flag to stop the bot completely
+                self._critical_low_balance = True
+                return False
             
             # Check if we have enough for buy + reserve for sells
             required = self.buy_amount + self.min_sol_balance
