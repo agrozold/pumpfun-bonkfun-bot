@@ -232,7 +232,7 @@ async def start_bot(config_path: str):
             enable_trending_scanner=cfg.get("trending_scanner", {}).get("enabled", False),
             trending_min_volume_1h=cfg.get("trending_scanner", {}).get("min_volume_1h", 50000),
             trending_min_market_cap=cfg.get("trending_scanner", {}).get("min_market_cap", 10000),
-            trending_max_market_cap=cfg.get("trending_scanner", {}).get("max_market_cap", 5000000),
+            trending_max_market_cap=cfg.get("trending_scanner", {}).get("max_market_cap", 0),  # 0 = без ограничений
             trending_min_price_change_5m=cfg.get("trending_scanner", {}).get("min_price_change_5m", 5),
             trending_min_price_change_1h=cfg.get("trending_scanner", {}).get("min_price_change_1h", 20),
             trending_min_buy_pressure=cfg.get("trending_scanner", {}).get("min_buy_pressure", 0.65),

@@ -160,7 +160,7 @@ class TrendingScanner:
         # Фильтры
         min_volume_1h: float = 50000,
         min_market_cap: float = 10000,
-        max_market_cap: float = 5000000,
+        max_market_cap: float = 0,  # 0 = БЕЗ ОГРАНИЧЕНИЙ по верхней планке!
         min_liquidity: float = 5000,
         max_token_age_hours: float = 24,
         # Триггеры
