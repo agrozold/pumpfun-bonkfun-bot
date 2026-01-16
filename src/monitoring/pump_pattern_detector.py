@@ -211,7 +211,7 @@ class PumpPatternDetector:
         cutoff = now - timedelta(minutes=5)
         metrics.whale_buys = [(t, w, a) for t, w, a in metrics.whale_buys if t > cutoff]
         
-        logger.info(f"🐋 Whale buy recorded: {metrics.symbol} - {amount_sol:.2f} SOL")
+        logger.info(f"[WHALE] Whale buy recorded: {metrics.symbol} - {amount_sol:.2f} SOL")
         
         await self._check_patterns(mint)
 
@@ -624,7 +624,7 @@ class PumpPatternDetector:
                 return
         
         metrics.patterns.append(signal)
-        logger.info(f"📊 [{signal.pattern_type}] {metrics.symbol}: {signal.description}")
+        logger.info(f"[PATTERN] [{signal.pattern_type}] {metrics.symbol}: {signal.description}")
 
     async def _evaluate_signal(self, mint: str):
         """Оценить нужно ли сигналить."""
@@ -638,7 +638,7 @@ class PumpPatternDetector:
             pattern_types = [p.pattern_type for p in metrics.patterns]
             
             logger.warning(
-                f"🚀 PUMP SIGNAL: {metrics.symbol} - {len(metrics.patterns)} patterns: "
+                f"[SIGNAL] PUMP SIGNAL: {metrics.symbol} - {len(metrics.patterns)} patterns: "
                 f"{pattern_types}, strength: {avg_strength:.2f}"
             )
             

@@ -48,7 +48,7 @@ class PlatformAwareBuyer(Trader):
         """Execute buy operation using platform-specific implementations."""
         try:
             # Get platform-specific implementations
-            logger.info(f"🔧 Getting platform implementations for {token_info.platform.value}...")
+            logger.info(f"[INIT] Getting platform implementations for {token_info.platform.value}...")
             implementations = get_platform_implementations(
                 token_info.platform, self.client
             )
@@ -58,13 +58,13 @@ class PlatformAwareBuyer(Trader):
 
             # Get pool address and verify it exists before proceeding
             pool_address = self._get_pool_address(token_info, address_provider)
-            logger.info(f"🔧 Pool address: {pool_address}")
+            logger.info(f"[INIT] Pool address: {pool_address}")
             
             # Quick check if pool account exists (prevents "Account not found" errors)
             try:
-                logger.info(f"🔧 Checking pool account exists...")
+                logger.info(f"[CHECK] Checking pool account exists...")
                 await self.client.get_account_info(pool_address)
-                logger.info(f"🔧 Pool account exists ✅")
+                logger.info(f"[CHECK] Pool account exists [OK]")
             except ValueError as e:
                 if "not found" in str(e).lower():
                     logger.warning(
@@ -133,7 +133,7 @@ class PlatformAwareBuyer(Trader):
 
             # Send transaction with preflight checks enabled for reliability
             try:
-                logger.info(f"🔧 Building and sending buy transaction for {token_info.symbol}...")
+                logger.info(f"[TX] Building and sending buy transaction for {token_info.symbol}...")
                 tx_signature = await self.client.build_and_send_transaction(
                     instructions,
                     self.wallet.keypair,
@@ -149,7 +149,7 @@ class PlatformAwareBuyer(Trader):
                         "account_data_size", token_info.platform
                     ),
                 )
-                logger.info(f"🔧 Transaction sent: {tx_signature}")
+                logger.info(f"[TX] Transaction sent: {tx_signature}")
             except ValueError as e:
                 # Insufficient funds - don't retry
                 logger.error(f"Buy failed - insufficient funds: {e}")
@@ -391,7 +391,7 @@ class PlatformAwareSeller(Trader):
                 if not token_info.bonding_curve or not token_info.creator_vault:
                     # Token may have migrated - try fallback methods
                     logger.warning(
-                        f"⚠️ {token_info.symbol}: missing bonding_curve or creator_vault - "
+                        f"[WARN] {token_info.symbol}: missing bonding_curve or creator_vault - "
                         "trying fallback sell methods (PumpSwap/Jupiter)"
                     )
                     return await self._fallback_sell(
@@ -529,7 +529,7 @@ class PlatformAwareSeller(Trader):
             )
             
             if success:
-                logger.info(f"✅ Fallback sell successful: {tx_signature}")
+                logger.info(f"[OK] Fallback sell successful: {tx_signature}")
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
@@ -538,7 +538,7 @@ class PlatformAwareSeller(Trader):
                     price=token_price,
                 )
             else:
-                logger.error(f"❌ All fallback sell methods failed: {error}")
+                logger.error(f"[FAIL] All fallback sell methods failed: {error}")
                 return TradeResult(
                     success=False,
                     platform=token_info.platform,

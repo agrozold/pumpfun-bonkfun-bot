@@ -156,7 +156,7 @@ class DevReputationChecker:
         elif pump_txs >= 8:
             # 8+ pump транзакций из 20 = подозрительно
             tokens_created = pump_txs * 10
-            logger.warning(f"⚠️ Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - suspicious")
+            logger.warning(f"[WARN] Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - suspicious")
         else:
             # Нормальный дев
             tokens_created = max(pump_txs // 2, pump_txs - 2) if pump_txs > 0 else 0

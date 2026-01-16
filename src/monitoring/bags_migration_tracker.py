@@ -201,7 +201,7 @@ class BagsMigrationTracker:
             if not is_migration:
                 return
             
-            logger.info(f"🔄 Potential migration detected: {signature}")
+            logger.info(f"[MIGRATE] Potential migration detected: {signature}")
             
             # Parse migration event from Program data logs
             for log in logs:
@@ -263,7 +263,7 @@ class BagsMigrationTracker:
                 base_mint_str = str(base_mint)
                 self.migrations[base_mint_str] = migration_info
                 
-                logger.info(f"✅ Migration recorded:")
+                logger.info(f"[OK] Migration recorded:")
                 logger.info(f"   Base mint: {base_mint}")
                 logger.info(f"   Old pool (DBC): {virtual_pool}")
                 logger.info(f"   New pool (DAMM v2): {new_pool}")

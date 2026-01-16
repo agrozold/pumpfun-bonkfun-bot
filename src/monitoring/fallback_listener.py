@@ -111,7 +111,7 @@ class FallbackListener(BaseTokenListener):
                 self._current_listener_type = listener_type
                 self._error_count = 0
                 logger.warning(
-                    f"🔄 Switched to {listener_type} listener "
+                    f"[SWITCH] Switched to {listener_type} listener "
                     f"(index {self._listener_index}/{len(self._listener_order)-1})"
                 )
                 return True
@@ -154,21 +154,21 @@ class FallbackListener(BaseTokenListener):
                 # ConnectionError from listener with raise_on_max_errors=True
                 # Switch immediately to next listener
                 logger.warning(
-                    f"⚠️ {self._current_listener_type} connection failed: {e}"
+                    f"[WARN] {self._current_listener_type} connection failed: {e}"
                 )
-                logger.warning(f"🔄 Switching to next listener...")
+                logger.warning(f"[SWITCH] Switching to next listener...")
                 self._current_listener = None
                 # No sleep - switch immediately
             except Exception as e:
                 self._error_count += 1
                 logger.error(
-                    f"❌ {self._current_listener_type} error ({self._error_count}/"
+                    f"[ERROR] {self._current_listener_type} error ({self._error_count}/"
                     f"{self.max_errors_before_fallback}): {e}"
                 )
                 
                 if self._error_count >= self.max_errors_before_fallback:
                     logger.warning(
-                        f"⚠️ {self._current_listener_type} failed "
+                        f"[WARN] {self._current_listener_type} failed "
                         f"{self.max_errors_before_fallback} times, switching..."
                     )
                     self._current_listener = None
@@ -194,7 +194,7 @@ class FallbackListener(BaseTokenListener):
             if not connected:
                 connected = True
                 self._error_count = 0  # Reset on first successful token
-                logger.info(f"✅ {self._current_listener_type} connected and receiving data")
+                logger.info(f"[OK] {self._current_listener_type} connected and receiving data")
             await token_callback(token_info)
         
         await self._current_listener.listen_for_tokens(
