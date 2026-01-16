@@ -102,6 +102,9 @@ class PumpPatternDetector:
         high_volume_sells_1h: int = 200,  # Min sells in 1 hour
         high_volume_alt_buys_1h: int = 100,  # Alternative: buys > 100
         high_volume_alt_max_sells_1h: int = 100,  # Alternative: sells <= 100
+        # EXTREME BUY PRESSURE 5min pattern (твой паттерн!)
+        extreme_buy_pressure_min_buys_5m: int = 500,  # >= 500 buys in 5min
+        extreme_buy_pressure_max_sells_5m: int = 200,  # <= 200 sells in 5min
         # Signal settings
         min_patterns_to_signal: int = 1,
         update_interval: float = 5.0,  # seconds between updates
@@ -135,6 +138,10 @@ class PumpPatternDetector:
         self.high_volume_sells_1h = high_volume_sells_1h
         self.high_volume_alt_buys_1h = high_volume_alt_buys_1h
         self.high_volume_alt_max_sells_1h = high_volume_alt_max_sells_1h
+        
+        # EXTREME BUY PRESSURE 5min thresholds
+        self.extreme_buy_pressure_min_buys_5m = extreme_buy_pressure_min_buys_5m
+        self.extreme_buy_pressure_max_sells_5m = extreme_buy_pressure_max_sells_5m
 
         self.tokens: dict[str, TokenMetrics] = {}
         self.on_pump_signal: Callable | None = None
@@ -459,6 +466,9 @@ class PumpPatternDetector:
         # 6. High Volume Sideways
         await self._check_high_volume_sideways(mint, metrics)
         
+        # 7. EXTREME BUY PRESSURE 5min (>= 500 buys, <= 200 sells)
+        await self._check_extreme_buy_pressure_5m(mint, metrics)
+        
         # Evaluate signal
         await self._evaluate_signal(mint)
 
@@ -572,6 +582,34 @@ class PumpPatternDetector:
                 strength=strength,
                 description=desc,
             ))
+
+    async def _check_extreme_buy_pressure_5m(self, mint: str, metrics: TokenMetrics):
+        """Проверить EXTREME BUY PRESSURE за 5 минут.
+        
+        Условия срабатывания:
+        - Покупок (buys_5m) >= 500
+        - Продаж (sells_5m) <= 200
+        
+        Это сильный сигнал на покупку - много покупателей, мало продавцов.
+        """
+        buys = metrics.buys_5m
+        sells = metrics.sells_5m
+        
+        if buys >= self.extreme_buy_pressure_min_buys_5m and sells <= self.extreme_buy_pressure_max_sells_5m:
+            # Strong signal - high strength
+            strength = min(buys / 1000, 1.0)  # Max strength at 1000 buys
+            
+            await self._add_pattern(mint, PatternSignal(
+                pattern_type="EXTREME_BUY_PRESSURE_5M",
+                strength=strength,
+                description=f"[PUMP] {buys} buys, {sells} sells in 5min - STRONG BUY SIGNAL!",
+            ))
+            
+            logger.warning(
+                f"[EXTREME_BUY_PRESSURE] {metrics.symbol}: "
+                f"{buys} buys >= {self.extreme_buy_pressure_min_buys_5m}, "
+                f"{sells} sells <= {self.extreme_buy_pressure_max_sells_5m} - TRIGGER BUY!"
+            )
 
     async def _add_pattern(self, mint: str, signal: PatternSignal):
         """Добавить паттерн."""
