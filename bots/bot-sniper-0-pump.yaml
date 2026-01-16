@@ -32,12 +32,12 @@ trade:
   take_profit_percentage: 1.0
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
 
-# Pattern Detection - Агрессивный режим для раннего входа
+# Pattern Detection - Ужесточённые фильтры
 pattern_detection:
   enabled: true
-  buy_pressure_threshold: 0.55     # 55% покупок (было 70%)
-  trade_velocity_threshold: 25     # 25 сделок за 5 мин (было 20)
-  price_momentum_threshold: 0.02   # 2% рост (было 10%)
+  buy_pressure_threshold: 0.70     # 70% покупок
+  trade_velocity_threshold: 200    # 200 сделок за 5 мин
+  price_momentum_threshold: 0.05   # 5% рост
   volume_spike_threshold: 2.0      # 2x объём (было 3x)
   min_whale_buys: 1                # 1 whale покупка (было 2)
   min_patterns_to_buy: 1           # 1 паттерн достаточно! (было 2)
@@ -55,7 +55,7 @@ pattern_detection:
 # Token Scoring - filter tokens by Dexscreener metrics
 scoring:
   enabled: true
-  min_score: 40
+  min_score: 50
 
 # Whale Copy Trading - copy trades from smart money wallets
 whale_copy:

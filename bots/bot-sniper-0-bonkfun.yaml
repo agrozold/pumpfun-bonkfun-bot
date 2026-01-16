@@ -43,9 +43,12 @@ cleanup:
 node:
   max_rps: 50
 
-# Pattern Detection - ТОЛЬКО покупать при сильных сигналах
+# Pattern Detection - Ужесточённые фильтры
 pattern_detection:
   enabled: true
+  buy_pressure_threshold: 0.70     # 70% покупок
+  trade_velocity_threshold: 200    # 200 сделок за 5 мин
+  price_momentum_threshold: 0.05   # 5% рост
   volume_spike_threshold: 3.0      # 3x от среднего объёма
   holder_growth_threshold: 0.5     # 50% рост холдеров
   min_whale_buys: 2                # 2+ whale покупки
@@ -56,7 +59,7 @@ pattern_detection:
 # Token Scoring
 scoring:
   enabled: true
-  min_score: 40
+  min_score: 50
 
 # Whale Copy Trading - ENABLED for letsbonk (multi-platform support added)
 whale_copy:
