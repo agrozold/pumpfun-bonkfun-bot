@@ -409,30 +409,34 @@ class WhaleTracker:
         # ВАЖНО: Даём транзакции время подтвердиться
         # logsSubscribe даёт нам TX сразу (commitment: processed)
         # но getTransaction может их ещё не видеть
-        await asyncio.sleep(2.0)  # 2 секунды задержки (увеличено с 1с)
+        await asyncio.sleep(2.0)  # 2 секунды задержки
         
-          # Используем стандартный RPC вместо Helius для экономии запросов
-        if self.rpc_endpoint:
-            tx = await self._get_tx_rpc(signature)
+        # ПРИОРИТЕТ 1: Публичный Solana RPC (бесплатный, без rate limit)
+        public_rpc = "https://api.mainnet-beta.solana.com"
+        tx = await self._get_tx_from_endpoint(signature, public_rpc)
+        if tx:
+            logger.info(f"[WHALE] Got TX from public RPC for {signature[:16]}...")
+            await self._process_rpc_tx(tx, signature, platform)
+            return
+        
+        # ПРИОРИТЕТ 2: Helius RPC (если публичный не сработал)
+        if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
+            tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint)
             if tx:
-                logger.info(f"[WHALE] Got TX data from RPC for {signature[:16]}...")
-                logger.warning(f"[WHALE] ACCOUNT KEYS: {[str(a)[:16] for a in tx.get('transaction', {}).get('message', {}).get('accountKeys', [])[:5]]}")
+                logger.info(f"[WHALE] Got TX from Helius RPC for {signature[:16]}...")
                 await self._process_rpc_tx(tx, signature, platform)
                 return
-            else:
-                logger.info(f"[WHALE] RPC returned no data for {signature[:16]}...")
-
         
-        # Fallback на Helius только если RPC не сработал
+        # ПРИОРИТЕТ 3: Helius Enhanced API (последний fallback)
         if self.helius_api_key:
-            logger.info(f"[WHALE] Trying Helius for {signature[:16]}...")
+            logger.info(f"[WHALE] Trying Helius Enhanced API for {signature[:16]}...")
             tx = await self._get_tx_helius(signature)
             if tx:
-                logger.info(f"[WHALE] Got TX data from Helius for {signature[:16]}...")
+                logger.info(f"[WHALE] Got TX from Helius Enhanced for {signature[:16]}...")
                 await self._process_helius_tx(tx, platform)
                 return
-            else:
-                logger.info(f"[WHALE] Helius returned no data for {signature[:16]}...")
+        
+        logger.warning(f"[WHALE] All RPC methods failed for {signature[:16]}...")
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""
@@ -451,15 +455,16 @@ class WhaleTracker:
             logger.debug(f"Helius error: {e}")
         return None
 
-    async def _get_tx_rpc(self, signature: str) -> dict | None:
-        """Получить транзакцию через RPC."""
-        logger.warning(f"[WHALE] [DEBUG] _get_tx_rpc() called - sig={signature[:16]}...")
-        logger.warning(f"[WHALE] [DEBUG] RPC endpoint: {self.rpc_endpoint[:50] if self.rpc_endpoint else 'NONE'}")
+    async def _get_tx_from_endpoint(self, signature: str, endpoint: str) -> dict | None:
+        """Получить транзакцию через указанный RPC endpoint.
         
-        if not self.rpc_endpoint:
-            logger.error("[WHALE] [ERROR] RPC endpoint is None!")
-            return None
-        
+        Args:
+            signature: Сигнатура транзакции
+            endpoint: URL RPC endpoint
+            
+        Returns:
+            Данные транзакции или None
+        """
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -469,44 +474,35 @@ class WhaleTracker:
         
         try:
             async with self._session.post(
-                self.rpc_endpoint, json=payload,
-                timeout=aiohttp.ClientTimeout(total=10)
+                endpoint, json=payload,
+                timeout=aiohttp.ClientTimeout(total=10),
+                headers={"Content-Type": "application/json"}
             ) as resp:
-                logger.warning(f"[WHALE] [DEBUG] RPC response status: {resp.status}")
-                
-                response_text = await resp.text()
-                logger.warning(f"[WHALE] [DEBUG] RPC response (first 300 chars): {response_text[:300]}")
-                
                 if resp.status == 200:
-                    try:
-                        data = json.loads(response_text)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"[WHALE] [ERROR] JSON parse failed: {e}")
-                        return None
-                    
+                    data = await resp.json()
                     result = data.get("result")
-                    error = data.get("error")
-                    
-                    if error:
-                        logger.error(f"[WHALE] [ERROR] RPC error: {error}")
-                        return None
-                    
-                    if result is None:
-                        logger.warning(f"[WHALE] [WARNING] RPC returned null result (TX may not be finalized)")
-                        return None
-                    
-                    logger.warning(f"[WHALE] [SUCCESS] Got TX data: {len(str(result))} bytes")
-                    return result
-                else:
-                    logger.warning(f"[WHALE] [ERROR] RPC HTTP error {resp.status}")
+                    if result:
+                        return result
+                    # result is None - TX not found yet
                     return None
-                    
+                elif resp.status == 429:
+                    logger.debug(f"[WHALE] Rate limited by {endpoint[:30]}...")
+                    return None
+                else:
+                    logger.debug(f"[WHALE] HTTP {resp.status} from {endpoint[:30]}...")
+                    return None
         except asyncio.TimeoutError:
-            logger.error(f"[WHALE] [ERROR] RPC timeout after 10s")
+            logger.debug(f"[WHALE] Timeout from {endpoint[:30]}...")
             return None
         except Exception as e:
-            logger.exception(f"[WHALE] [ERROR] RPC request failed: {e}")
-        return None
+            logger.debug(f"[WHALE] Error from {endpoint[:30]}: {e}")
+            return None
+
+    async def _get_tx_rpc(self, signature: str) -> dict | None:
+        """Получить транзакцию через RPC (legacy, использует self.rpc_endpoint)."""
+        if not self.rpc_endpoint:
+            return None
+        return await self._get_tx_from_endpoint(signature, self.rpc_endpoint)
 
     async def _process_helius_tx(self, tx: dict, platform: str = "pump_fun"):
         """Обработать транзакцию от Helius.
