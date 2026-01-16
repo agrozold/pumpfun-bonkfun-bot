@@ -21,9 +21,9 @@ filters:
   max_token_age: 315360000  # 10 лет в секундах
   yolo_mode: true
 
-# RPC - HELIUS PRIMARY!
+# RPC - HELIUS для HTTP, публичный Solana для WSS
 rpc_endpoint: https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
-wss_endpoint: wss://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
+wss_endpoint: wss://api.mainnet-beta.solana.com
 private_key: ${SOLANA_PRIVATE_KEY}
 
 # Priority fees

@@ -7,10 +7,10 @@ platform: "pump_fun"  # Основная платформа, но анализи
 enabled: true
 separate_process: true
 
-# Environment - HELIUS PRIMARY!
+# Environment - HELIUS для HTTP, публичный Solana для WSS
 env_file: ".env"
 rpc_endpoint: "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY"
-wss_endpoint: "wss://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY"
+wss_endpoint: "wss://api.mainnet-beta.solana.com"
 private_key: "${SOLANA_PRIVATE_KEY}"
 
 # Strategy: volume_pattern (новая стратегия!)

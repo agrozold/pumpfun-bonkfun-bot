@@ -103,12 +103,9 @@ class RPCManager:
     HTTP_OK = 200
     HTTP_RATE_LIMITED = 429
 
-    # HARDCODED HELIUS RPC - правильный ключ!
+    # HARDCODED HELIUS RPC - правильный ключ! (только HTTP, НЕТ WSS у Helius!)
     HELIUS_RPC = (
         "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY"
-    )
-    HELIUS_WSS = (
-        "wss://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY"
     )
     HELIUS_ENHANCED = "https://api-mainnet.helius-rpc.com/v0/transactions/?api-key=YOUR_HELIUS_API_KEY"
 
@@ -153,14 +150,14 @@ class RPCManager:
         )
 
         # =================================================================
-        # HELIUS = PRIMARY (hardcoded correct key!)
+        # HELIUS = PRIMARY (hardcoded correct key!) - ТОЛЬКО HTTP!
         # 1M credits/month = 33k/day = 1388/hour = 23/min
         # With 6 bots: ~4 req/min per bot for standard RPC
         # =================================================================
         self.providers["helius"] = ProviderConfig(
             name="Helius",
             http_endpoint=self.HELIUS_RPC,
-            wss_endpoint=self.HELIUS_WSS,
+            wss_endpoint=None,  # Helius НЕ имеет WSS!
             rate_limit_per_second=0.5,  # 30 req/min total
             priority=0,  # HIGHEST priority
             is_primary=True,
@@ -173,6 +170,7 @@ class RPCManager:
         self.providers["helius_enhanced"] = ProviderConfig(
             name="Helius Enhanced",
             http_endpoint=self.HELIUS_ENHANCED,
+            wss_endpoint=None,  # Helius НЕ имеет WSS!
             rate_limit_per_second=0.1,  # 6 req/min - conservative for 50 credit cost
             priority=0,
             is_primary=True,
