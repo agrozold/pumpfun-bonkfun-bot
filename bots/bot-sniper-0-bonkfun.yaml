@@ -1,5 +1,6 @@
-# LETSBONK.FUN Sniper Bot
-# Bonk токены редкие (~2-3% от pump.fun)
+# LETSBONK.FUN Sniper Bot - ЖЁСТКИЕ ФИЛЬТРЫ
+# Покупаем ТОЛЬКО токены с сильными паттернами и высоким скором
+# НЕ СМЯГЧАТЬ ЭТИ НАСТРОЙКИ!
 
 enabled: true
 env_file: .env
@@ -12,7 +13,7 @@ filters:
   bro_address: null
   listener_type: fallback
   match_string: null
-  max_token_age: 60  # Токены >= 1 минуты
+  max_token_age: 60
   yolo_mode: true
 
 # RPC
@@ -44,64 +45,71 @@ trade:
   take_profit_percentage: 1.0
 
 # ============================================
-# PATTERN DETECTION
+# PATTERN DETECTION - МАКСИМАЛЬНО ЖЁСТКИЕ ФИЛЬТРЫ
+# НЕ СМЯГЧАТЬ! Покупаем только при СИЛЬНЫХ сигналах!
 # ============================================
 pattern_detection:
   enabled: true
   pattern_only_mode: true
   
-  min_patterns_to_buy: 1
-  min_signal_strength: 0.7
-  min_whale_buys: 1
+  # ЖЁСТКИЕ ТРЕБОВАНИЯ
+  min_patterns_to_buy: 2           # Минимум 2 паттерна ОБЯЗАТЕЛЬНО
+  min_signal_strength: 0.8         # 80% сила сигнала
+  min_whale_buys: 2                # 2 whale покупки
   
-  buy_pressure_threshold: 0.75
-  trade_velocity_threshold: 300
-  price_momentum_threshold: 0.05
-  volume_spike_threshold: 3.0
+  # Пороги паттернов - ЖЁСТКИЕ
+  buy_pressure_threshold: 0.80     # 80% покупок
+  trade_velocity_threshold: 500    # 500 сделок за 5 мин
+  price_momentum_threshold: 0.15   # 15% рост
+  volume_spike_threshold: 4.0      # 4x объём
   
-  # High Volume Sideways
-  high_volume_buys_1h: 400
-  high_volume_sells_1h: 200
-  high_volume_alt_buys_1h: 100
+  # High Volume Sideways - ЖЁСТКИЕ
+  high_volume_buys_1h: 600
+  high_volume_sells_1h: 350
+  high_volume_alt_buys_1h: 250
   high_volume_alt_max_sells_1h: 100
   
-  # EXTREME BUY PRESSURE 5min
-  extreme_buy_pressure_min_buys_5m: 700
-  extreme_buy_pressure_max_sells_5m: 200
+  # EXTREME BUY PRESSURE 5min - ЖЁСТКИЕ
+  extreme_buy_pressure_min_buys_5m: 1000
+  extreme_buy_pressure_max_sells_5m: 100
 
 # ============================================
-# TOKEN SCORING
+# TOKEN SCORING - ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА
 # ============================================
 scoring:
   enabled: true
-  min_score: 60
+  min_score: 75
+  volume_weight: 30
+  buy_pressure_weight: 35
+  momentum_weight: 20
+  liquidity_weight: 15
 
 # ============================================
-# WHALE COPY
+# WHALE COPY - ЖЁСТКИЕ ФИЛЬТРЫ
 # ============================================
 whale_copy:
   enabled: true
   wallets_file: "smart_money_wallets.json"
-  min_buy_amount: 0.3
+  min_buy_amount: 1.0
   helius_api_key: ${HELIUS_API_KEY}
 
 # ============================================
-# DEV CHECK
+# DEV CHECK - ЖЁСТКИЕ ФИЛЬТРЫ
 # ============================================
 dev_check:
   enabled: true
-  max_tokens_created: 50
-  min_account_age_days: 1
+  max_tokens_created: 10
+  min_account_age_days: 3
 
 # ============================================
-# TRENDING SCANNER
+# TRENDING SCANNER - ЖЁСТКИЕ ФИЛЬТРЫ
 # ============================================
 trending_scanner:
   enabled: true
-  min_volume_1h: 30000
-  min_market_cap: 5000
+  min_volume_1h: 100000
+  min_market_cap: 25000
   max_market_cap: 0
-  min_price_change_5m: 10
-  min_price_change_1h: 30
-  min_buy_pressure: 0.75
+  min_price_change_5m: 20
+  min_price_change_1h: 50
+  min_buy_pressure: 0.85
   scan_interval: 30
