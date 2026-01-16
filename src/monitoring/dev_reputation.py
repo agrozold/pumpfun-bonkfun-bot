@@ -7,10 +7,15 @@
 
 NOTE: This check is OPTIONAL. If Helius API is unavailable or rate limited,
 the check is skipped and trading continues (better to trade than miss gems).
+
+BUDGET: With 4 bots sharing 1M credits/14 days:
+- Each bot gets ~2 req/min for dev checks = 120/hr = 2,880/day
+- Rate limit: 30 seconds between requests per bot
 """
 
 import asyncio
 import os
+import time
 from datetime import datetime, timezone
 
 import aiohttp
@@ -21,6 +26,10 @@ logger = get_logger(__name__)
 
 # Pump.fun program ID
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+
+# Rate limiting for multi-bot setup (4 bots sharing quota)
+# Each bot: 2 req/min = 120/hr = 2,880/day
+DEV_CHECK_RATE_LIMIT_SECONDS = 30.0
 
 
 class DevReputationChecker:
@@ -46,6 +55,8 @@ class DevReputationChecker:
         self.min_account_age_days = min_account_age_days
         self.enabled = enabled
         self._cache: dict[str, dict] = {}  # Кэш результатов
+        self._last_api_call = 0.0  # Rate limiting
+        self._api_calls = 0  # Counter for stats
 
         if not self.api_key:
             logger.warning("HELIUS_API_KEY not set, dev reputation check disabled")
@@ -103,6 +114,17 @@ class DevReputationChecker:
                 "tokens_created": -1,
                 "risk_score": 50,
             }
+
+        # Rate limiting - wait if needed (30s between requests)
+        now = time.time()
+        time_since_last = now - self._last_api_call
+        if time_since_last < DEV_CHECK_RATE_LIMIT_SECONDS:
+            wait_time = DEV_CHECK_RATE_LIMIT_SECONDS - time_since_last
+            logger.debug(f"Dev check rate limit - waiting {wait_time:.1f}s")
+            await asyncio.sleep(wait_time)
+        
+        self._last_api_call = time.time()
+        self._api_calls += 1
 
         url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
         # Уменьшаем лимит до 10 для экономии запросов (было 20)
