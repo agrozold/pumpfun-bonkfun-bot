@@ -109,7 +109,7 @@ class PlatformRegistry:
         address_provider = impl_classes["address_provider"]()
 
         # For platforms with IDL support, pass the parser to relevant classes
-        if idl_parser and platform in [Platform.LETS_BONK, Platform.PUMP_FUN]:
+        if idl_parser and platform in [Platform.LETS_BONK, Platform.PUMP_FUN, Platform.BAGS]:
             instruction_builder = impl_classes["instruction_builder"](
                 idl_parser=idl_parser
             )
@@ -233,6 +233,26 @@ class PlatformFactory:
 
         except ImportError as e:
             print(f"Warning: Could not register LetsBonk platform: {e}")
+
+        # Import and register BAGS platform
+        try:
+            from platforms.bags import (
+                BagsAddressProvider,
+                BagsCurveManager,
+                BagsEventParser,
+                BagsInstructionBuilder,
+            )
+
+            self.registry.register_platform(
+                Platform.BAGS,
+                BagsAddressProvider,
+                BagsInstructionBuilder,
+                BagsCurveManager,
+                BagsEventParser,
+            )
+
+        except ImportError as e:
+            print(f"Warning: Could not register BAGS platform: {e}")
 
     def create_for_platform(
         self, platform: Platform, client: SolanaClient, **config: Any

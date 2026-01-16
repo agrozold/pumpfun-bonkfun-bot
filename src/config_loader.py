@@ -76,13 +76,14 @@ VALID_VALUES = {
     "filters.listener_type": ["logs", "blocks", "geyser", "pumpportal", "fallback"],
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual"],
-    "platform": ["pump_fun", "lets_bonk"],
+    "platform": ["pump_fun", "lets_bonk", "bags"],
 }
 
 # Platform-specific listener compatibility
 PLATFORM_LISTENER_COMPATIBILITY = {
     Platform.PUMP_FUN: ["logs", "blocks", "geyser", "pumpportal", "fallback"],
     Platform.LETS_BONK: ["blocks", "geyser", "pumpportal", "fallback"],
+    Platform.BAGS: ["blocks", "geyser", "pumpportal", "fallback"],
 }
 
 
@@ -239,6 +240,11 @@ def validate_platform_config(config: dict, platform: Platform) -> None:
         # For now, it uses the same base configuration as pump.fun
         pass
 
+    elif platform == Platform.BAGS:
+        # BAGS platform uses same base configuration
+        # BAGS tokens are identified by mint address ending with "bags"
+        pass
+
 
 def get_platform_from_config(config: dict) -> Platform:
     """Extract platform enum from configuration."""
@@ -292,6 +298,8 @@ def get_platform_specific_required_config(platform: Platform) -> list[str]:
         return []  # No additional requirements
     elif platform == Platform.LETS_BONK:
         return []  # No additional requirements yet
+    elif platform == Platform.BAGS:
+        return []  # No additional requirements - uses same config as pump.fun
     else:
         return []
 

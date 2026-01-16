@@ -34,6 +34,7 @@ class IDLManager:
         self._idl_paths = {
             Platform.LETS_BONK: project_root / "idl" / "raydium_launchlab_idl.json",
             Platform.PUMP_FUN: project_root / "idl" / "pump_fun_idl.json",
+            Platform.BAGS: project_root / "idl" / "bags.json",
         }
 
     def get_parser(self, platform: Platform, verbose: bool = False) -> IDLParser:
