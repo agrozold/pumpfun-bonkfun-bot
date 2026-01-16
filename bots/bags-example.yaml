@@ -16,7 +16,7 @@ private_key: ${SOLANA_PRIVATE_KEY}
 # Listener configuration
 filters:
   listener_type: fallback
-  max_token_age: 60
+  max_token_age: 315360000  # 10 лет в секундах
   yolo_mode: true
   match_string: null
   bro_address: null
