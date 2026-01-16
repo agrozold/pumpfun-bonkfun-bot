@@ -37,15 +37,23 @@ class BagsPumpPortalProcessor:
 
         Returns:
             True if this processor can handle the token data
+            
+        Note:
+            PumpPortal does NOT currently support bags.fm tokens directly.
+            bags.fm tokens should be detected via logsSubscribe on Meteora DBC program.
+            This processor is kept for potential future PumpPortal support.
         """
-        # Check mint suffix first (more reliable than pool field)
+        # Check pool field from PumpPortal
+        pool = token_data.get("pool", "").lower()
+        if pool in self.supported_pool_names:
+            return True
+        
+        # Check mint suffix as fallback (some bags tokens end with "bags")
         mint = token_data.get("mint", "").lower()
         if mint.endswith("bags"):
             return True
         
-        # Fallback to pool field
-        pool = token_data.get("pool", "").lower()
-        return pool in self.supported_pool_names
+        return False
 
     def process_token_data(self, token_data: dict) -> TokenInfo | None:
         """Process BAGS token data from PumpPortal.

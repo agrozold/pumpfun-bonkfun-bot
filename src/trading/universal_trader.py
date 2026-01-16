@@ -2048,7 +2048,31 @@ class UniversalTrader:
         self._save_position(position)
 
         # Monitor position until exit condition is met
-        await self._monitor_position_until_exit(token_info, position)
+        # CRITICAL: Wrap in try-except to prevent silent failures!
+        try:
+            await self._monitor_position_until_exit(token_info, position)
+        except Exception as e:
+            logger.exception(
+                f"[CRITICAL] Position monitor CRASHED for {token_info.symbol}! "
+                f"Error: {e}. Attempting emergency sell..."
+            )
+            # Try emergency sell on crash
+            try:
+                fallback_success = await self._emergency_fallback_sell(
+                    token_info, position, position.entry_price
+                )
+                if fallback_success:
+                    logger.warning(f"[RECOVERY] Emergency sell after crash SUCCESS for {token_info.symbol}")
+                else:
+                    logger.error(
+                        f"[CRITICAL] Emergency sell after crash FAILED for {token_info.symbol}! "
+                        f"MANUAL INTERVENTION REQUIRED! Mint: {token_info.mint}"
+                    )
+            except Exception as e2:
+                logger.exception(
+                    f"[CRITICAL] Emergency sell also crashed: {e2}. "
+                    f"MANUAL SELL REQUIRED for {token_info.symbol}! Mint: {token_info.mint}"
+                )
 
     async def _handle_time_based_exit(
         self, token_info: TokenInfo, buy_result: TradeResult
@@ -2139,11 +2163,26 @@ class UniversalTrader:
         
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
+        
+        # CRITICAL: Track total monitor iterations to detect stuck loops
+        max_iterations = 86400  # Max 24 hours of 1-second checks
+        total_iterations = 0
         MAX_SELL_RETRIES = 5
         pending_stop_loss = False  # Флаг что нужно продать по SL
 
         while position.is_active:
+            total_iterations += 1
             check_count += 1
+            
+            # Safety check: prevent infinite loops
+            if total_iterations > max_iterations:
+                logger.error(
+                    f"[CRITICAL] Monitor exceeded {max_iterations} iterations for {token_info.symbol}! "
+                    f"Forcing emergency sell..."
+                )
+                await self._emergency_fallback_sell(token_info, position, last_known_price)
+                break
+            
             try:
                 # Get current price from pool/curve (works for all platforms)
                 current_price = await curve_manager.calculate_price(pool_address)
