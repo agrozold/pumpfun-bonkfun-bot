@@ -431,55 +431,60 @@ class WhaleTracker:
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
         
-        Использует Helius Enhanced API (парсит TX автоматически).
-        Rate limit: 1 запрос в 15 секунд (~5760/день).
+        Использует Alchemy RPC (ALCHEMY_RPC_ENDPOINT) для getTransaction.
+        Helius используется только как fallback.
         
         Args:
             signature: Сигнатура транзакции
             platform: Платформа ("pump_fun" или "lets_bonk")
         """
-        if signature in self._processed_txs:
-            return
+        import os
         
+        # Mark as processed to avoid duplicates
         self._processed_txs.add(signature)
         if len(self._processed_txs) > 1000:
+            # Keep only last 500
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        # STRICT RATE LIMIT: 1 request per 15 seconds
+        # Check cache first
+        if signature in self._tx_cache:
+            cached, ts = self._tx_cache[signature]
+            if time.time() - ts < self._cache_ttl:
+                self._metrics["cache_hits"] += 1
+                if cached:
+                    await self._process_rpc_tx(cached, signature, platform)
+                return
+        
+        # Rate limit check - 1 request per 2 seconds to conserve quota
         now = time.time()
-        time_since_last = now - self._last_helius_call
-        
-        if time_since_last < self._helius_rate_limit:
+        if now - self._last_helius_call < 2.0:
+            logger.debug(f"[WHALE] Rate limited, skipping TX {signature[:16]}...")
             return
-        
-        # Wait for TX confirmation
-        await asyncio.sleep(2.0)
-        
-        # Double-check rate limit after sleep
-        now = time.time()
-        if now - self._last_helius_call < self._helius_rate_limit:
-            return
-        
         self._last_helius_call = now
-        self._metrics["helius_calls"] += 1
-        self._metrics["requests_today"] += 1
         
-        logger.info(f"[WHALE] Checking TX {signature[:16]}... (req #{self._metrics['requests_today']})")
+        # Try Alchemy RPC first (high limits, fast)
+        alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
+        tx = None
         
-        # Use Helius Enhanced API (парсит TX автоматически!)
-        tx = await self._get_tx_helius(signature)
+        if alchemy_endpoint:
+            tx = await self._get_tx_from_endpoint(signature, alchemy_endpoint, timeout=5.0)
+            if tx:
+                logger.debug(f"[WHALE] Got TX from Alchemy")
+                self._cache_tx(signature, tx)
+                await self._process_rpc_tx(tx, signature, platform)
+                return
         
+        # Fallback to public Ankr RPC (free, no rate limit)
+        ankr_endpoint = "https://rpc.ankr.com/solana"
+        tx = await self._get_tx_from_endpoint(signature, ankr_endpoint, timeout=5.0)
         if tx:
-            self._metrics["helius_success"] += 1
-            logger.info(f"[WHALE] Got parsed TX {signature[:16]}...")
-            await self._process_helius_tx(tx, platform)
-        else:
-            logger.debug(f"[WHALE] TX {signature[:16]}... not found")
-        return
+            logger.debug(f"[WHALE] Got TX from Ankr")
+            self._cache_tx(signature, tx)
+            await self._process_rpc_tx(tx, signature, platform)
+            return
         
-        # Cache check moved inside retry loop above
-        # This code path is no longer used
-        return
+        # TX not found yet (normal for fresh TXs)
+        logger.debug(f"[WHALE] TX {signature[:16]}... not found yet")
 
     def _cache_tx(self, signature: str, tx: dict):
         """Cache TX result with LRU eviction."""

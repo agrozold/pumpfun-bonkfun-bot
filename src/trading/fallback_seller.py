@@ -77,7 +77,13 @@ class FallbackSeller:
         self._alt_client = None
     
     async def _get_rpc_client(self):
-        """Get RPC client, preferring alternative endpoint if available."""
+        """Get RPC client, preferring alternative endpoint if available.
+        
+        Priority:
+        1. ALCHEMY_RPC_ENDPOINT (if set) - fast, high limits
+        2. Public Ankr RPC - free, no rate limit, slower
+        3. Main client (Helius) - last resort, may be rate limited
+        """
         import os
         
         # Try alternative RPC first (Alchemy) to avoid rate limits on main RPC
@@ -86,10 +92,17 @@ class FallbackSeller:
             if self._alt_client is None:
                 from solana.rpc.async_api import AsyncClient
                 self._alt_client = AsyncClient(alt_endpoint)
+                logger.info(f"[FALLBACK] Using Alchemy RPC: {alt_endpoint[:40]}...")
             return self._alt_client
         
-        # Fallback to main client
-        return await self.client.get_client()
+        # Fallback to public Ankr RPC (free, no rate limit)
+        # This avoids consuming Helius quota for PumpSwap operations
+        public_rpc = "https://rpc.ankr.com/solana"
+        if self._alt_client is None:
+            from solana.rpc.async_api import AsyncClient
+            self._alt_client = AsyncClient(public_rpc)
+            logger.info(f"[FALLBACK] Using public Ankr RPC (no ALCHEMY_RPC_ENDPOINT set)")
+        return self._alt_client
 
     async def buy_via_pumpswap(
         self,
@@ -214,10 +227,11 @@ class FallbackSeller:
             import asyncio
             for balance_retry in range(3):
                 try:
-                    # Single batch call for both accounts
-                    accounts = await self.client.get_multiple_accounts([pool_base_ata, pool_quote_ata])
+                    # Single batch call for both accounts - use rpc_client (alt RPC) not self.client!
+                    response = await rpc_client.get_multiple_accounts([pool_base_ata, pool_quote_ata], encoding="base64")
+                    accounts = response.value if response.value else []
                     
-                    if not accounts[0] or not accounts[1]:
+                    if len(accounts) < 2 or not accounts[0] or not accounts[1]:
                         raise ValueError("Pool vault accounts not found")
                     
                     # Parse token account data (offset 64 for amount in SPL token account)
@@ -689,10 +703,11 @@ class FallbackSeller:
             pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
             pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
             
-            # Get pool balances - use batch call to save RPC requests
-            accounts = await self.client.get_multiple_accounts([pool_base_ata, pool_quote_ata])
+            # Get pool balances - use batch call to save RPC requests (use rpc_client not self.client!)
+            response = await rpc_client.get_multiple_accounts([pool_base_ata, pool_quote_ata], encoding="base64")
+            accounts = response.value if response.value else []
             
-            if not accounts[0] or not accounts[1]:
+            if len(accounts) < 2 or not accounts[0] or not accounts[1]:
                 return False, None, "Pool vault accounts not found"
             
             # Parse token account data
