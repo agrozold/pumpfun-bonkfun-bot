@@ -20,6 +20,7 @@ class ListenerFactory:
         geyser_api_token: str | None = None,
         geyser_auth_type: str = "x-token",
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
+        pumpportal_api_key: str | None = None,
         platforms: list[Platform] | None = None,
     ) -> BaseTokenListener:
         """Create a token listener based on the specified type.
@@ -115,6 +116,7 @@ class ListenerFactory:
             listener = UniversalPumpPortalListener(
                 pumpportal_url=pumpportal_url,
                 platforms=platforms,
+                api_key=pumpportal_api_key,
             )
             logger.info(
                 f"Created Universal PumpPortal listener for platforms: {[p.value for p in (platforms or supported_pumpportal_platforms)]}"

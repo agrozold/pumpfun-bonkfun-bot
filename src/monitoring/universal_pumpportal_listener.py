@@ -22,15 +22,22 @@ class UniversalPumpPortalListener(BaseTokenListener):
         self,
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         platforms: list[Platform] | None = None,
+        api_key: str | None = None,
     ):
         """Initialize universal PumpPortal listener.
 
         Args:
             pumpportal_url: PumpPortal WebSocket URL
             platforms: List of platforms to monitor (if None, monitor all supported platforms)
+            api_key: PumpPortal API key for PumpSwap data (requires 0.02 SOL on linked wallet)
         """
         super().__init__()
-        self.pumpportal_url = pumpportal_url
+        # Add API key to URL if provided
+        if api_key:
+            self.pumpportal_url = f"{pumpportal_url}?api-key={api_key}"
+            logger.info("PumpPortal API key configured - PumpSwap data enabled")
+        else:
+            self.pumpportal_url = pumpportal_url
         self.ping_interval = 20  # seconds
 
         # Get platform-specific processors

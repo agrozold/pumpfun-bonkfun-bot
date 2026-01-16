@@ -125,6 +125,7 @@ async def start_bot(config_path: str):
             pumpportal_url=cfg.get("pumpportal", {}).get(
                 "url", "wss://pumpportal.fun/api/data"
             ),
+            pumpportal_api_key=cfg.get("pumpportal", {}).get("api_key") or os.getenv("PUMPPORTAL_API_KEY"),
             # Priority fee configuration
             enable_dynamic_priority_fee=cfg.get("priority_fees", {}).get(
                 "enable_dynamic", False

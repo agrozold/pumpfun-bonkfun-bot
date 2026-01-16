@@ -53,7 +53,7 @@ class UniversalTrader:
         # Platform configuration
         platform: Platform | str = Platform.PUMP_FUN,
         # ========== CODE VERSION MARKER ==========
-        # Version: 2026-01-15-v5 - print debug
+        # Version: 2026-01-16-v1 - pumpportal api key
         # ==========================================
         # Listener configuration
         listener_type: str = "logs",
@@ -61,6 +61,7 @@ class UniversalTrader:
         geyser_api_token: str | None = None,
         geyser_auth_type: str = "x-token",
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
+        pumpportal_api_key: str | None = None,
         # Trading configuration
         extreme_fast_mode: bool = False,
         extreme_fast_token_amount: int = 30,
@@ -370,6 +371,7 @@ class UniversalTrader:
             geyser_api_token=geyser_api_token,
             geyser_auth_type=geyser_auth_type,
             pumpportal_url=pumpportal_url,
+            pumpportal_api_key=pumpportal_api_key,
             platforms=[self.platform],  # Only listen for our platform
         )
 
