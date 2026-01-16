@@ -458,38 +458,29 @@ class WhaleTracker:
         # Rate limit check - 1 request per 2 seconds to conserve quota
         now = time.time()
         if now - self._last_helius_call < 2.0:
-            logger.debug(f"[WHALE] Rate limited, skipping TX {signature[:16]}...")
             return
         self._last_helius_call = now
         
-        # Try Alchemy RPC first (high limits, fast)
+        # Try Alchemy RPC with retry (TX needs time to confirm)
         alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
         tx = None
         
         if alchemy_endpoint:
-            logger.info(f"[WHALE] Trying Alchemy for TX {signature[:16]}...")
-            tx = await self._get_tx_from_endpoint(signature, alchemy_endpoint, timeout=5.0)
-            if tx:
-                logger.info(f"[WHALE] Got TX from Alchemy - checking if whale")
-                self._cache_tx(signature, tx)
-                await self._process_rpc_tx(tx, signature, platform)
-                return
-            else:
-                logger.warning(f"[WHALE] Alchemy returned no data for {signature[:16]}...")
+            # Retry up to 3 times with 1s delay - TX needs to confirm
+            for attempt in range(3):
+                if attempt > 0:
+                    await asyncio.sleep(1.0)
+                tx = await self._get_tx_from_endpoint(signature, alchemy_endpoint, timeout=5.0)
+                if tx:
+                    logger.info(f"[WHALE] Got TX from Alchemy (attempt {attempt + 1})")
+                    self._cache_tx(signature, tx)
+                    await self._process_rpc_tx(tx, signature, platform)
+                    return
         else:
-            logger.warning(f"[WHALE] ALCHEMY_RPC_ENDPOINT not set! Using public RPC")
+            logger.warning(f"[WHALE] ALCHEMY_RPC_ENDPOINT not set!")
         
-        # Fallback to public Solana RPC (free, slower)
-        public_endpoint = "https://api.mainnet-beta.solana.com"
-        tx = await self._get_tx_from_endpoint(signature, public_endpoint, timeout=5.0)
-        if tx:
-            logger.info(f"[WHALE] Got TX from public Solana RPC")
-            self._cache_tx(signature, tx)
-            await self._process_rpc_tx(tx, signature, platform)
-            return
-        
-        # TX not found yet (normal for fresh TXs)
-        logger.debug(f"[WHALE] TX {signature[:16]}... not found yet")
+        # TX not confirmed yet - this is normal for very fresh TXs
+        logger.debug(f"[WHALE] TX {signature[:16]}... not confirmed yet")
 
     def _cache_tx(self, signature: str, tx: dict):
         """Cache TX result with LRU eviction."""
