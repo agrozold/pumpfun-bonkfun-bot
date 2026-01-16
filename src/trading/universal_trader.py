@@ -564,7 +564,8 @@ class UniversalTrader:
         с задержкой 2 секунды между ними, т.к. RPC может не успеть
         проиндексировать bonding curve.
         
-        Whale copy trades bypass scoring and pattern checks.
+        SCORING CHECK: Whale copy теперь проверяет scoring если включен!
+        Это предотвращает покупку мусорных токенов даже если кит их купил.
         
         ANTI-DUPLICATE: Uses unified _buy_lock and _buying_tokens/_bought_tokens
         to prevent ANY duplicate purchases across ALL buy paths.
@@ -585,6 +586,37 @@ class UniversalTrader:
         if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
             logger.info(f"[WHALE] Token {mint_str[:8]}... already bought/buying, skipping")
             return
+        
+        # ============================================
+        # SCORING CHECK - ФИЛЬТР МУСОРА!
+        # ============================================
+        if self.token_scorer:
+            try:
+                should_buy, score = await self.token_scorer.should_buy(mint_str, whale_buy.token_symbol)
+                logger.warning(
+                    f"[WHALE SCORE] {whale_buy.token_symbol}: {score.total_score}/100 -> {score.recommendation}"
+                )
+                logger.warning(
+                    f"[WHALE SCORE] Details: vol={score.volume_score}, bp={score.buy_pressure_score}, "
+                    f"mom={score.momentum_score}, liq={score.liquidity_score}"
+                )
+                
+                if not should_buy:
+                    logger.warning(
+                        f"[WHALE] SKIP LOW SCORE: {whale_buy.token_symbol} score={score.total_score} "
+                        f"< min_score={self.token_scorer.min_score} | whale={whale_buy.whale_label}"
+                    )
+                    logger.warning(
+                        f"[WHALE] Token {mint_str} rejected by scoring despite whale buy"
+                    )
+                    return
+                    
+                logger.info(
+                    f"[WHALE] SCORE OK: {whale_buy.token_symbol} score={score.total_score} >= {self.token_scorer.min_score}"
+                )
+            except Exception as e:
+                # Если scoring упал - логируем но продолжаем (не блокируем whale copy)
+                logger.warning(f"[WHALE] Scoring check failed: {e} - proceeding with whale copy")
         
         # Use lock to prevent race condition between ALL buy paths
         async with self._buy_lock:
@@ -2123,11 +2155,36 @@ class UniversalTrader:
                 consecutive_price_errors = 0
                 last_known_price = current_price
 
-                # Check if position should be exited (UNIFIED for all platforms)
+                # Calculate current PnL FIRST (needed for all checks)
+                pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+                
+                # ============================================
+                # STOP LOSS CHECKS - ORDER MATTERS!
+                # 1. Config SL (from position.stop_loss_price) - checked in should_exit
+                # 2. HARD SL (25%) - backup protection
+                # 3. EMERGENCY SL (40%) - last resort
+                # ============================================
+                
+                # Check if position should be exited (includes config SL check!)
                 should_exit, exit_reason = position.should_exit(current_price)
                 
-                # Calculate current PnL
-                pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+                # ============================================
+                # CRITICAL: Log when approaching SL threshold
+                # ============================================
+                if position.stop_loss_price and current_price <= position.stop_loss_price * 1.1:
+                    # Within 10% of SL - log warning
+                    logger.warning(
+                        f"[SL WARNING] {token_info.symbol}: Price {current_price:.10f} approaching "
+                        f"SL {position.stop_loss_price:.10f} (PnL: {pnl_pct:+.2f}%)"
+                    )
+                
+                # If config SL triggered - mark as pending
+                if should_exit and exit_reason == ExitReason.STOP_LOSS:
+                    logger.error(
+                        f"[CONFIG SL] {token_info.symbol}: STOP LOSS TRIGGERED! "
+                        f"Price {current_price:.10f} <= SL {position.stop_loss_price:.10f}"
+                    )
+                    pending_stop_loss = True
                 
                 # ============================================
                 # HARD STOP LOSS - ЖЁСТКАЯ ЗАЩИТА ОТ УБЫТКОВ
@@ -2285,6 +2342,35 @@ class UniversalTrader:
                     f"for {token_info.symbol}: {error_msg}"
                 )
                 
+                # ============================================
+                # CRITICAL FIX: Check SL even when price fetch fails!
+                # Use last_known_price to check if we should emergency sell
+                # ============================================
+                if last_known_price > 0:
+                    pnl_pct_estimate = ((last_known_price - position.entry_price) / position.entry_price) * 100
+                    logger.warning(
+                        f"[MONITOR] Using last known price {last_known_price:.10f} SOL "
+                        f"(estimated PnL: {pnl_pct_estimate:+.2f}%)"
+                    )
+                    
+                    # If we're in significant loss based on last price - SELL IMMEDIATELY
+                    if pnl_pct_estimate <= -HARD_STOP_LOSS_PCT:
+                        logger.error(
+                            f"[EMERGENCY SL] {token_info.symbol}: Estimated loss {pnl_pct_estimate:.1f}% "
+                            f"based on last price! FORCING EMERGENCY SELL!"
+                        )
+                        fallback_success = await self._emergency_fallback_sell(
+                            token_info, position, last_known_price
+                        )
+                        if fallback_success:
+                            logger.info(f"[OK] Emergency SL sell successful for {token_info.symbol}")
+                            break
+                        else:
+                            logger.error(f"[FAIL] Emergency SL sell failed, will retry!")
+                            # Don't reset counter - keep trying aggressively
+                            await asyncio.sleep(1)  # Fast retry
+                            continue
+                
                 # Check if token migrated (platform-agnostic detection)
                 is_migrated = await self._check_if_migrated(token_info, error_msg)
                 
@@ -2303,11 +2389,12 @@ class UniversalTrader:
                         logger.info(f"[OK] Emergency fallback sell successful for {token_info.symbol}")
                         break
                     else:
-                        # Reset counter and keep trying
-                        consecutive_price_errors = 0
+                        # DON'T reset counter completely - only reduce it
+                        # This ensures we keep trying more aggressively
+                        consecutive_price_errors = max(0, consecutive_price_errors - 1)
                         logger.error(
                             f"[FAIL] Emergency fallback sell failed for {token_info.symbol} - "
-                            "will retry after more price errors"
+                            f"will retry (errors: {consecutive_price_errors})"
                         )
                 
                 await asyncio.sleep(self.price_check_interval)

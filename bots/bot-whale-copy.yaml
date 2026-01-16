@@ -32,16 +32,23 @@ pumpportal:
   url: wss://pumpportal.fun/api/data
 
 # Trade settings
+# ============================================
+# ЖЁСТКИЙ STOP LOSS - КРИТИЧЕСКИ ВАЖНО!
+# В коде есть ДОПОЛНИТЕЛЬНАЯ защита:
+# - HARD_STOP_LOSS: 25% убыток = НЕМЕДЛЕННАЯ продажа
+# - EMERGENCY_STOP_LOSS: 40% убыток = ЭКСТРЕННАЯ продажа
+# - Агрессивный retry при неудачной продаже (5 попыток)
+# ============================================
 trade:
   buy_amount: 0.01
   buy_slippage: 0.3
   exit_strategy: tp_sl
   max_hold_time: 86400
   min_sol_balance: 0.03
-  moon_bag_percentage: 20
-  price_check_interval: 2
-  sell_slippage: 0.25
-  stop_loss_percentage: 0.3
+  moon_bag_percentage: 0           # НЕТ moon bag при SL! Продаём ВСЁ!
+  price_check_interval: 1          # КАЖДУЮ СЕКУНДУ проверяем цену!
+  sell_slippage: 0.35              # Увеличен slippage для быстрой продажи
+  stop_loss_percentage: 0.20       # 20% SL (в коде есть доп. защита на 25% и 40%)
   take_profit_percentage: 1.0
 
 # ============================================
@@ -52,11 +59,17 @@ pattern_detection:
   enabled: false
 
 # ============================================
-# TOKEN SCORING - УЖЕСТОЧЕНО
+# TOKEN SCORING - ЖЁСТКИЕ ФИЛЬТРЫ
+# Whale copy теперь ОБЯЗАТЕЛЬНО проверяет scoring!
+# Это предотвращает покупку мусора даже если кит купил
 # ============================================
 scoring:
   enabled: true
-  min_score: 70
+  min_score: 75
+  volume_weight: 30
+  buy_pressure_weight: 35
+  momentum_weight: 20
+  liquidity_weight: 15
 
 # ============================================
 # WHALE COPY - ОСНОВНОЙ РЕЖИМ
