@@ -485,10 +485,10 @@ class FallbackSeller:
                 headers = {"x-api-key": self.jupiter_api_key}
                 logger.info("🪐 Using Jupiter Ultra API")
             else:
-                jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
-                jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
+                jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
+                jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
                 headers = {}
-                logger.info("🪐 Using Jupiter v6 API (no key)")
+                logger.info("🪐 Using Jupiter Lite API (no Ultra key)")
             
             async with aiohttp.ClientSession() as session:
                 rpc_client = await self._get_rpc_client()
@@ -912,10 +912,10 @@ class FallbackSeller:
                 headers = {"x-api-key": self.jupiter_api_key}
                 logger.info("🪐 Using Jupiter Ultra API for SELL")
             else:
-                jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
-                jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
+                jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
+                jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
                 headers = {}
-                logger.info("🪐 Using Jupiter v6 API for SELL (no key)")
+                logger.info("🪐 Using Jupiter Lite API for SELL (no Ultra key)")
             
             async with aiohttp.ClientSession() as session:
                 rpc_client = await self._get_rpc_client()
