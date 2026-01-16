@@ -150,6 +150,15 @@ class FallbackListener(BaseTokenListener):
             except asyncio.CancelledError:
                 logger.info("FallbackListener cancelled")
                 raise
+            except ConnectionError as e:
+                # ConnectionError from listener with raise_on_max_errors=True
+                # Switch immediately to next listener
+                logger.warning(
+                    f"⚠️ {self._current_listener_type} connection failed: {e}"
+                )
+                logger.warning(f"🔄 Switching to next listener...")
+                self._current_listener = None
+                # No sleep - switch immediately
             except Exception as e:
                 self._error_count += 1
                 logger.error(
