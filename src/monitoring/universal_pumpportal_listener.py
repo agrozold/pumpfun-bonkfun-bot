@@ -222,6 +222,30 @@ class UniversalPumpPortalListener(BaseTokenListener):
         except Exception:
             logger.exception("Ping error")
 
+    def _detect_platform_from_mint(self, mint: str) -> str | None:
+        """Detect platform from mint address suffix.
+        
+        PumpPortal sends all tokens with pool="pump", but we can detect
+        the actual platform from the mint address suffix:
+        - ...pump -> pump_fun
+        - ...bonk -> lets_bonk
+        - ...bags -> bags
+        
+        Args:
+            mint: Token mint address
+            
+        Returns:
+            Pool name string or None if cannot detect
+        """
+        mint_lower = mint.lower()
+        if mint_lower.endswith("pump"):
+            return "pump"
+        elif mint_lower.endswith("bonk"):
+            return "bonk"
+        elif mint_lower.endswith("bags"):
+            return "bags"
+        return None
+
     async def _wait_for_token_creation(self, websocket) -> TokenInfo | None:
         """Wait for token creation event from PumpPortal.
 
@@ -249,11 +273,26 @@ class UniversalPumpPortalListener(BaseTokenListener):
             if not token_data:
                 return None
 
-            # Get pool name to determine which processor to use
-            pool_name = token_data.get("pool", "").lower()
+            # CRITICAL FIX: Detect platform from mint suffix, not just pool name
+            # PumpPortal sends ALL tokens with pool="pump", but actual platform
+            # is determined by mint address suffix (pump/bonk/bags)
+            mint = token_data.get("mint", "")
+            detected_pool = self._detect_platform_from_mint(mint)
+            
+            # Use detected pool from mint suffix, fallback to pool field
+            pool_name = detected_pool or token_data.get("pool", "").lower()
+            
             if pool_name not in self.pool_to_processors:
-                logger.debug(f"Ignoring token from unsupported pool: {pool_name}")
+                logger.debug(f"Ignoring token from unsupported pool: {pool_name} (mint: {mint[:16]}...)")
                 return None
+
+            # Log when we detect a non-pump platform
+            original_pool = token_data.get("pool", "").lower()
+            if detected_pool and detected_pool != original_pool:
+                logger.info(
+                    f"[PLATFORM] Detected {detected_pool.upper()} token from mint suffix "
+                    f"(PumpPortal sent pool={original_pool}): {mint[:16]}..."
+                )
 
             # Try each processor that supports this pool
             for processor in self.pool_to_processors[pool_name]:
