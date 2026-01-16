@@ -74,12 +74,14 @@ dev_check:
   min_account_age_days: 1
 
 # Trending Scanner - ищет РЕЗКИЕ ВСПЛЕСКИ покупок
+# ВАЖНО: trending scanner обходит scoring и dev_check (skip_checks=True)
+# Поэтому фильтры здесь должны быть СТРОГИМИ!
 trending_scanner:
   enabled: true
-  min_volume_1h: 10000        # Минимум $10k объёма за 1 ЧАС
+  min_volume_1h: 30000        # Минимум $30k объёма за 1 ЧАС
   min_market_cap: 5000        # Минимум $5k маркеткап
   max_market_cap: 0           # 0 = без лимита
-  min_price_change_5m: 3      # Минимум +3% за 5 МИНУТ
-  min_price_change_1h: 15     # Минимум +15% за час
-  min_buy_pressure: 0.55      # 55% покупок
+  min_price_change_5m: 10     # Минимум +10% за 5 МИНУТ
+  min_price_change_1h: 30     # Минимум +30% за час
+  min_buy_pressure: 0.75      # 75% покупок
   scan_interval: 30           # Сканировать каждые 30 сек
