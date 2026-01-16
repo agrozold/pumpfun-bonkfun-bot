@@ -153,59 +153,62 @@ class RPCManager:
         # HELIUS = PRIMARY (hardcoded correct key!) - ТОЛЬКО HTTP!
         # 1M credits/month = 33k/day = 1388/hour = 23/min
         # With 6 bots: ~4 req/min per bot for standard RPC
+        # But they run independently, so use 0.1 req/s (6 req/min) to be safe
         # =================================================================
         self.providers["helius"] = ProviderConfig(
             name="Helius",
             http_endpoint=self.HELIUS_RPC,
             wss_endpoint=None,  # Helius НЕ имеет WSS!
-            rate_limit_per_second=0.5,  # 30 req/min total
+            rate_limit_per_second=0.1,  # 6 req/min - conservative for 6 bots
             priority=0,  # HIGHEST priority
             is_primary=True,
         )
-        logger.info("[RPC] ✓ HELIUS PRIMARY configured (0.5 req/s = 30 req/min)")
+        logger.info("[RPC] ✓ HELIUS PRIMARY configured (0.1 req/s = 6 req/min)")
         logger.info(f"[RPC]   Daily budget: {HELIUS_DAILY_CREDITS} credits")
 
         # Helius Enhanced API (50 credits per request!)
         # 33k daily / 50 = 666 enhanced requests/day max
-        # BUT we need faster response for whale tracking, so increase rate
+        # With 6 bots running independently, each gets ~110 requests/day
+        # That's ~4.5 req/hour = 0.00125 req/s per bot
+        # Use 0.02 req/s (1.2 req/min) to be safe
         self.providers["helius_enhanced"] = ProviderConfig(
             name="Helius Enhanced",
             http_endpoint=self.HELIUS_ENHANCED,
             wss_endpoint=None,  # Helius НЕ имеет WSS!
-            rate_limit_per_second=0.5,  # 30 req/min - faster for whale tracking
+            rate_limit_per_second=0.02,  # 1.2 req/min - very conservative for 6 bots
             priority=0,
             is_primary=True,
         )
-        logger.info("[RPC] ✓ Helius Enhanced configured (0.5 req/s = 30 req/min)")
+        logger.info("[RPC] ✓ Helius Enhanced configured (0.02 req/s = 1.2 req/min)")
 
         # =================================================================
-        # ALCHEMY = FALLBACK #1
+        # ALCHEMY = FALLBACK #1 (take more load when Helius rate limited)
         # =================================================================
         alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
         if alchemy_endpoint:
             self.providers["alchemy"] = ProviderConfig(
                 name="Alchemy",
                 http_endpoint=alchemy_endpoint,
-                rate_limit_per_second=0.5,  # Conservative fallback
+                rate_limit_per_second=1.0,  # 60 req/min - higher for fallback
                 priority=5,  # Lower priority than Helius
                 is_primary=False,
             )
-            logger.info("[RPC] ✓ Alchemy FALLBACK #1 configured")
+            logger.info("[RPC] ✓ Alchemy FALLBACK #1 configured (1.0 req/s)")
         else:
             logger.warning("[RPC] ⚠ ALCHEMY_RPC_ENDPOINT not set - no fallback #1")
 
         # =================================================================
-        # PUBLIC SOLANA = FALLBACK #2 (last resort)
+        # PUBLIC SOLANA = FALLBACK #2 (last resort, heavily rate limited)
         # =================================================================
         self.providers["public_solana"] = ProviderConfig(
             name="Public Solana",
             http_endpoint="https://api.mainnet-beta.solana.com",
             wss_endpoint="wss://api.mainnet-beta.solana.com",
-            rate_limit_per_second=0.2,  # Very limited
+            rate_limit_per_second=0.5,  # 30 req/min - public is limited
             priority=10,  # LOWEST priority
             is_primary=False,
         )
-        logger.info("[RPC] ✓ Public Solana FALLBACK #2 configured")
+        logger.info("[RPC] ✓ Public Solana FALLBACK #2 configured (0.5 req/s)")
 
         self._initialized = True
         logger.info(f"[RPC] Manager initialized: {len(self.providers)} providers")
