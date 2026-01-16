@@ -61,28 +61,27 @@ PUBLIC_RPC_FALLBACK = [
 
 # Helius API endpoints - loaded from HELIUS_API_KEY env var
 # ============================================
-# BUDGET CALCULATION (1M credits / 14 days):
-# - Daily budget: 71,428 requests
-# - Hourly budget: 2,976 requests
-# - Per minute: ~50 requests
+# HELIUS FREE TIER LIMITS:
+# - RPC: 10 req/s = 600/min
+# - Enhanced API: 2 req/s = 120/min  <-- BOTTLENECK!
+# - Credits: 1M/month
 #
-# ACTIVE BOTS (each with whale_copy + dev_check):
-# - bot-sniper-pump (whale + dev)
-# - bot-sniper-bonk (whale + dev)
-# - bot-sniper-bags (whale + dev)
-# - bot-whale-copy (whale + dev)
-# - bot-volume-sniper (NO whale, NO dev)
-# = 4 bots with Helius usage
+# 6 BOT PROCESSES SHARING HELIUS:
+# - blockhash_updater: 2 req/min × 6 = 12 req/min (RPC)
+# - whale_tracker: 4 bots with whale_copy enabled
+# - dev_reputation: 4 bots with dev_check enabled
+# - transactions: ~10 req/min (RPC)
 #
-# ALLOCATION PER BOT (4 bots sharing 50 req/min):
-# - Each whale_tracker: 10 req/min = 600/hr = 14,400/day
-# - Each dev_checker: 2 req/min = 120/hr = 2,880/day (cached)
-# - Total per bot: ~12 req/min
-# - Total 4 bots: ~48 req/min (within 50/min budget)
+# ENHANCED API BUDGET (120 req/min total):
+# - whale_tracker: 80 req/min (4 bots × 20 req/min)
+# - dev_reputation: 20 req/min (4 bots × 5 req/min)
+# - buffer: 20 req/min
 #
-# Rate limit: 1 request per 6 seconds = 10/min per whale tracker
+# PER BOT: 20 req/min = 1 request per 3 seconds
+# With jitter to avoid burst collisions
 # ============================================
-HELIUS_RATE_LIMIT_SECONDS = 6.0  # 1 request per 6 seconds = 10/min per bot
+HELIUS_RATE_LIMIT_SECONDS = 3.0  # Base: 1 request per 3 seconds per bot
+HELIUS_RATE_LIMIT_JITTER = 2.0   # Add 0-2s random jitter to spread requests
 
 
 @dataclass
@@ -346,9 +345,10 @@ class WhaleTracker:
             hourly_rate = 0
             daily_projection = 0
 
-        # Budget: ~14k/day per bot (4 bots with whale_copy = 56k/day total)
-        # This bot's share: 14,400/day
-        daily_budget = 14400
+        # Budget: Enhanced API = 120 req/min total
+        # whale_tracker gets 80 req/min (4 bots × 20)
+        # Per bot: 20 req/min = 1,200/hr = 28,800/day
+        daily_budget = 28800
         budget_used_pct = (m["helius_calls"] / daily_budget * 100) if daily_budget > 0 else 0
 
         logger.info(
@@ -609,9 +609,12 @@ class WhaleTracker:
                         await self._process_rpc_tx(cached, signature, platform)
                 return
 
-        # Rate limit check - use global constant for consistency
+        # Rate limit check with jitter to avoid burst collisions between bots
+        import random
         now = time.time()
-        if now - self._last_helius_call < HELIUS_RATE_LIMIT_SECONDS:
+        # Add random jitter (0-1s) to spread requests across bots
+        effective_rate_limit = HELIUS_RATE_LIMIT_SECONDS + random.uniform(0, HELIUS_RATE_LIMIT_JITTER)
+        if now - self._last_helius_call < effective_rate_limit:
             # Queue for later instead of dropping
             if len(self._pending_txs) < self._max_pending:
                 self._pending_txs.append((signature, platform))
