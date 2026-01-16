@@ -1428,6 +1428,18 @@ class UniversalTrader:
             logger.warning(f"RPC warm-up failed: {e!s}")
 
         try:
+            # Start whale tracker BEFORE choosing operating mode
+            # Whale tracker should run in ALL modes if enabled
+            whale_task = None
+            if self.whale_tracker:
+                logger.warning("[WHALE] Starting whale tracker in background...")
+                whale_task = asyncio.create_task(self.whale_tracker.start())
+            else:
+                if self.enable_whale_copy:
+                    logger.error("[WHALE] Whale copy enabled but tracker not initialized!")
+                else:
+                    logger.info("Whale tracker not enabled, skipping...")
+
             # Choose operating mode based on yolo_mode
             if not self.yolo_mode:
                 # Single token mode: process one token and exit
@@ -1442,20 +1454,17 @@ class UniversalTrader:
                     logger.info(
                         f"No suitable token found within timeout period ({self.token_wait_timeout}s). Exiting..."
                     )
+                # Cleanup whale tracker in single token mode
+                if whale_task:
+                    whale_task.cancel()
+                    if self.whale_tracker:
+                        await self.whale_tracker.stop()
             else:
                 # Continuous mode: process tokens until interrupted
                 logger.info(
                     "Running in continuous mode - will process tokens until interrupted"
                 )
                 processor_task = asyncio.create_task(self._process_token_queue())
-                
-                # Start whale tracker if enabled
-                whale_task = None
-                if self.whale_tracker:
-                    logger.warning("[WHALE] Starting whale tracker in background...")
-                    whale_task = asyncio.create_task(self.whale_tracker.start())
-                else:
-                    logger.info("Whale tracker not initialized, skipping...")
 
                 # Start trending scanner if enabled
                 trending_task = None
