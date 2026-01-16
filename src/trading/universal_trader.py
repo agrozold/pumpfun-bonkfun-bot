@@ -1512,7 +1512,7 @@ class UniversalTrader:
                 )
             
             try:
-            logger.info(f"[BUY] Calling buyer.execute for {token_info.symbol}...")
+                logger.info(f"[BUY] Calling buyer.execute for {token_info.symbol}...")
                 buy_result: TradeResult = await self.buyer.execute(token_info)
                 logger.info(
                     f"Buy result: success={buy_result.success}, "
