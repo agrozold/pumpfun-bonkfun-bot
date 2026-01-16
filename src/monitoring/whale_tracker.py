@@ -419,24 +419,26 @@ class WhaleTracker:
             await self._process_rpc_tx(tx, signature, platform)
             return
         
-        # ПРИОРИТЕТ 2: Helius RPC (если публичный не сработал)
+        # ПРИОРИТЕТ 2: Helius RPC (fallback с rate limiting)
+        # Используем только если публичный не сработал
+        # Rate limit: max 1 запрос в 5 секунд для экономии квоты
         if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
-            tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint)
-            if tx:
-                logger.info(f"[WHALE] Got TX from Helius RPC for {signature[:16]}...")
-                await self._process_rpc_tx(tx, signature, platform)
-                return
+            now = time.time()
+            if not hasattr(self, "_last_helius_call"):
+                self._last_helius_call = 0
+            
+            # Rate limit: 1 запрос в 5 секунд = ~720 запросов/час = ~17k/день
+            if now - self._last_helius_call >= 5.0:
+                self._last_helius_call = now
+                tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint)
+                if tx:
+                    logger.info(f"[WHALE] Got TX from Helius RPC for {signature[:16]}...")
+                    await self._process_rpc_tx(tx, signature, platform)
+                    return
+            else:
+                logger.debug(f"[WHALE] Helius rate limited, skipping {signature[:16]}...")
         
-        # ПРИОРИТЕТ 3: Helius Enhanced API (последний fallback)
-        if self.helius_api_key:
-            logger.info(f"[WHALE] Trying Helius Enhanced API for {signature[:16]}...")
-            tx = await self._get_tx_helius(signature)
-            if tx:
-                logger.info(f"[WHALE] Got TX from Helius Enhanced for {signature[:16]}...")
-                await self._process_helius_tx(tx, platform)
-                return
-        
-        logger.warning(f"[WHALE] All RPC methods failed for {signature[:16]}...")
+        logger.debug(f"[WHALE] No TX data for {signature[:16]}...")
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""
