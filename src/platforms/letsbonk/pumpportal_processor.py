@@ -38,6 +38,12 @@ class LetsBonkPumpPortalProcessor:
         Returns:
             True if this processor can handle the token data
         """
+        # Check mint suffix first (more reliable than pool field)
+        mint = token_data.get("mint", "").lower()
+        if mint.endswith("bonk"):
+            return True
+        
+        # Fallback to pool field
         pool = token_data.get("pool", "").lower()
         return pool in self.supported_pool_names
 
