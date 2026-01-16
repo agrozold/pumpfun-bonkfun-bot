@@ -421,6 +421,11 @@ class UniversalTrader:
         self.pump_signals: dict[str, list] = {}  # mint -> detected patterns
         self.pending_tokens: dict[str, TokenInfo] = {}  # mint -> TokenInfo for pattern-only mode
         self.active_positions: list[Position] = []  # Active positions for persistence
+        
+        # Anti-duplicate protection for whale copy / trending
+        self._buy_lock = asyncio.Lock()  # Prevents race condition on concurrent buys
+        self._whale_bought_tokens: set[str] = set()  # Tokens bought via whale copy
+        self._trending_bought_tokens: set[str] = set()  # Tokens bought via trending
 
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
@@ -516,35 +521,51 @@ class UniversalTrader:
         3. Jupiter (универсальный fallback)
         
         Whale copy trades bypass scoring and pattern checks.
+        
+        ANTI-DUPLICATE: Uses lock to prevent race condition when multiple
+        whale signals arrive for the same token simultaneously.
         """
+        mint_str = whale_buy.token_mint
+        
+        # FAST CHECK before lock (optimization)
+        if mint_str in self._whale_bought_tokens:
+            logger.info(f"[WHALE] Already bought {mint_str[:8]}... via whale copy, skipping")
+            return
+        
+        # Use lock to prevent race condition
+        async with self._buy_lock:
+            # Re-check after acquiring lock (another task might have bought it)
+            if mint_str in self._whale_bought_tokens:
+                logger.info(f"[WHALE] Already bought {mint_str[:8]}... (after lock), skipping")
+                return
+            
+            if mint_str in self.processed_tokens:
+                logger.info(f"[WHALE] Already processed {mint_str[:8]}..., skipping duplicate")
+                return
+            
+            # Check if already have position in this token
+            for pos in self.active_positions:
+                if str(pos.mint) == mint_str:
+                    logger.info(f"[WHALE] Already have position in {mint_str[:8]}..., skipping")
+                    return
+            
+            # Mark as bought BEFORE releasing lock to prevent duplicates
+            self._whale_bought_tokens.add(mint_str)
+            self.processed_tokens.add(mint_str)
+        
+        # Now proceed with buy (outside lock to not block other operations)
         logger.warning(
             f"[WHALE] WHALE COPY START: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
             f"for {whale_buy.amount_sol:.2f} SOL on {whale_buy.platform}"
         )
         
         try:
-            mint_str = whale_buy.token_mint
-            
-            # Step 1: Check if already processed
-            if mint_str in self.processed_tokens:
-                logger.info(f"[WHALE] Already processed {mint_str[:8]}..., skipping duplicate")
-                return
-            
-            # Step 2: Check if already have position in this token
-            for pos in self.active_positions:
-                if str(pos.mint) == mint_str:
-                    logger.info(f"[WHALE] Already have position in {mint_str[:8]}..., skipping")
-                    return
-            
-            # Step 3: Check wallet balance
+            # Check wallet balance
             balance_ok = await self._check_balance_before_buy()
             if not balance_ok:
                 return
             
-            # Mark as processed early to prevent duplicates
-            self.processed_tokens.add(mint_str)
-            
-            # Step 4: Try to buy on ANY available DEX
+            # Try to buy on ANY available DEX
             logger.warning(f"[WHALE] UNIVERSAL BUY: Searching for liquidity for {mint_str[:8]}...")
             
             success, tx_sig, dex_used, token_amount, price = await self._buy_any_dex(
@@ -1063,19 +1084,37 @@ class UniversalTrader:
         
         Supports all platforms: pump_fun, lets_bonk, bags.
         For existing/migrated tokens, uses Jupiter/PumpSwap for trading.
+        
+        ANTI-DUPLICATE: Uses lock to prevent race condition when multiple
+        trending signals arrive for the same token simultaneously.
         """
         mint_str = token.mint
         
-        # Check if already processed
-        if mint_str in self.processed_tokens:
-            logger.info(f"[TRENDING] Already processed {token.symbol}, skipping")
+        # FAST CHECK before lock (optimization)
+        if mint_str in self._trending_bought_tokens:
+            logger.info(f"[TRENDING] Already bought {token.symbol} via trending, skipping")
             return
         
-        # Check if already have position in this token
-        for pos in self.active_positions:
-            if str(pos.mint) == mint_str:
-                logger.info(f"[TRENDING] Already have position in {token.symbol}, skipping")
+        # Use lock to prevent race condition
+        async with self._buy_lock:
+            # Re-check after acquiring lock
+            if mint_str in self._trending_bought_tokens:
+                logger.info(f"[TRENDING] Already bought {token.symbol} (after lock), skipping")
                 return
+            
+            if mint_str in self.processed_tokens:
+                logger.info(f"[TRENDING] Already processed {token.symbol}, skipping")
+                return
+            
+            # Check if already have position in this token
+            for pos in self.active_positions:
+                if str(pos.mint) == mint_str:
+                    logger.info(f"[TRENDING] Already have position in {token.symbol}, skipping")
+                    return
+            
+            # Mark as bought BEFORE releasing lock to prevent duplicates
+            self._trending_bought_tokens.add(mint_str)
+            self.processed_tokens.add(mint_str)
         
         # NO AGE LIMIT - pattern detection works for ALL existing tokens
         # Age check removed to allow trading any trending token
@@ -1150,9 +1189,6 @@ class UniversalTrader:
             else:
                 # No bonding curve = migrated or unknown platform
                 is_migrated = True
-            
-            # Mark as processed
-            self.processed_tokens.add(mint_str)
             
             # If migrated - buy via PumpSwap (Raydium AMM)
             if is_migrated:
