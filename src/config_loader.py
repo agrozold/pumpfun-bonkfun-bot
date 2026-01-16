@@ -73,7 +73,7 @@ CONFIG_VALIDATION_RULES = [
 
 # Valid values for enum-like fields
 VALID_VALUES = {
-    "filters.listener_type": ["logs", "blocks", "geyser", "pumpportal", "fallback"],
+    "filters.listener_type": ["logs", "blocks", "geyser", "pumpportal", "fallback", "bags_logs", "bonk_logs"],
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual"],
     "platform": ["pump_fun", "lets_bonk", "bags"],
