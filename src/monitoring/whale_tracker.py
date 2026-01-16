@@ -438,7 +438,10 @@ class WhaleTracker:
         # Step 0: Wait for TX to be confirmed
         # logsSubscribe gives us TX immediately (commitment: processed)
         # but getTransaction needs it to be confirmed/finalized
-        await asyncio.sleep(0.5)  # 500ms delay for confirmation
+        # 500ms was not enough - increasing to 1.5s
+        await asyncio.sleep(1.5)  # 1.5s delay for confirmation
+        
+        logger.info(f"[WHALE] Checking TX {signature[:16]}... after 1.5s delay")
         
         # Step 1: Cache check (quota saving)
         if signature in self._tx_cache:
@@ -488,8 +491,8 @@ class WhaleTracker:
                 await self._process_rpc_tx(tx, signature, platform)
                 return
         
-        # All failed - TX may not be confirmed yet, this is normal
-        logger.debug(f"[WHALE] TX not found: {signature[:16]}... (may not be confirmed)")
+        # All failed - TX may not be confirmed yet
+        logger.info(f"[WHALE] TX not found after 1.5s: {signature[:16]}... (not confirmed yet)")
 
     def _cache_tx(self, signature: str, tx: dict):
         """Cache TX result with LRU eviction."""
