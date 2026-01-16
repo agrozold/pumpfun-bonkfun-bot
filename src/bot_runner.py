@@ -198,6 +198,13 @@ async def start_bot(config_path: str):
             pattern_high_volume_alt_max_sells_1h=cfg.get("pattern_detection", {}).get(
                 "high_volume_alt_max_sells_1h", 100
             ),
+            # EXTREME BUY PRESSURE 5min pattern
+            pattern_extreme_buy_min_buys_5m=cfg.get("pattern_detection", {}).get(
+                "extreme_buy_pressure_min_buys_5m", 500
+            ),
+            pattern_extreme_buy_max_sells_5m=cfg.get("pattern_detection", {}).get(
+                "extreme_buy_pressure_max_sells_5m", 200
+            ),
             # Token scoring configuration
             enable_scoring=cfg.get("scoring", {}).get("enabled", False),
             scoring_min_score=cfg.get("scoring", {}).get("min_score", 70),

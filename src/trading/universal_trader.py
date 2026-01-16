@@ -108,6 +108,9 @@ class UniversalTrader:
         pattern_high_volume_sells_1h: int = 200,
         pattern_high_volume_alt_buys_1h: int = 100,
         pattern_high_volume_alt_max_sells_1h: int = 100,
+        # EXTREME BUY PRESSURE 5min pattern settings
+        pattern_extreme_buy_min_buys_5m: int = 500,
+        pattern_extreme_buy_max_sells_5m: int = 200,
         # Token scoring settings
         enable_scoring: bool = False,
         scoring_min_score: int = 70,
@@ -204,6 +207,9 @@ class UniversalTrader:
                 high_volume_sells_1h=pattern_high_volume_sells_1h,
                 high_volume_alt_buys_1h=pattern_high_volume_alt_buys_1h,
                 high_volume_alt_max_sells_1h=pattern_high_volume_alt_max_sells_1h,
+                # EXTREME BUY PRESSURE 5min pattern
+                extreme_buy_pressure_min_buys_5m=pattern_extreme_buy_min_buys_5m,
+                extreme_buy_pressure_max_sells_5m=pattern_extreme_buy_max_sells_5m,
             )
             self.pattern_detector.set_pump_signal_callback(self._on_pump_signal)
             logger.info(
@@ -212,7 +218,8 @@ class UniversalTrader:
                 f"min_whale_buys={pattern_min_whale_buys}, "
                 f"min_signal_strength={pattern_min_signal_strength}, "
                 f"pattern_only_mode={pattern_only_mode}, "
-                f"high_vol_sideways=[buys_1h>={pattern_high_volume_buys_1h}, sells_1h>={pattern_high_volume_sells_1h}]"
+                f"high_vol_sideways=[buys_1h>={pattern_high_volume_buys_1h}, sells_1h>={pattern_high_volume_sells_1h}], "
+                f"extreme_buy_5m=[buys>={pattern_extreme_buy_min_buys_5m}, sells<={pattern_extreme_buy_max_sells_5m}]"
             )
 
         # Token scoring setup
