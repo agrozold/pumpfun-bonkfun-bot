@@ -453,6 +453,13 @@ class WhaleTracker:
 
     async def _get_tx_rpc(self, signature: str) -> dict | None:
         """Получить транзакцию через RPC."""
+        logger.warning(f"🐋 [DEBUG] _get_tx_rpc() called - sig={signature[:16]}...")
+        logger.warning(f"🐋 [DEBUG] RPC endpoint: {self.rpc_endpoint[:50] if self.rpc_endpoint else 'NONE'}")
+        
+        if not self.rpc_endpoint:
+            logger.error("🐋 [ERROR] RPC endpoint is None!")
+            return None
+        
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -463,13 +470,42 @@ class WhaleTracker:
         try:
             async with self._session.post(
                 self.rpc_endpoint, json=payload,
-                timeout=aiohttp.ClientTimeout(total=3)
+                timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
+                logger.warning(f"🐋 [DEBUG] RPC response status: {resp.status}")
+                
+                response_text = await resp.text()
+                logger.warning(f"🐋 [DEBUG] RPC response (first 300 chars): {response_text[:300]}")
+                
                 if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("result")
+                    try:
+                        data = json.loads(response_text)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"🐋 [ERROR] JSON parse failed: {e}")
+                        return None
+                    
+                    result = data.get("result")
+                    error = data.get("error")
+                    
+                    if error:
+                        logger.error(f"🐋 [ERROR] RPC error: {error}")
+                        return None
+                    
+                    if result is None:
+                        logger.warning(f"🐋 [WARNING] RPC returned null result (TX may not be finalized)")
+                        return None
+                    
+                    logger.warning(f"🐋 [SUCCESS] Got TX data: {len(str(result))} bytes")
+                    return result
+                else:
+                    logger.warning(f"🐋 [ERROR] RPC HTTP error {resp.status}")
+                    return None
+                    
+        except asyncio.TimeoutError:
+            logger.error(f"🐋 [ERROR] RPC timeout after 10s")
+            return None
         except Exception as e:
-            logger.debug(f"RPC error: {e}")
+            logger.exception(f"🐋 [ERROR] RPC request failed: {e}")
         return None
 
     async def _process_helius_tx(self, tx: dict, platform: str = "pump_fun"):
