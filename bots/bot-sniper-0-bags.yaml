@@ -13,7 +13,7 @@ filters:
   listener_type: fallback
   match_string: null
   max_token_age: 60  # Токены >= 1 минуты (60 секунд)
-  yolo_mode: false   # Отключить YOLO для осторожной торговли
+  yolo_mode: true    # Включить для непрерывной работы и whale tracking
 
 # RPC
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
