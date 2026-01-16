@@ -88,10 +88,10 @@ BAGS использует Meteora DBC (Dynamic Bonding Curve) программу
     - Маппинг old_pool -> new_pool
     - Callback при миграции
 
-- [ ] 18. Интеграция миграций с UniversalTrader
-  - [ ] 18.1 Добавить BagsMigrationTracker в UniversalTrader
-  - [ ] 18.2 Автоматический fallback на Jupiter при миграции
-  - [ ] 18.3 Проверка статуса пула перед торговлей
+- [x] 18. Интеграция миграций с UniversalTrader
+  - [x] 18.1 Добавить BAGS в _buy_any_dex метод
+  - [x] 18.2 Добавить _create_bags_token_info_from_mint метод
+  - [x] 18.3 Автоматический fallback на Jupiter при миграции
 
 ### Тестирование (НА VPS)
 
