@@ -82,10 +82,10 @@ whale_copy:
   helius_api_key: ${HELIUS_API_KEY}
 
 # ============================================
-# DEV CHECK - УЖЕСТОЧЕНО
+# DEV CHECK - DISABLED to save Helius quota
 # ============================================
 dev_check:
-  enabled: true
+  enabled: false  # DISABLED - uses too much Helius API quota!
   max_tokens_created: 20
   min_account_age_days: 1
 
