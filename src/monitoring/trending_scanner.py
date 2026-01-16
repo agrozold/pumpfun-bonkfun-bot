@@ -266,7 +266,7 @@ class TrendingScanner:
         self._running = True
         self._session = aiohttp.ClientSession()
         self._scan_task = asyncio.create_task(self._scan_loop())
-        logger.info(f"🔍 Multi-source scanner started: {[s.value for s in self._enabled_sources]}")
+        logger.info(f"[SCANNER] Multi-source scanner started: {[s.value for s in self._enabled_sources]}")
 
     async def stop(self) -> None:
         """Остановить сканер."""
@@ -305,7 +305,7 @@ class TrendingScanner:
             if limiter.daily_budget > 0:
                 stats.append(f"{source.value}: {remaining} left ({usage:.1f}% used)")
         if stats:
-            logger.info(f"📊 Daily budget: {', '.join(stats)}")
+            logger.info(f"[BUDGET] Daily budget: {', '.join(stats)}")
 
     def _select_sources_for_scan(self) -> list[DataSource]:
         """Выбрать источники для текущего скана с учётом бюджета и ротации."""
@@ -369,7 +369,7 @@ class TrendingScanner:
         sources_to_use = self._select_sources_for_scan()
         
         if not sources_to_use:
-            logger.warning("⚠️ No sources available (all rate limited or budget exhausted)")
+            logger.warning("[WARN] No sources available (all rate limited or budget exhausted)")
             return
 
         # Fetch from selected sources
@@ -398,7 +398,7 @@ class TrendingScanner:
             logger.info("📡 No tokens fetched from any source")
             return
 
-        logger.info(f"🔍 Scanned {len(all_tokens)} tokens from {len(sources_to_use)} sources")
+        logger.info(f"[SCAN] Scanned {len(all_tokens)} tokens from {len(sources_to_use)} sources")
 
         # Filter and score
         candidates = []
@@ -415,7 +415,7 @@ class TrendingScanner:
         stats = self.get_monitoring_stats()
         if candidates:
             logger.info(
-                f"📊 Found {len(candidates)} candidates "
+                f"[STATS] Found {len(candidates)} candidates "
                 f"(monitoring: {stats['active_monitored']}, processed: {stats['total_processed']})"
             )
 
@@ -423,7 +423,7 @@ class TrendingScanner:
 
         for token, score, reasons in candidates[: self.max_concurrent_buys]:
             logger.warning(
-                f"🔥 TRENDING [{token.source.value}]: {token.symbol} - "
+                f"[TRENDING] [{token.source.value}]: {token.symbol} - "
                 f"MC: ${token.market_cap:,.0f}, Vol1h: ${token.volume_1h:,.0f}, "
                 f"Change5m: {token.price_change_5m:+.1f}%, Score: {score}"
             )
@@ -458,45 +458,27 @@ class TrendingScanner:
         seen_mints: set[str] = set()
 
         try:
-            # Fetch from pumpswap and raydium
-            for dex in ["pumpswap", "raydium"]:
-                url = f"{DEXSCREENER_API}/latest/dex/pairs/solana/{dex}"
-
-                async with self._session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status != 200:
-                        continue
-
+            # Use token boosted endpoint - more reliable
+            url = f"{DEXSCREENER_API}/token-boosts/top/v1"
+            
+            async with self._session.get(
+                url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status == 200:
                     data = await resp.json()
-                    pairs = data.get("pairs", [])
-
-                    # Sort by volume spike
-                    pairs_sorted = self._sort_by_volume_spike(pairs)
-
-                    for pair, _, _ in pairs_sorted[:30]:
-                        base = pair.get("baseToken", {})
-                        mint = base.get("address", "")
-
-                        if mint in seen_mints:
-                            continue
-                        
-                        # Support pump.fun, bonk.fun, and migrated tokens
-                        # Migrated tokens trade on Raydium/PumpSwap but keep original mint
-                        is_pump_bonk = mint.endswith("pump") or mint.endswith("bonk")
-                        is_raydium = pair.get("dexId") in ("raydium", "pumpswap")
-                        
-                        if not (is_pump_bonk or is_raydium):
-                            continue
-
-                        seen_mints.add(mint)
-                        token = self._parse_dexscreener_pair(pair)
-                        if token:
-                            tokens.append(token)
-
-                await asyncio.sleep(0.3)
-
-            # Also search for newer tokens
+                    # data is a list of boosted tokens
+                    if isinstance(data, list):
+                        for item in data[:50]:
+                            chain = item.get("chainId", "")
+                            if chain != "solana":
+                                continue
+                            mint = item.get("tokenAddress", "")
+                            if not mint or mint in seen_mints:
+                                continue
+                            # Get token details
+                            seen_mints.add(mint)
+            
+            # Also try search endpoint
             search_tokens = await self._fetch_dexscreener_search()
             for token in search_tokens:
                 if token.mint not in seen_mints:
@@ -516,27 +498,27 @@ class TrendingScanner:
 
         tokens = []
         try:
-            url = f"{DEXSCREENER_API}/latest/dex/search?q=pump"
+            # Search for trending solana tokens
+            url = f"{DEXSCREENER_API}/latest/dex/search?q=solana"
 
             async with self._session.get(
                 url, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status != 200:
+                    logger.warning(f"DexScreener search returned {resp.status}")
                     return []
 
                 data = await resp.json()
-                for pair in data.get("pairs", [])[:30]:
+                pairs = data.get("pairs") or []
+                
+                for pair in pairs[:50]:
                     if pair.get("chainId") != "solana":
                         continue
 
                     base = pair.get("baseToken", {})
                     mint_addr = base.get("address", "")
                     
-                    # Support pump.fun, bonk.fun, and migrated tokens on Raydium
-                    is_pump_bonk = mint_addr.endswith("pump") or mint_addr.endswith("bonk")
-                    is_raydium = pair.get("dexId") in ("raydium", "pumpswap")
-                    
-                    if not (is_pump_bonk or is_raydium):
+                    if not mint_addr:
                         continue
 
                     token = self._parse_dexscreener_pair(pair)
@@ -853,30 +835,30 @@ class TrendingScanner:
         # Price change criteria
         if token.price_change_5m >= self.min_price_change_5m:
             score += 35
-            reasons.append(f"🚀 Price +{token.price_change_5m:.1f}% in 5min!")
+            reasons.append(f"[PUMP] Price +{token.price_change_5m:.1f}% in 5min!")
         elif token.price_change_1h >= self.min_price_change_1h:
             score += 25
-            reasons.append(f"📈 Price +{token.price_change_1h:.1f}% in 1h")
+            reasons.append(f"[RISE] Price +{token.price_change_1h:.1f}% in 1h")
         else:
             return 0, []
 
         # Buy pressure
         if token.buy_pressure_5m >= self.min_buy_pressure:
             score += 30
-            reasons.append(f"💪 Buy pressure {token.buy_pressure_5m*100:.0f}%")
+            reasons.append(f"[STRONG] Buy pressure {token.buy_pressure_5m*100:.0f}%")
         elif token.buy_pressure_5m >= 0.5:
             score += 15
-            reasons.append(f"👍 Buy pressure {token.buy_pressure_5m*100:.0f}%")
+            reasons.append(f"[OK] Buy pressure {token.buy_pressure_5m*100:.0f}%")
 
         # Trade velocity
         if token.trade_velocity >= self.min_trade_velocity:
             score += 20
-            reasons.append(f"⚡ {token.trade_velocity} trades in 5min")
+            reasons.append(f"[FAST] {token.trade_velocity} trades in 5min")
 
         # Volume ratio
         if token.volume_ratio >= self.min_volume_ratio:
             score += 15
-            reasons.append(f"📈 Volume {token.volume_ratio:.1f}x average")
+            reasons.append(f"[VOL] Volume {token.volume_ratio:.1f}x average")
 
         # Bonus for 1h growth
         if token.price_change_1h >= self.min_price_change_1h:
@@ -885,7 +867,7 @@ class TrendingScanner:
         # Bonus for early market cap
         if 20000 <= token.market_cap <= 200000:
             score += 10
-            reasons.append(f"🎯 Early MC: ${token.market_cap:,.0f}")
+            reasons.append(f"[EARLY] MC: ${token.market_cap:,.0f}")
 
         return score, reasons
 
@@ -917,7 +899,7 @@ class TrendingScanner:
         if expired:
             for mint in expired:
                 self.monitored_tokens.pop(mint, None)
-            logger.info(f"🔄 Rotated {len(expired)} tokens (TTL={self.token_monitor_ttl}s)")
+            logger.info(f"[ROTATE] Rotated {len(expired)} tokens (TTL={self.token_monitor_ttl}s)")
 
     def is_being_monitored(self, mint: str) -> bool:
         """Check if token is being monitored."""
@@ -963,7 +945,7 @@ class TrendingScanner:
 
     def get_budget_summary(self) -> str:
         """Get human-readable budget summary."""
-        lines = ["📊 API Budget Status:"]
+        lines = ["[BUDGET] API Budget Status:"]
         for source in self._enabled_sources:
             limiter = self.rate_limiters[source]
             if limiter.daily_budget > 0:
