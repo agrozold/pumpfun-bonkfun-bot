@@ -115,11 +115,17 @@ class TokenScorer:
         total_trades_5m = buys_5m + sells_5m
         total_trades_1h = buys_1h + sells_1h
         
-        # МИНИМУМ: 100 трейдов за 5 мин ИЛИ 1000 трейдов за час
-        min_trades_ok = total_trades_5m >= 100 or total_trades_1h >= 1000
+        # МИНИМУМ: 50 трейдов за 5 мин И 200 трейдов за час
+        # УЖЕСТОЧЕНО: Теперь требуем ОБА условия, не ИЛИ!
+        min_trades_5m_ok = total_trades_5m >= 50
+        min_trades_1h_ok = total_trades_1h >= 200
+        min_trades_ok = min_trades_5m_ok and min_trades_1h_ok
         
-        # МИНИМУМ: $1000 объём за 5 мин ИЛИ $20000 за час
-        min_volume_ok = volume_5m >= 1000 or volume_1h >= 20000
+        # МИНИМУМ: $500 объём за 5 мин И $5000 за час
+        # УЖЕСТОЧЕНО: Теперь требуем ОБА условия!
+        min_volume_5m_ok = volume_5m >= 500
+        min_volume_1h_ok = volume_1h >= 5000
+        min_volume_ok = min_volume_5m_ok and min_volume_1h_ok
         
         # МИНИМУМ: $500 ликвидности
         min_liquidity_ok = liquidity >= 500
@@ -139,7 +145,7 @@ class TokenScorer:
         if not min_trades_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO FEW TRADES: "
-                f"5m={total_trades_5m} (need 100), 1h={total_trades_1h} (need 1000)"
+                f"5m={total_trades_5m} (need 50), 1h={total_trades_1h} (need 200) - BOTH required!"
             )
             return TokenScore(
                 mint=mint,
@@ -150,7 +156,7 @@ class TokenScorer:
                 momentum_score=0,
                 liquidity_score=0,
                 details={
-                    "error": f"Too few trades: 5m={total_trades_5m}, 1h={total_trades_1h}",
+                    "error": f"Too few trades: 5m={total_trades_5m} (need 50), 1h={total_trades_1h} (need 200)",
                     "buys_5m": buys_5m,
                     "sells_5m": sells_5m,
                 },
@@ -161,7 +167,7 @@ class TokenScorer:
         if not min_volume_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO LOW VOLUME: "
-                f"5m=${volume_5m:.2f} (need $1000), 1h=${volume_1h:.2f} (need $20000)"
+                f"5m=${volume_5m:.2f} (need $500), 1h=${volume_1h:.2f} (need $5000) - BOTH required!"
             )
             return TokenScore(
                 mint=mint,
@@ -172,11 +178,11 @@ class TokenScorer:
                 momentum_score=0,
                 liquidity_score=0,
                 details={
-                    "error": f"Too low volume: 5m=${volume_5m:.2f}, 1h=${volume_1h:.2f}",
+                    "error": f"Too low volume: 5m=${volume_5m:.2f} (need $500), 1h=${volume_1h:.2f} (need $5000)",
                     "volume_5m": volume_5m,
                     "volume_1h": volume_1h,
-                    "min_volume_5m": 1000,
-                    "min_volume_1h": 20000,
+                    "min_volume_5m": 500,
+                    "min_volume_1h": 5000,
                 },
                 timestamp=datetime.utcnow(),
                 recommendation="SKIP",
