@@ -2011,50 +2011,6 @@ class UniversalTrader:
         except Exception:
             # If we can't check, assume might be migrated
             return True
-                else:
-                    # Log current status
-                    pnl = position.get_pnl(current_price)
-                    logger.debug(
-                        f"Position status: {current_price:.8f} SOL ({pnl['price_change_pct']:+.2f}%)"
-                    )
-
-                # Wait before next price check
-                await asyncio.sleep(self.price_check_interval)
-
-            except Exception as e:
-                consecutive_price_errors += 1
-                error_msg = str(e) if str(e) else type(e).__name__
-                logger.warning(
-                    f"[MONITOR] Price fetch error #{consecutive_price_errors}/{MAX_PRICE_ERRORS} "
-                    f"for {token_info.symbol}: {error_msg}"
-                )
-                
-                # Check if token migrated (bonding curve complete)
-                is_migrated = "complete" in error_msg.lower() or "not found" in error_msg.lower()
-                
-                if consecutive_price_errors >= MAX_PRICE_ERRORS or is_migrated:
-                    logger.warning(
-                        f"[FALLBACK] {consecutive_price_errors} consecutive price errors or token migrated - "
-                        f"attempting emergency fallback sell for {token_info.symbol}"
-                    )
-                    
-                    # Try fallback sell via PumpSwap/Jupiter
-                    fallback_success = await self._emergency_fallback_sell(
-                        token_info, position, last_known_price
-                    )
-                    
-                    if fallback_success:
-                        logger.info(f"[OK] Emergency fallback sell successful for {token_info.symbol}")
-                        break
-                    else:
-                        # Reset counter and keep trying
-                        consecutive_price_errors = 0
-                        logger.error(
-                            f"[FAIL] Emergency fallback sell failed for {token_info.symbol} - "
-                            "will retry after more price errors"
-                        )
-                
-                await asyncio.sleep(self.price_check_interval)
     
     async def _emergency_fallback_sell(
         self, token_info: TokenInfo, position: Position, last_price: float
