@@ -21,18 +21,18 @@ volume_pattern:
   # Минимальные пороги
   min_volume_1h: 10000        # $10k минимум объёма за час
   volume_spike_threshold: 3.0  # 3x от среднего = spike
-  min_trades_5m: 20           # Минимум 20 сделок за 5 мин
+  min_trades_5m: 200          # Минимум 200 сделок за 5 мин (строгий фильтр)
   min_buy_pressure: 0.55      # Минимум 55% покупок
   
   # Risk management
   max_wallet_concentration: 0.70  # > 70% = rug risk, skip
   
   # Scan settings
-  scan_interval: 30           # Сканировать каждые 30 сек
+  scan_interval: 100          # Сканировать каждые 100 сек
   max_tokens_per_scan: 50     # Макс токенов за скан
   
-  # Signal thresholds
-  min_health_score: 60        # Минимум health score для входа
+  # Signal thresholds (строгие!)
+  min_health_score: 70        # Минимум health score для входа
   min_opportunity_score: 70   # Минимум opportunity score
   
   # Patterns to look for (все включены по умолчанию)
