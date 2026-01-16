@@ -154,30 +154,30 @@ class RPCManager:
 
         # =================================================================
         # HELIUS = PRIMARY (hardcoded correct key!)
-        # Rate: 0.045 req/s per bot = 2.7 req/min = 162 req/hour
+        # 1M credits/month = 33k/day = 1388/hour = 23/min
+        # With 6 bots: ~4 req/min per bot for standard RPC
         # =================================================================
         self.providers["helius"] = ProviderConfig(
             name="Helius",
             http_endpoint=self.HELIUS_RPC,
             wss_endpoint=self.HELIUS_WSS,
-            rate_limit_per_second=0.05,  # Conservative: ~3 req/min per bot
+            rate_limit_per_second=0.5,  # 30 req/min total
             priority=0,  # HIGHEST priority
             is_primary=True,
         )
-        logger.info(
-            "[RPC] ✓ HELIUS PRIMARY configured (0.05 req/s = ~3 req/min per bot)"
-        )
+        logger.info("[RPC] ✓ HELIUS PRIMARY configured (0.5 req/s = 30 req/min)")
         logger.info(f"[RPC]   Daily budget: {HELIUS_DAILY_CREDITS} credits")
 
         # Helius Enhanced API (50 credits per request!)
+        # 33k daily / 50 = 666 enhanced requests/day max
         self.providers["helius_enhanced"] = ProviderConfig(
             name="Helius Enhanced",
             http_endpoint=self.HELIUS_ENHANCED,
-            rate_limit_per_second=0.001,  # Very limited: 50 credits each!
+            rate_limit_per_second=0.1,  # 6 req/min - conservative for 50 credit cost
             priority=0,
             is_primary=True,
         )
-        logger.info("[RPC] ✓ Helius Enhanced configured (0.001 req/s - expensive!)")
+        logger.info("[RPC] ✓ Helius Enhanced configured (0.1 req/s = 6 req/min)")
 
         # =================================================================
         # ALCHEMY = FALLBACK #1
