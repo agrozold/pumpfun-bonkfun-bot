@@ -54,12 +54,9 @@ PROGRAM_TO_PLATFORM: dict[str, str] = {
 }
 
 # Public RPC endpoints for fallback (free, but rate limited)
-# Order matters - try most reliable first
+# Only use endpoints that work without API keys
 PUBLIC_RPC_FALLBACK = [
     "https://api.mainnet-beta.solana.com",  # Official Solana - most reliable
-    "https://solana-mainnet.rpc.extrnode.com",  # Everstake - good uptime
-    "https://rpc.shyft.to",  # Shyft free tier
-    "https://solana.public-rpc.com",  # Public RPC
 ]
 
 # Helius API endpoints - loaded from HELIUS_API_KEY env var
