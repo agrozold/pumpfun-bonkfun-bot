@@ -1,10 +1,10 @@
-# PUMP.FUN Sniper Bot - Улучшенные фильтры
+# BAGS Platform Sniper Bot - Улучшенные фильтры
 # Ужесточённые настройки для избежания покупки падающих токенов
 
 enabled: true
 env_file: .env
-name: bot-sniper-pump
-platform: pump_fun
+name: bot-sniper-bags
+platform: bags
 separate_process: true
 
 # Listener

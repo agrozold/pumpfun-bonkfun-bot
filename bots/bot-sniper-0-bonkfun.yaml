@@ -1,87 +1,109 @@
-name: bot-sniper-bonkfun
+# LETSBONK.FUN Sniper Bot - Улучшенные фильтры
+# Ужесточённые настройки для избежания покупки падающих токенов
+
+enabled: true
 env_file: .env
+name: bot-sniper-bonk
+platform: lets_bonk
+separate_process: true
+
+# Listener
+filters:
+  bro_address: null
+  listener_type: fallback
+  match_string: null
+  max_token_age: 60  # Токены >= 1 минуты (60 секунд)
+  yolo_mode: false   # Отключить YOLO для осторожной торговли
+
+# RPC
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
 private_key: ${SOLANA_PRIVATE_KEY}
-enabled: true
-separate_process: true
-platform: lets_bonk
-pumpportal:
-  url: wss://pumpportal.fun/api/data
-trade:
-  buy_amount: 0.01
-  buy_slippage: 0.3
-  sell_slippage: 0.25
-  exit_strategy: tp_sl
-  take_profit_percentage: 1.0
-  stop_loss_percentage: 0.7
-  max_hold_time: 86400  # 24 hours
-  min_sol_balance: 0.03  # Stop buying if balance drops below this (reserve for sells)
-  price_check_interval: 2
+
+# Priority fees
 priority_fees:
   enable_dynamic: false
   enable_fixed: true
-  fixed_amount: 200000
-# compute_units:
-#   account_data_size: 512000  # Commented out - causes "max loaded accounts data size cap" error
-filters:
-  match_string: null
-  bro_address: null
-  listener_type: fallback
-  max_token_age: 0  # Без ограничения - покупаем по паттернам
-  marry_mode: false
-  yolo_mode: true
-  monitored_pools:
-  - bonk
-retries:
-  max_attempts: 3
-  wait_after_creation: 15
-  wait_after_buy: 2
-  wait_before_new_token: 1
-cleanup:
-  mode: post_session
-node:
-  max_rps: 50
+  fixed_amount: 500000
 
-# Pattern Detection - Ужесточённые фильтры
+# PumpPortal
+pumpportal:
+  url: wss://pumpportal.fun/api/data
+
+# Trade settings
+trade:
+  buy_amount: 0.01
+  buy_slippage: 0.3
+  exit_strategy: tp_sl
+  max_hold_time: 86400
+  min_sol_balance: 0.03
+  moon_bag_percentage: 20
+  price_check_interval: 2
+  sell_slippage: 0.25
+  stop_loss_percentage: 0.3
+  take_profit_percentage: 1.0
+
+# ============================================
+# PATTERN DETECTION - УЖЕСТОЧЁННЫЕ ФИЛЬТРЫ
+# ============================================
 pattern_detection:
   enabled: true
-  buy_pressure_threshold: 0.70     # 70% покупок
-  trade_velocity_threshold: 200    # 200 сделок за 5 мин
-  price_momentum_threshold: 0.05   # 5% рост
-  volume_spike_threshold: 3.0      # 3x от среднего объёма
-  holder_growth_threshold: 0.5     # 50% рост холдеров
-  min_whale_buys: 2                # 2+ whale покупки
-  min_patterns_to_buy: 2           # Минимум 2 паттерна для покупки
-  min_signal_strength: 0.7         # Минимум 70% сила сигнала
-  pattern_only_mode: true          # ТОЛЬКО по паттернам!
+  pattern_only_mode: true
+  
+  # УЖЕСТОЧЕНО
+  min_patterns_to_buy: 2           # Минимум 2 паттерна
+  min_signal_strength: 0.7         # 70% сила сигнала
+  min_whale_buys: 1                # 1 whale покупка
+  
+  # Пороги паттернов
+  buy_pressure_threshold: 0.75     # 75% покупок
+  trade_velocity_threshold: 300    # 300 сделок за 5 мин
+  price_momentum_threshold: 0.10   # 10% рост
+  volume_spike_threshold: 3.0      # 3x объём
+  
+  # High Volume Sideways
+  high_volume_buys_1h: 400
+  high_volume_sells_1h: 250
+  high_volume_alt_buys_1h: 150
+  high_volume_alt_max_sells_1h: 80
+  
+  # EXTREME BUY PRESSURE 5min
+  extreme_buy_pressure_min_buys_5m: 700
+  extreme_buy_pressure_max_sells_5m: 150
 
-# Token Scoring
+# ============================================
+# TOKEN SCORING - УЖЕСТОЧЕНО
+# ============================================
 scoring:
   enabled: true
-  min_score: 50
+  min_score: 70
 
-# Whale Copy Trading - ENABLED for letsbonk (multi-platform support added)
+# ============================================
+# WHALE COPY
+# ============================================
 whale_copy:
   enabled: true
   wallets_file: "smart_money_wallets.json"
-  min_buy_amount: 0.3
+  min_buy_amount: 0.5
+  helius_api_key: ${HELIUS_API_KEY}
 
-# Dev Reputation Check - filter out serial scammers
+# ============================================
+# DEV CHECK - УЖЕСТОЧЕНО
+# ============================================
 dev_check:
   enabled: true
-  max_tokens_created: 50
+  max_tokens_created: 20
   min_account_age_days: 1
 
-# Trending Scanner - ищет РЕЗКИЕ ВСПЛЕСКИ покупок
-# ВАЖНО: trending scanner обходит scoring и dev_check (skip_checks=True)
-# Поэтому фильтры здесь должны быть СТРОГИМИ!
+# ============================================
+# TRENDING SCANNER - УЖЕСТОЧЕНО
+# ============================================
 trending_scanner:
   enabled: true
-  min_volume_1h: 30000        # Минимум $30k объёма за 1 ЧАС
-  min_market_cap: 5000        # Минимум $5k маркеткап
-  max_market_cap: 0           # 0 = без лимита
-  min_price_change_5m: 10     # Минимум +10% за 5 МИНУТ
-  min_price_change_1h: 30     # Минимум +30% за час
-  min_buy_pressure: 0.75      # 75% покупок
-  scan_interval: 30           # Сканировать каждые 30 сек
+  min_volume_1h: 50000
+  min_market_cap: 10000
+  max_market_cap: 0
+  min_price_change_5m: 15
+  min_price_change_1h: 40
+  min_buy_pressure: 0.80
+  scan_interval: 30
