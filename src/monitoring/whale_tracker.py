@@ -100,10 +100,10 @@ class WhaleTracker:
     def _load_wallets(self):
         """Загрузить список кошельков китов."""
         path = Path(self.wallets_file)
-        logger.warning(f"🐋 Loading wallets from: {path.absolute()}")
+        logger.warning(f"[WHALE] Loading wallets from: {path.absolute()}")
         
         if not path.exists():
-            logger.error(f"🐋 Wallets file NOT FOUND: {path.absolute()}")
+            logger.error(f"[WHALE] Wallets file NOT FOUND: {path.absolute()}")
             return
         
         try:
@@ -111,7 +111,7 @@ class WhaleTracker:
                 data = json.load(f)
             
             whales_list = data.get("whales", [])
-            logger.warning(f"🐋 Found {len(whales_list)} entries in whales list")
+            logger.warning(f"[WHALE] Found {len(whales_list)} entries in whales list")
             
             for whale in whales_list:
                 wallet = whale.get("wallet", "")
@@ -122,12 +122,12 @@ class WhaleTracker:
                         "source": whale.get("source", "manual"),
                     }
             
-            logger.warning(f"🐋 Loaded {len(self.whale_wallets)} whale wallets successfully")
+            logger.warning(f"[WHALE] Loaded {len(self.whale_wallets)} whale wallets successfully")
             
         except json.JSONDecodeError as e:
-            logger.error(f"🐋 JSON parse error in {self.wallets_file}: {e}")
+            logger.error(f"[WHALE] JSON parse error in {self.wallets_file}: {e}")
         except Exception as e:
-            logger.exception(f"🐋 Error loading wallets: {e}")
+            logger.exception(f"[WHALE] Error loading wallets: {e}")
         except Exception as e:
             logger.exception(f"Failed to load wallets: {e}")
 
@@ -157,11 +157,11 @@ class WhaleTracker:
         
         # Если передан wss_endpoint - используем его (может быть приватный RPC)
         if self.wss_endpoint and "helius" not in self.wss_endpoint.lower():
-            logger.warning(f"🐋 WSS ENDPOINT: Using provided: {self.wss_endpoint[:50]}...")
+            logger.warning(f"[WHALE] WSS ENDPOINT: Using provided: {self.wss_endpoint[:50]}...")
             return self.wss_endpoint
         
         # Fallback на публичный Solana WSS
-        logger.warning(f"🐋 WSS ENDPOINT: Using public Solana (Helius gives 429)")
+        logger.warning(f"[WHALE] WSS ENDPOINT: Using public Solana (Helius gives 429)")
         return public_wss
 
     async def start(self):
@@ -171,12 +171,12 @@ class WhaleTracker:
         Иначе слушаем все платформы.
         """
         if not self.whale_wallets:
-            logger.warning("🐋 No whale wallets to track")
+            logger.warning("[WHALE] No whale wallets to track")
             return
         
         wss_url = self._get_wss_endpoint()
         if not wss_url:
-            logger.error("🐋 Cannot start whale tracker without WSS endpoint")
+            logger.error("[WHALE] Cannot start whale tracker without WSS endpoint")
             return
         
         self.running = True
@@ -195,10 +195,10 @@ class WhaleTracker:
             programs_to_track = ALL_PROGRAMS
             platform_names = "pump.fun, letsbonk"
         
-        logger.warning(f"🐋 WHALE TRACKER STARTED - tracking {len(self.whale_wallets)} wallets")
-        logger.warning(f"🐋 Min buy: {self.min_buy_amount} SOL, Time window: {self.time_window_minutes} min")
-        logger.warning(f"🐋 Monitoring: {platform_names}")
-        logger.info(f"🐋 WSS endpoint: {wss_url[:50]}...")
+        logger.warning(f"[WHALE] WHALE TRACKER STARTED - tracking {len(self.whale_wallets)} wallets")
+        logger.warning(f"[WHALE] Min buy: {self.min_buy_amount} SOL, Time window: {self.time_window_minutes} min")
+        logger.warning(f"[WHALE] Monitoring: {platform_names}")
+        logger.info(f"[WHALE] WSS endpoint: {wss_url[:50]}...")
         
         # Подписываемся на выбранные программы
         await self._track_programs(wss_url, programs_to_track)
@@ -226,7 +226,7 @@ class WhaleTracker:
         
         while self.running:
             try:
-                logger.info(f"🐋 Connecting to WSS for whale tracking...")
+                logger.info(f"[WHALE] Connecting to WSS for whale tracking...")
                 async with self._session.ws_connect(
                     wss_url,
                     heartbeat=30,
@@ -249,10 +249,10 @@ class WhaleTracker:
                         }
                         await ws.send_json(subscribe_msg)
                         platform_name = PROGRAM_TO_PLATFORM.get(program, program[:8])
-                        logger.warning(f"🐋 SUBSCRIBED to {platform_name} logs")
+                        logger.warning(f"[WHALE] SUBSCRIBED to {platform_name} logs")
                     
                     platform_info = self.target_platform or "ALL platforms"
-                    logger.warning(f"🐋 Filtering {len(self.whale_wallets)} whale wallets on {platform_info}")
+                    logger.warning(f"[WHALE] Filtering {len(self.whale_wallets)} whale wallets on {platform_info}")
                     
                     # Message processing loop with timeout protection
                     last_message_time = time.time()
@@ -274,7 +274,7 @@ class WhaleTracker:
                                         timeout=10  # 10s max for processing single message
                                     )
                                 except asyncio.TimeoutError:
-                                    logger.warning("🐋 Message processing timeout (10s) - skipping message")
+                                    logger.warning("[WHALE] Message processing timeout (10s) - skipping message")
                                     continue
                                 except json.JSONDecodeError:
                                     pass
@@ -283,42 +283,42 @@ class WhaleTracker:
                             elif msg.type == aiohttp.WSMsgType.PONG:
                                 pass  # Heartbeat response
                             elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
-                                logger.warning(f"🐋 WebSocket closed (type={msg.type}), reconnecting...")
+                                logger.warning(f"[WHALE] WebSocket closed (type={msg.type}), reconnecting...")
                                 break
                                 
                         except asyncio.TimeoutError:
                             # No message for 2 minutes - connection might be dead
                             idle_time = time.time() - last_message_time
-                            logger.warning(f"🐋 No messages for {idle_time:.0f}s - reconnecting...")
+                            logger.warning(f"[WHALE] No messages for {idle_time:.0f}s - reconnecting...")
                             break
                         except asyncio.CancelledError:
-                            logger.info("🐋 Whale tracker cancelled")
+                            logger.info("[WHALE] Whale tracker cancelled")
                             raise
                     
                     self._ws = None
                     
             except asyncio.CancelledError:
-                logger.info("🐋 Whale tracker task cancelled")
+                logger.info("[WHALE] Whale tracker task cancelled")
                 raise
             except asyncio.TimeoutError as e:
                 consecutive_errors += 1
-                logger.warning(f"🐋 WebSocket timeout: {e} (error {consecutive_errors}/{max_consecutive_errors})")
+                logger.warning(f"[WHALE] WebSocket timeout: {e} (error {consecutive_errors}/{max_consecutive_errors})")
             except aiohttp.ClientError as e:
                 consecutive_errors += 1
-                logger.warning(f"🐋 WebSocket client error: {e} (error {consecutive_errors}/{max_consecutive_errors})")
+                logger.warning(f"[WHALE] WebSocket client error: {e} (error {consecutive_errors}/{max_consecutive_errors})")
             except Exception as e:
                 consecutive_errors += 1
-                logger.exception(f"🐋 Error in log subscription: {e} (error {consecutive_errors}/{max_consecutive_errors})")
+                logger.exception(f"[WHALE] Error in log subscription: {e} (error {consecutive_errors}/{max_consecutive_errors})")
             
             if self.running:
                 # Exponential backoff with max 30s
                 if consecutive_errors >= max_consecutive_errors:
-                    logger.error(f"🐋 Too many consecutive errors ({consecutive_errors}), waiting 30s...")
+                    logger.error(f"[WHALE] Too many consecutive errors ({consecutive_errors}), waiting 30s...")
                     await asyncio.sleep(30)
                     consecutive_errors = 0  # Reset after long wait
                 else:
                     backoff = min(3 * (2 ** consecutive_errors), 30)
-                    logger.info(f"🐋 Reconnecting in {backoff}s...")
+                    logger.info(f"[WHALE] Reconnecting in {backoff}s...")
                     await asyncio.sleep(backoff)
 
     def _detect_platform_from_logs(self, logs: list[str]) -> str | None:
@@ -382,13 +382,13 @@ class WhaleTracker:
                 return
             
             # Логируем что нашли Buy транзакцию
-            logger.info(f"🐋 BUY TX detected on {platform}: {signature[:16]}...")
+            logger.info(f"[WHALE] BUY TX detected on {platform}: {signature[:16]}...")
             
             # Получаем детали транзакции и проверяем кошелёк
             await self._check_if_whale_tx(signature, platform)
             
         except Exception as e:
-            logger.warning(f"🐋 Error handling log: {e}")
+            logger.warning(f"[WHALE] Error handling log: {e}")
 
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
@@ -404,35 +404,35 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        logger.info(f"🐋 Checking TX {signature[:16]}... on {platform}")
+        logger.info(f"[WHALE] Checking TX {signature[:16]}... on {platform}")
         
         # ВАЖНО: Даём транзакции время подтвердиться
         # logsSubscribe даёт нам TX сразу (commitment: processed)
         # но getTransaction может их ещё не видеть
-        await asyncio.sleep(1.0)  # 1 секунда задержки
+        await asyncio.sleep(2.0)  # 2 секунды задержки (увеличено с 1с)
         
           # Используем стандартный RPC вместо Helius для экономии запросов
         if self.rpc_endpoint:
             tx = await self._get_tx_rpc(signature)
             if tx:
-                logger.info(f"🐋 Got TX data from RPC for {signature[:16]}...")
-                logger.warning(f"🐋 ACCOUNT KEYS: {[str(a)[:16] for a in tx.get('transaction', {}).get('message', {}).get('accountKeys', [])[:5]]}")
+                logger.info(f"[WHALE] Got TX data from RPC for {signature[:16]}...")
+                logger.warning(f"[WHALE] ACCOUNT KEYS: {[str(a)[:16] for a in tx.get('transaction', {}).get('message', {}).get('accountKeys', [])[:5]]}")
                 await self._process_rpc_tx(tx, signature, platform)
                 return
             else:
-                logger.info(f"🐋 RPC returned no data for {signature[:16]}...")
+                logger.info(f"[WHALE] RPC returned no data for {signature[:16]}...")
 
         
         # Fallback на Helius только если RPC не сработал
         if self.helius_api_key:
-            logger.info(f"🐋 Trying Helius for {signature[:16]}...")
+            logger.info(f"[WHALE] Trying Helius for {signature[:16]}...")
             tx = await self._get_tx_helius(signature)
             if tx:
-                logger.info(f"🐋 Got TX data from Helius for {signature[:16]}...")
+                logger.info(f"[WHALE] Got TX data from Helius for {signature[:16]}...")
                 await self._process_helius_tx(tx, platform)
                 return
             else:
-                logger.info(f"🐋 Helius returned no data for {signature[:16]}...")
+                logger.info(f"[WHALE] Helius returned no data for {signature[:16]}...")
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""
@@ -453,11 +453,11 @@ class WhaleTracker:
 
     async def _get_tx_rpc(self, signature: str) -> dict | None:
         """Получить транзакцию через RPC."""
-        logger.warning(f"🐋 [DEBUG] _get_tx_rpc() called - sig={signature[:16]}...")
-        logger.warning(f"🐋 [DEBUG] RPC endpoint: {self.rpc_endpoint[:50] if self.rpc_endpoint else 'NONE'}")
+        logger.warning(f"[WHALE] [DEBUG] _get_tx_rpc() called - sig={signature[:16]}...")
+        logger.warning(f"[WHALE] [DEBUG] RPC endpoint: {self.rpc_endpoint[:50] if self.rpc_endpoint else 'NONE'}")
         
         if not self.rpc_endpoint:
-            logger.error("🐋 [ERROR] RPC endpoint is None!")
+            logger.error("[WHALE] [ERROR] RPC endpoint is None!")
             return None
         
         payload = {
@@ -472,40 +472,40 @@ class WhaleTracker:
                 self.rpc_endpoint, json=payload,
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
-                logger.warning(f"🐋 [DEBUG] RPC response status: {resp.status}")
+                logger.warning(f"[WHALE] [DEBUG] RPC response status: {resp.status}")
                 
                 response_text = await resp.text()
-                logger.warning(f"🐋 [DEBUG] RPC response (first 300 chars): {response_text[:300]}")
+                logger.warning(f"[WHALE] [DEBUG] RPC response (first 300 chars): {response_text[:300]}")
                 
                 if resp.status == 200:
                     try:
                         data = json.loads(response_text)
                     except json.JSONDecodeError as e:
-                        logger.error(f"🐋 [ERROR] JSON parse failed: {e}")
+                        logger.error(f"[WHALE] [ERROR] JSON parse failed: {e}")
                         return None
                     
                     result = data.get("result")
                     error = data.get("error")
                     
                     if error:
-                        logger.error(f"🐋 [ERROR] RPC error: {error}")
+                        logger.error(f"[WHALE] [ERROR] RPC error: {error}")
                         return None
                     
                     if result is None:
-                        logger.warning(f"🐋 [WARNING] RPC returned null result (TX may not be finalized)")
+                        logger.warning(f"[WHALE] [WARNING] RPC returned null result (TX may not be finalized)")
                         return None
                     
-                    logger.warning(f"🐋 [SUCCESS] Got TX data: {len(str(result))} bytes")
+                    logger.warning(f"[WHALE] [SUCCESS] Got TX data: {len(str(result))} bytes")
                     return result
                 else:
-                    logger.warning(f"🐋 [ERROR] RPC HTTP error {resp.status}")
+                    logger.warning(f"[WHALE] [ERROR] RPC HTTP error {resp.status}")
                     return None
                     
         except asyncio.TimeoutError:
-            logger.error(f"🐋 [ERROR] RPC timeout after 10s")
+            logger.error(f"[WHALE] [ERROR] RPC timeout after 10s")
             return None
         except Exception as e:
-            logger.exception(f"🐋 [ERROR] RPC request failed: {e}")
+            logger.exception(f"[WHALE] [ERROR] RPC request failed: {e}")
         return None
 
     async def _process_helius_tx(self, tx: dict, platform: str = "pump_fun"):
@@ -568,22 +568,22 @@ class WhaleTracker:
             account_keys = message.get("accountKeys", [])
             
             if not account_keys:
-                logger.info(f"🐋 No account keys in TX {signature[:16]}...")
+                logger.info(f"[WHALE] No account keys in TX {signature[:16]}...")
                 return
             
             # fee_payer - первый аккаунт
             first_key = account_keys[0]
             fee_payer = first_key.get("pubkey", "") if isinstance(first_key, dict) else str(first_key)
             
-            logger.info(f"🐋 TX {signature[:16]}... fee_payer: {fee_payer[:8]}...")
+            logger.info(f"[WHALE] TX {signature[:16]}... fee_payer: {fee_payer[:8]}...")
             
             if fee_payer not in self.whale_wallets:
-                logger.info(f"🐋 Fee payer {fee_payer[:8]}... NOT in whale list")
+                logger.info(f"[WHALE] Fee payer {fee_payer[:8]}... NOT in whale list")
                 return
             
-            # 🐋 НАШЛИ КИТА!
+            # [WHALE] НАШЛИ КИТА!
             whale_info = self.whale_wallets[fee_payer]
-            logger.warning(f"🐋 WHALE TX DETECTED: {whale_info.get('label', 'whale')} ({fee_payer[:8]}...) on {platform}")
+            logger.warning(f"[WHALE] WHALE TX DETECTED: {whale_info.get('label', 'whale')} ({fee_payer[:8]}...) on {platform}")
             
             meta = tx.get("meta", {})
             
@@ -595,7 +595,7 @@ class WhaleTracker:
             post = meta.get("postBalances", [])
             sol_spent = (pre[0] - post[0]) / 1e9 if pre and post else 0
             
-            logger.warning(f"🐋 Whale spent: {sol_spent:.4f} SOL (min: {self.min_buy_amount})")
+            logger.warning(f"[WHALE] Whale spent: {sol_spent:.4f} SOL (min: {self.min_buy_amount})")
             
             # Ищем токен
             token_mint = None
@@ -605,12 +605,12 @@ class WhaleTracker:
                     break
             
             if token_mint:
-                logger.warning(f"🐋 Token mint: {token_mint[:16]}...")
+                logger.warning(f"[WHALE] Token mint: {token_mint[:16]}...")
             else:
-                logger.warning(f"🐋 No token mint found in postTokenBalances")
+                logger.warning(f"[WHALE] No token mint found in postTokenBalances")
             
             if sol_spent >= self.min_buy_amount and token_mint:
-                logger.warning(f"🐋 WHALE BUY QUALIFIES: {sol_spent:.2f} SOL >= {self.min_buy_amount} SOL on {platform}")
+                logger.warning(f"[WHALE] WHALE BUY QUALIFIES: {sol_spent:.2f} SOL >= {self.min_buy_amount} SOL on {platform}")
                 await self._emit_whale_buy(
                     wallet=fee_payer,
                     token_mint=token_mint,
@@ -622,12 +622,12 @@ class WhaleTracker:
                 )
             else:
                 if sol_spent < self.min_buy_amount:
-                    logger.info(f"🐋 Amount too small: {sol_spent:.4f} < {self.min_buy_amount}")
+                    logger.info(f"[WHALE] Amount too small: {sol_spent:.4f} < {self.min_buy_amount}")
                 if not token_mint:
-                    logger.info(f"🐋 No token mint found")
+                    logger.info(f"[WHALE] No token mint found")
                 
         except Exception as e:
-            logger.warning(f"🐋 Error processing RPC tx: {e}")
+            logger.warning(f"[WHALE] Error processing RPC tx: {e}")
 
     async def _emit_whale_buy(
         self, 
@@ -663,19 +663,19 @@ class WhaleTracker:
             # ГЛАВНЫЙ ФИЛЬТР: Пропускаем старые покупки!
             if age_seconds > self.time_window_seconds:
                 logger.info(
-                    f"⏰ SKIP OLD: {whale_label} ({wallet[:8]}...) "
+                    f"[WHALE] SKIP OLD: {whale_label} ({wallet[:8]}...) "
                     f"bought {token_mint[:8]}... {age_seconds:.0f}s ago "
                     f"(outside {self.time_window_minutes} min window)"
                 )
                 return
             
             logger.info(
-                f"🐋 FRESH BUY: {whale_label} bought {age_seconds:.1f}s ago "
-                f"(within {self.time_window_minutes} min window ✅)"
+                f"[WHALE] FRESH BUY: {whale_label} bought {age_seconds:.1f}s ago "
+                f"(within {self.time_window_minutes} min window OK)"
             )
         else:
             # Если нет block_time - это real-time событие, копируем
-            logger.info(f"🐋 REAL-TIME BUY: {whale_label} (no block_time, assuming fresh)")
+            logger.info(f"[WHALE] REAL-TIME BUY: {whale_label} (no block_time, assuming fresh)")
         
         whale_buy = WhaleBuy(
             whale_wallet=wallet,
@@ -691,7 +691,7 @@ class WhaleTracker:
         )
         
         logger.warning(
-            f"🐋 WHALE BUY: {whale_label} ({wallet[:8]}...) "
+            f"[WHALE] WHALE BUY: {whale_label} ({wallet[:8]}...) "
             f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL "
             f"on {platform} ({age_seconds:.1f}s ago)"
         )
