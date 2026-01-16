@@ -134,7 +134,7 @@ class UniversalTrader:
         enable_trending_scanner: bool = False,
         trending_min_volume_1h: float = 50000,
         trending_min_market_cap: float = 10000,
-        trending_max_market_cap: float = 5000000,
+        trending_max_market_cap: float = 0,  # 0 = БЕЗ ОГРАНИЧЕНИЙ по верхней планке!
         trending_min_price_change_5m: float = 5,
         trending_min_price_change_1h: float = 20,
         trending_min_buy_pressure: float = 0.65,
@@ -615,8 +615,9 @@ class UniversalTrader:
                     f"[WHALE] SCORE OK: {whale_buy.token_symbol} score={score.total_score} >= {self.token_scorer.min_score}"
                 )
             except Exception as e:
-                # Если scoring упал - логируем но продолжаем (не блокируем whale copy)
-                logger.warning(f"[WHALE] Scoring check failed: {e} - proceeding with whale copy")
+                # CRITICAL: Если scoring упал - НЕ покупаем! Безопасность важнее
+                logger.warning(f"[WHALE] SKIP - Scoring check failed: {e} - NOT buying without score!")
+                return
         
         # Use lock to prevent race condition between ALL buy paths
         async with self._buy_lock:
@@ -1855,7 +1856,9 @@ class UniversalTrader:
                         )
                         return
                 except Exception as e:
-                    logger.warning(f"Scoring failed, proceeding anyway: {e}")
+                    # CRITICAL: Если scoring упал - НЕ покупаем! Безопасность важнее скорости
+                    logger.warning(f"[SKIP] Scoring failed for {token_info.symbol}: {e} - NOT buying!")
+                    return
 
             # Check dev reputation result if enabled
             if dev_check_task:

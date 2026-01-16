@@ -85,18 +85,109 @@ class TokenScorer:
         dex_data = await self._fetch_dexscreener(session, mint)
         
         if not dex_data:
-            # Нет данных - возвращаем нейтральный score
+            # Нет данных - SKIP! Не покупаем токены без данных
+            logger.warning(f"[SKIP] {symbol} ({mint[:8]}...) - No Dexscreener data, refusing to buy")
             return TokenScore(
                 mint=mint,
                 symbol=symbol,
-                total_score=50,
-                volume_score=50,
-                buy_pressure_score=50,
-                momentum_score=50,
-                liquidity_score=50,
-                details={"error": "No Dexscreener data"},
+                total_score=0,  # ZERO score = SKIP
+                volume_score=0,
+                buy_pressure_score=0,
+                momentum_score=0,
+                liquidity_score=0,
+                details={"error": "No Dexscreener data - SKIP"},
                 timestamp=datetime.utcnow(),
-                recommendation="HOLD",
+                recommendation="SKIP",
+            )
+        
+        # ============================================
+        # МИНИМАЛЬНЫЕ ТРЕБОВАНИЯ - ЖЁСТКИЙ ФИЛЬТР!
+        # Токены с минимальной активностью = SKIP
+        # ============================================
+        buys_5m = dex_data.get("buys_5m", 0)
+        sells_5m = dex_data.get("sells_5m", 0)
+        buys_1h = dex_data.get("buys_1h", 0)
+        sells_1h = dex_data.get("sells_1h", 0)
+        volume_5m = dex_data.get("volume_5m", 0)
+        volume_1h = dex_data.get("volume_1h", 0)
+        liquidity = dex_data.get("liquidity_usd", 0)
+        
+        total_trades_5m = buys_5m + sells_5m
+        total_trades_1h = buys_1h + sells_1h
+        
+        # МИНИМУМ: 100 трейдов за 5 мин ИЛИ 1000 трейдов за час
+        min_trades_ok = total_trades_5m >= 100 or total_trades_1h >= 1000
+        
+        # МИНИМУМ: $1000 объём за 5 мин ИЛИ $20000 за час
+        min_volume_ok = volume_5m >= 1000 or volume_1h >= 20000
+        
+        # МИНИМУМ: $500 ликвидности
+        min_liquidity_ok = liquidity >= 500
+        
+        if not min_trades_ok:
+            logger.warning(
+                f"[SKIP] {symbol} - TOO FEW TRADES: "
+                f"5m={total_trades_5m} (need 100), 1h={total_trades_1h} (need 1000)"
+            )
+            return TokenScore(
+                mint=mint,
+                symbol=symbol,
+                total_score=0,
+                volume_score=0,
+                buy_pressure_score=0,
+                momentum_score=0,
+                liquidity_score=0,
+                details={
+                    "error": f"Too few trades: 5m={total_trades_5m}, 1h={total_trades_1h}",
+                    "buys_5m": buys_5m,
+                    "sells_5m": sells_5m,
+                },
+                timestamp=datetime.utcnow(),
+                recommendation="SKIP",
+            )
+        
+        if not min_volume_ok:
+            logger.warning(
+                f"[SKIP] {symbol} - TOO LOW VOLUME: "
+                f"5m=${volume_5m:.2f} (need $1000), 1h=${volume_1h:.2f} (need $20000)"
+            )
+            return TokenScore(
+                mint=mint,
+                symbol=symbol,
+                total_score=0,
+                volume_score=0,
+                buy_pressure_score=0,
+                momentum_score=0,
+                liquidity_score=0,
+                details={
+                    "error": f"Too low volume: 5m=${volume_5m:.2f}, 1h=${volume_1h:.2f}",
+                    "volume_5m": volume_5m,
+                    "volume_1h": volume_1h,
+                    "min_volume_5m": 1000,
+                    "min_volume_1h": 20000,
+                },
+                timestamp=datetime.utcnow(),
+                recommendation="SKIP",
+            )
+        
+        if not min_liquidity_ok:
+            logger.warning(
+                f"[SKIP] {symbol} - TOO LOW LIQUIDITY: ${liquidity:.2f} (need $500)"
+            )
+            return TokenScore(
+                mint=mint,
+                symbol=symbol,
+                total_score=0,
+                volume_score=0,
+                buy_pressure_score=0,
+                momentum_score=0,
+                liquidity_score=0,
+                details={
+                    "error": f"Too low liquidity: ${liquidity:.2f}",
+                    "liquidity_usd": liquidity,
+                },
+                timestamp=datetime.utcnow(),
+                recommendation="SKIP",
             )
         
         # Рассчитать отдельные scores
