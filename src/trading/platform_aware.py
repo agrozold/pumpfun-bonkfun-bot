@@ -229,6 +229,9 @@ class PlatformAwareBuyer(Trader):
         elif token_info.platform == Platform.LETS_BONK:
             if hasattr(token_info, "pool_state") and token_info.pool_state:
                 return token_info.pool_state
+        elif token_info.platform == Platform.BAGS:
+            if hasattr(token_info, "pool_state") and token_info.pool_state:
+                return token_info.pool_state
 
         # Fallback to deriving the address using platform provider
         return address_provider.derive_pool_address(token_info.mint)
@@ -240,6 +243,7 @@ class PlatformAwareBuyer(Trader):
 
         For pump.fun: SOL goes to the bonding curve
         For letsbonk: SOL goes to the quote_vault (WSOL vault)
+        For BAGS: SOL goes to the quote_vault (WSOL vault)
 
         Args:
             token_info: Token information
@@ -258,6 +262,12 @@ class PlatformAwareBuyer(Trader):
             return address_provider.derive_pool_address(token_info.mint)
         elif token_info.platform == Platform.LETS_BONK:
             # For letsbonk, SOL goes to quote_vault (WSOL vault)
+            if hasattr(token_info, "quote_vault") and token_info.quote_vault:
+                return token_info.quote_vault
+            # Derive quote_vault if not available
+            return address_provider.derive_quote_vault(token_info.mint)
+        elif token_info.platform == Platform.BAGS:
+            # For BAGS, SOL goes to quote_vault (WSOL vault)
             if hasattr(token_info, "quote_vault") and token_info.quote_vault:
                 return token_info.quote_vault
             # Derive quote_vault if not available
@@ -461,6 +471,9 @@ class PlatformAwareSeller(Trader):
             if hasattr(token_info, "bonding_curve") and token_info.bonding_curve:
                 return token_info.bonding_curve
         elif token_info.platform == Platform.LETS_BONK:
+            if hasattr(token_info, "pool_state") and token_info.pool_state:
+                return token_info.pool_state
+        elif token_info.platform == Platform.BAGS:
             if hasattr(token_info, "pool_state") and token_info.pool_state:
                 return token_info.pool_state
 

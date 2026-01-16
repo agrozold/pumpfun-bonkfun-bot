@@ -120,7 +120,7 @@ class ListenerFactory:
             )
 
             # Validate that requested platforms support PumpPortal
-            supported_pumpportal_platforms = [Platform.PUMP_FUN, Platform.LETS_BONK]
+            supported_pumpportal_platforms = [Platform.PUMP_FUN, Platform.LETS_BONK, Platform.BAGS]
 
             if platforms:
                 unsupported = [
@@ -180,6 +180,8 @@ class ListenerFactory:
             return ["logs", "blocks", "geyser", "pumpportal"]
         elif platform == Platform.LETS_BONK:
             return ["blocks", "geyser", "pumpportal"]  # Added pumpportal support
+        elif platform == Platform.BAGS:
+            return ["blocks", "geyser", "pumpportal"]  # BAGS supports same as letsbonk
         else:
             return ["blocks", "geyser"]  # Default universal listeners
 
@@ -190,4 +192,4 @@ class ListenerFactory:
         Returns:
             List of platforms with PumpPortal support
         """
-        return [Platform.PUMP_FUN, Platform.LETS_BONK]
+        return [Platform.PUMP_FUN, Platform.LETS_BONK, Platform.BAGS]

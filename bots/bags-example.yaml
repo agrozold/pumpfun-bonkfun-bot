@@ -1,0 +1,91 @@
+# BAGS Platform Bot Configuration Example
+# BAGS tokens are identified by mint addresses ending with "bags"
+# BAGS uses Meteora DBC (Dynamic Bonding Curve) for token trading:
+# - DBC Program ID: dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN
+# - DAMM v2 Program ID: cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG (post-migration)
+
+enabled: true
+env_file: .env
+name: bot-sniper-bags
+platform: bags
+
+# Connection settings
+rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
+wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
+private_key: ${SOLANA_PRIVATE_KEY}
+
+# Run in separate process for isolation
+separate_process: true
+
+# Listener configuration
+# BAGS supports: blocks, geyser, pumpportal, fallback
+filters:
+  listener_type: pumpportal
+  max_token_age: 60  # Max 60 seconds old tokens
+  yolo_mode: false
+  match_string: null
+  bro_address: null
+
+# PumpPortal WebSocket for real-time token events
+pumpportal:
+  url: wss://pumpportal.fun/api/data
+
+# Trading parameters
+trade:
+  buy_amount: 0.01  # SOL amount per trade
+  buy_slippage: 0.3  # 30% slippage tolerance
+  sell_slippage: 0.25
+  exit_strategy: tp_sl  # time_based, tp_sl, or manual
+  max_hold_time: 3600  # 1 hour max hold
+  min_sol_balance: 0.05  # Reserve for gas fees
+  moon_bag_percentage: 20  # Keep 20% on take profit
+  price_check_interval: 5
+  stop_loss_percentage: 0.3  # -30% stop loss
+  take_profit_percentage: 1.0  # +100% take profit
+
+# Priority fees for faster transactions
+priority_fees:
+  enable_dynamic: false
+  enable_fixed: true
+  fixed_amount: 300000  # microlamports
+
+# Pattern Detection for BAGS tokens
+pattern_detection:
+  enabled: true
+  buy_pressure_threshold: 0.6
+  trade_velocity_threshold: 20
+  price_momentum_threshold: 0.05
+  volume_spike_threshold: 2.5
+  min_whale_buys: 1
+  min_patterns_to_buy: 2
+  min_signal_strength: 0.6
+  pattern_only_mode: false
+
+# Token Scoring
+scoring:
+  enabled: true
+  min_score: 50
+
+# Whale Copy Trading
+whale_copy:
+  enabled: true
+  wallets_file: "smart_money_wallets.json"
+  min_buy_amount: 0.5
+  helius_api_key: ${HELIUS_API_KEY}
+
+# Dev Reputation Check
+dev_check:
+  enabled: true
+  max_tokens_created: 20
+  min_account_age_days: 1
+
+# Trending Scanner
+trending_scanner:
+  enabled: true
+  min_volume_1h: 50000
+  min_market_cap: 10000
+  max_market_cap: 0
+  min_price_change_5m: 5
+  min_price_change_1h: 20
+  min_buy_pressure: 0.6
+  scan_interval: 60

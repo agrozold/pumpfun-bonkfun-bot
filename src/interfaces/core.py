@@ -19,6 +19,7 @@ class Platform(Enum):
 
     PUMP_FUN = "pump_fun"
     LETS_BONK = "lets_bonk"
+    BAGS = "bags"
 
 
 @dataclass
@@ -35,11 +36,11 @@ class TokenInfo:
     platform: Platform
     bonding_curve: Pubkey | None = None  # pump.fun specific
     associated_bonding_curve: Pubkey | None = None  # pump.fun specific
-    pool_state: Pubkey | None = None  # LetsBonk specific
-    base_vault: Pubkey | None = None  # LetsBonk specific
-    quote_vault: Pubkey | None = None  # LetsBonk specific
-    global_config: Pubkey | None = None  # LetsBonk specific
-    platform_config: Pubkey | None = None  # LetsBonk specific
+    pool_state: Pubkey | None = None  # LetsBonk/BAGS specific
+    base_vault: Pubkey | None = None  # LetsBonk/BAGS specific
+    quote_vault: Pubkey | None = None  # LetsBonk/BAGS specific
+    global_config: Pubkey | None = None  # LetsBonk/BAGS specific
+    platform_config: Pubkey | None = None  # LetsBonk/BAGS specific
 
     # Common fields
     user: Pubkey | None = None

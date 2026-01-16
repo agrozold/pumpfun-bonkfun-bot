@@ -1,0 +1,234 @@
+{
+  "version": "0.1.0",
+  "name": "meteora_dbc",
+  "metadata": {
+    "description": "Meteora Dynamic Bonding Curve (DBC) - used by BAGS platform",
+    "dbc_program_id": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN",
+    "damm_v2_program_id": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",
+    "pool_authority": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+  },
+  "instructions": [
+    {
+      "name": "initialize_virtual_pool_with_spl_token",
+      "docs": ["Initialize a new DBC virtual pool with SPL token"],
+      "accounts": [
+        {"name": "creator", "isMut": true, "isSigner": true},
+        {"name": "pool", "isMut": true, "isSigner": false},
+        {"name": "config", "isMut": false, "isSigner": false},
+        {"name": "baseMint", "isMut": true, "isSigner": false},
+        {"name": "quoteMint", "isMut": false, "isSigner": false},
+        {"name": "baseVault", "isMut": true, "isSigner": false},
+        {"name": "quoteVault", "isMut": true, "isSigner": false},
+        {"name": "mintMetadata", "isMut": true, "isSigner": false},
+        {"name": "payer", "isMut": true, "isSigner": true},
+        {"name": "systemProgram", "isMut": false, "isSigner": false},
+        {"name": "tokenProgram", "isMut": false, "isSigner": false},
+        {"name": "associatedTokenProgram", "isMut": false, "isSigner": false},
+        {"name": "metadataProgram", "isMut": false, "isSigner": false},
+        {"name": "rent", "isMut": false, "isSigner": false}
+      ],
+      "args": [
+        {"name": "params", "type": {"defined": "InitializeVirtualPoolParams"}}
+      ]
+    },
+    {
+      "name": "swap",
+      "docs": ["Swap tokens on the DBC bonding curve (buy or sell)"],
+      "accounts": [
+        {"name": "pool", "isMut": true, "isSigner": false},
+        {"name": "config", "isMut": false, "isSigner": false},
+        {"name": "userSourceToken", "isMut": true, "isSigner": false},
+        {"name": "userDestinationToken", "isMut": true, "isSigner": false},
+        {"name": "baseVault", "isMut": true, "isSigner": false},
+        {"name": "quoteVault", "isMut": true, "isSigner": false},
+        {"name": "baseMint", "isMut": false, "isSigner": false},
+        {"name": "quoteMint", "isMut": false, "isSigner": false},
+        {"name": "user", "isMut": true, "isSigner": true},
+        {"name": "tokenProgram", "isMut": false, "isSigner": false},
+        {"name": "eventAuthority", "isMut": false, "isSigner": false},
+        {"name": "program", "isMut": false, "isSigner": false}
+      ],
+      "args": [
+        {"name": "amountIn", "type": "u64"},
+        {"name": "minimumAmountOut", "type": "u64"}
+      ]
+    },
+    {
+      "name": "migrate_meteora_damm",
+      "docs": ["Migrate DBC pool to Meteora DAMM v1"],
+      "accounts": [
+        {"name": "virtualPool", "isMut": true, "isSigner": false},
+        {"name": "migrationMetadata", "isMut": true, "isSigner": false},
+        {"name": "pool", "isMut": true, "isSigner": false},
+        {"name": "lpMint", "isMut": true, "isSigner": false},
+        {"name": "tokenAMint", "isMut": false, "isSigner": false},
+        {"name": "tokenBMint", "isMut": false, "isSigner": false},
+        {"name": "aVault", "isMut": true, "isSigner": false},
+        {"name": "bVault", "isMut": true, "isSigner": false}
+      ],
+      "args": []
+    },
+    {
+      "name": "migrate_meteora_damm_v2",
+      "docs": ["Migrate DBC pool to Meteora DAMM v2"],
+      "accounts": [
+        {"name": "virtualPool", "isMut": true, "isSigner": false},
+        {"name": "migrationMetadata", "isMut": true, "isSigner": false},
+        {"name": "pool", "isMut": true, "isSigner": false},
+        {"name": "firstPositionNftMint", "isMut": true, "isSigner": false},
+        {"name": "firstPositionNftAccount", "isMut": true, "isSigner": false},
+        {"name": "firstPosition", "isMut": true, "isSigner": false},
+        {"name": "secondPositionNftMint", "isMut": true, "isSigner": false},
+        {"name": "secondPositionNftAccount", "isMut": true, "isSigner": false},
+        {"name": "secondPosition", "isMut": true, "isSigner": false},
+        {"name": "baseMint", "isMut": false, "isSigner": false},
+        {"name": "quoteMint", "isMut": false, "isSigner": false}
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "VirtualPool",
+      "docs": ["DBC Virtual Pool state account"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {"name": "config", "type": "publicKey"},
+          {"name": "creator", "type": "publicKey"},
+          {"name": "baseMint", "type": "publicKey"},
+          {"name": "quoteMint", "type": "publicKey"},
+          {"name": "baseVault", "type": "publicKey"},
+          {"name": "quoteVault", "type": "publicKey"},
+          {"name": "sqrtPrice", "type": "u128"},
+          {"name": "baseReserve", "type": "u64"},
+          {"name": "quoteReserve", "type": "u64"},
+          {"name": "activeBin", "type": "i32"},
+          {"name": "status", "type": "u8"},
+          {"name": "bump", "type": "u8"},
+          {"name": "createdAt", "type": "i64"},
+          {"name": "migrationThreshold", "type": "u64"}
+        ]
+      }
+    },
+    {
+      "name": "PoolConfig",
+      "docs": ["DBC Pool configuration"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {"name": "authority", "type": "publicKey"},
+          {"name": "quoteMint", "type": "publicKey"},
+          {"name": "baseFee", "type": {"defined": "BaseFee"}},
+          {"name": "dynamicFee", "type": {"defined": "DynamicFee"}},
+          {"name": "migrationFeeOption", "type": "u8"},
+          {"name": "activationType", "type": "u8"},
+          {"name": "tokenType", "type": "u8"},
+          {"name": "collectFeeMode", "type": "u8"},
+          {"name": "migrationQuoteThreshold", "type": "u64"},
+          {"name": "partnerLpPercentage", "type": "u16"},
+          {"name": "partnerLockedLpPercentage", "type": "u16"},
+          {"name": "creatorLpPercentage", "type": "u16"},
+          {"name": "creatorLockedLpPercentage", "type": "u16"}
+        ]
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "InitializeVirtualPoolParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {"name": "name", "type": "string"},
+          {"name": "symbol", "type": "string"},
+          {"name": "uri", "type": "string"}
+        ]
+      }
+    },
+    {
+      "name": "BaseFee",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {"name": "cliffFeeNumerator", "type": "u64"},
+          {"name": "firstFactor", "type": "i16"},
+          {"name": "secondFactor", "type": "i16"},
+          {"name": "thirdFactor", "type": "i16"}
+        ]
+      }
+    },
+    {
+      "name": "DynamicFee",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {"name": "initialized", "type": "bool"},
+          {"name": "maxVolatilityAccumulator", "type": "u32"},
+          {"name": "volatilityAccumulator", "type": "u32"},
+          {"name": "volatilityReference", "type": "u32"},
+          {"name": "indexReference", "type": "i32"},
+          {"name": "lastUpdateTimestamp", "type": "i64"}
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "EvtInitializeVirtualPoolWithSplToken",
+      "fields": [
+        {"name": "name", "type": "string", "index": false},
+        {"name": "symbol", "type": "string", "index": false},
+        {"name": "uri", "type": "string", "index": false},
+        {"name": "creator", "type": "publicKey", "index": false},
+        {"name": "mint", "type": "publicKey", "index": false},
+        {"name": "pool", "type": "publicKey", "index": false},
+        {"name": "quoteMint", "type": "publicKey", "index": false},
+        {"name": "baseVault", "type": "publicKey", "index": false},
+        {"name": "quoteVault", "type": "publicKey", "index": false}
+      ]
+    },
+    {
+      "name": "EvtSwap2",
+      "fields": [
+        {"name": "pool", "type": "publicKey", "index": false},
+        {"name": "config", "type": "publicKey", "index": false},
+        {"name": "tradeDirection", "type": "u8", "index": false},
+        {"name": "hasReferral", "type": "bool", "index": false},
+        {"name": "amount0", "type": "u128", "index": false},
+        {"name": "amount1", "type": "u64", "index": false},
+        {"name": "swapMode", "type": "u8", "index": false},
+        {"name": "outputAmount", "type": "u64", "index": false},
+        {"name": "nextSqrtPrice", "type": "u128", "index": false},
+        {"name": "tradingFee", "type": "u64", "index": false},
+        {"name": "protocolFee", "type": "u64", "index": false},
+        {"name": "referralFee", "type": "u64", "index": false},
+        {"name": "quoteReserveAmount", "type": "u64", "index": false},
+        {"name": "migrationThreshold", "type": "u64", "index": false},
+        {"name": "currentTimestamp", "type": "i64", "index": false}
+      ]
+    },
+    {
+      "name": "EvtMigrateMeteoraDamm",
+      "fields": [
+        {"name": "virtualPool", "type": "publicKey", "index": false},
+        {"name": "migrationMetadata", "type": "publicKey", "index": false},
+        {"name": "pool", "type": "publicKey", "index": false},
+        {"name": "lpMint", "type": "publicKey", "index": false},
+        {"name": "tokenAMint", "type": "publicKey", "index": false},
+        {"name": "tokenBMint", "type": "publicKey", "index": false}
+      ]
+    },
+    {
+      "name": "EvtMigrateMeteoraDammV2",
+      "fields": [
+        {"name": "virtualPool", "type": "publicKey", "index": false},
+        {"name": "migrationMetadata", "type": "publicKey", "index": false},
+        {"name": "pool", "type": "publicKey", "index": false},
+        {"name": "baseMint", "type": "publicKey", "index": false},
+        {"name": "quoteMint", "type": "publicKey", "index": false}
+      ]
+    }
+  ],
+  "errors": []
+}

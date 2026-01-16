@@ -8,6 +8,7 @@ Whale Tracker - отслеживает транзакции китов в РЕА
 Поддерживает ВСЕ платформы:
 - pump.fun (6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P)
 - letsbonk/Raydium LaunchLab (LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj)
+- BAGS (HWPsB1A5biibMngZB8XXb7FnFT4ohm1DMY6y1JdLBAGS)
 - PumpSwap AMM (PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP) - migrated tokens
 - Raydium AMM (675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8) - migrated tokens
 """
@@ -29,17 +30,20 @@ logger = logging.getLogger(__name__)
 # Program IDs for all supported platforms
 PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 LETS_BONK_PROGRAM = "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
+# BAGS uses Meteora DBC (Dynamic Bonding Curve) program
+BAGS_PROGRAM = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
 # Migrated tokens trade on these DEXes
 PUMPSWAP_PROGRAM = "PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP"
 RAYDIUM_AMM_PROGRAM = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 
 # All programs to monitor (bonding curves + DEXes for migrated)
-ALL_PROGRAMS = [PUMP_FUN_PROGRAM, LETS_BONK_PROGRAM, PUMPSWAP_PROGRAM, RAYDIUM_AMM_PROGRAM]
+ALL_PROGRAMS = [PUMP_FUN_PROGRAM, LETS_BONK_PROGRAM, BAGS_PROGRAM, PUMPSWAP_PROGRAM, RAYDIUM_AMM_PROGRAM]
 
 # Program ID to platform mapping
 PROGRAM_TO_PLATFORM: dict[str, str] = {
     PUMP_FUN_PROGRAM: "pump_fun",
     LETS_BONK_PROGRAM: "lets_bonk",
+    BAGS_PROGRAM: "bags",
     PUMPSWAP_PROGRAM: "pumpswap",
     RAYDIUM_AMM_PROGRAM: "raydium",
 }
@@ -173,8 +177,6 @@ class WhaleTracker:
             logger.error(f"[WHALE] JSON parse error in {self.wallets_file}: {e}")
         except Exception as e:
             logger.exception(f"[WHALE] Error loading wallets: {e}")
-        except Exception as e:
-            logger.exception(f"Failed to load wallets: {e}")
 
     def add_wallet(self, wallet: str, label: str = "whale", win_rate: float = 0.5):
         """Добавить кошелёк для отслеживания."""
@@ -245,8 +247,35 @@ class WhaleTracker:
         logger.warning(f"[WHALE] Monitoring: {platform_names}")
         logger.info(f"[WHALE] WSS endpoint: {wss_url[:50]}...")
         
-        # Подписываемся на выбранные программы
-        await self._track_programs(wss_url, programs_to_track)
+        # Start queue processor in background
+        queue_task = asyncio.create_task(self._process_pending_queue())
+        
+        try:
+            # Подписываемся на выбранные программы
+            await self._track_programs(wss_url, programs_to_track)
+        finally:
+            queue_task.cancel()
+            try:
+                await queue_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _process_pending_queue(self):
+        """Background task to process queued transactions."""
+        while self.running:
+            try:
+                if self._pending_txs:
+                    # Process one TX from queue
+                    signature, platform = self._pending_txs.pop(0)
+                    # Remove from processed set to allow re-check
+                    self._processed_txs.discard(signature)
+                    await self._check_if_whale_tx(signature, platform)
+                await asyncio.sleep(0.6)  # Slightly longer than rate limit
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"[WHALE] Queue processor error: {e}")
+                await asyncio.sleep(1.0)
 
     async def stop(self):
         """Остановить отслеживание."""
@@ -444,8 +473,10 @@ class WhaleTracker:
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
         
-        Использует Alchemy RPC (ALCHEMY_RPC_ENDPOINT) для getTransaction.
-        Публичный Solana RPC как fallback.
+        Порядок попыток:
+        1. ALCHEMY_RPC_ENDPOINT (если установлен)
+        2. self.rpc_endpoint (основной RPC из конфига)
+        3. Публичный Solana RPC как fallback
         
         Args:
             signature: Сигнатура транзакции
@@ -468,31 +499,53 @@ class WhaleTracker:
                     await self._process_rpc_tx(cached, signature, platform)
                 return
         
-        # Rate limit check - 1 request per 2 seconds to conserve quota
+        # Rate limit check - 0.5 seconds between requests (was 2.0 - too slow!)
         now = time.time()
-        if now - self._last_helius_call < 2.0:
+        if now - self._last_helius_call < 0.5:
+            # Queue for later instead of dropping
+            if len(self._pending_txs) < self._max_pending:
+                self._pending_txs.append((signature, platform))
             return
         self._last_helius_call = now
         
-        # Try Alchemy RPC with retry (TX needs time to confirm)
-        alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
         tx = None
         
+        # 1. Try Alchemy RPC first (if configured)
+        alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
         if alchemy_endpoint:
-            # Retry up to 3 times with 1s delay - TX needs to confirm
-            for attempt in range(3):
+            for attempt in range(2):
                 if attempt > 0:
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.5)
                 tx = await self._get_tx_from_endpoint(signature, alchemy_endpoint, timeout=5.0)
                 if tx:
                     self._cache_tx(signature, tx)
                     await self._process_rpc_tx(tx, signature, platform)
                     return
-        else:
-            logger.warning(f"[WHALE] ALCHEMY_RPC_ENDPOINT not set!")
+        
+        # 2. Try main RPC endpoint (from config)
+        if self.rpc_endpoint and not tx:
+            logger.debug(f"[WHALE] Trying main RPC for {signature[:16]}...")
+            for attempt in range(2):
+                if attempt > 0:
+                    await asyncio.sleep(0.5)
+                tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=5.0)
+                if tx:
+                    self._cache_tx(signature, tx)
+                    await self._process_rpc_tx(tx, signature, platform)
+                    return
+        
+        # 3. Try public RPC as last resort
+        if not tx:
+            for public_rpc in PUBLIC_RPC_FALLBACK[:1]:  # Only try first one
+                tx = await self._get_tx_from_endpoint(signature, public_rpc, timeout=5.0)
+                if tx:
+                    self._metrics["public_fallback_calls"] += 1
+                    self._cache_tx(signature, tx)
+                    await self._process_rpc_tx(tx, signature, platform)
+                    return
         
         # TX not confirmed yet - this is normal for very fresh TXs
-        logger.debug(f"[WHALE] TX {signature[:16]}... not confirmed yet")
+        logger.debug(f"[WHALE] TX {signature[:16]}... not confirmed yet on any RPC")
 
     def _cache_tx(self, signature: str, tx: dict):
         """Cache TX result with LRU eviction."""

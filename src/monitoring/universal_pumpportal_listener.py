@@ -47,6 +47,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         self.max_consecutive_errors = max_consecutive_errors
 
         # Get platform-specific processors
+        from platforms.bags.pumpportal_processor import BagsPumpPortalProcessor
         from platforms.letsbonk.pumpportal_processor import LetsBonkPumpPortalProcessor
         from platforms.pumpfun.pumpportal_processor import PumpFunPumpPortalProcessor
 
@@ -54,6 +55,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         all_processors = [
             PumpFunPumpPortalProcessor(),
             LetsBonkPumpPortalProcessor(),
+            BagsPumpPortalProcessor(),
         ]
 
         # Filter processors based on requested platforms
