@@ -81,8 +81,8 @@ VALID_VALUES = {
 
 # Platform-specific listener compatibility
 PLATFORM_LISTENER_COMPATIBILITY = {
-    Platform.PUMP_FUN: ["logs", "blocks", "geyser", "pumpportal"],
-    Platform.LETS_BONK: ["blocks", "geyser", "pumpportal"],
+    Platform.PUMP_FUN: ["logs", "blocks", "geyser", "pumpportal", "fallback"],
+    Platform.LETS_BONK: ["blocks", "geyser", "pumpportal", "fallback"],
 }
 
 
