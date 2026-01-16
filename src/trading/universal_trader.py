@@ -687,6 +687,42 @@ class UniversalTrader:
             except Exception as e:
                 logger.info(f"[WARN] LetsBonk check failed: {e}")
         
+        elif self.platform == Platform.BAGS:
+            logger.info(f"[CHECK] [1/4] Checking BAGS (Meteora DBC) pool for {symbol}...")
+            try:
+                from platforms.bags.address_provider import BagsAddressProvider
+                
+                address_provider = BagsAddressProvider()
+                pool_address = address_provider.derive_pool_address(mint)
+                
+                # Check if pool exists and not migrated
+                curve_manager = self.platform_implementations.curve_manager
+                pool_state = await curve_manager.get_pool_state(pool_address)
+                
+                if pool_state and pool_state.get("status") != "migrated":
+                    # BAGS pool available! Use normal bags buy
+                    logger.info(f"[OK] BAGS pool available for {symbol}")
+                    
+                    # Create TokenInfo for bags buy
+                    token_info = await self._create_bags_token_info_from_mint(
+                        mint_str, symbol, pool_address, pool_state
+                    )
+                    
+                    if token_info:
+                        # Execute buy via normal flow
+                        buy_result = await self.buyer.execute(token_info)
+                        
+                        if buy_result.success:
+                            logger.warning(f"[OK] BAGS BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                            return True, buy_result.tx_signature, "bags", buy_result.amount or 0, buy_result.price or 0
+                        else:
+                            logger.warning(f"[WARN] BAGS buy failed: {buy_result.error_message}")
+                else:
+                    logger.info(f"[WARN] BAGS pool migrated or unavailable for {symbol}")
+                    
+            except Exception as e:
+                logger.info(f"[WARN] BAGS check failed: {e}")
+        
         # ============================================
         # [2/4] TRY PUMPSWAP (for migrated tokens)
         # ============================================
@@ -898,6 +934,74 @@ class UniversalTrader:
             
         except Exception as e:
             logger.warning(f"Failed to create LetsBonk TokenInfo from mint: {e}")
+            return None
+
+    async def _create_bags_token_info_from_mint(
+        self,
+        mint_str: str,
+        symbol: str,
+        pool_address: Pubkey,
+        pool_state: dict,
+    ) -> "TokenInfo | None":
+        """Create TokenInfo for BAGS from mint address (for universal buy).
+        
+        Args:
+            mint_str: Token mint address as string
+            symbol: Token symbol
+            pool_address: Derived pool address
+            pool_state: Pool state from curve manager
+            
+        Returns:
+            TokenInfo or None if creation fails
+        """
+        from interfaces.core import TokenInfo
+        from platforms.bags.address_provider import BagsAddressProvider, BagsAddresses
+        from core.pubkeys import SystemAddresses
+        
+        try:
+            mint = Pubkey.from_string(mint_str)
+            address_provider = BagsAddressProvider()
+            
+            # Extract creator
+            creator = pool_state.get("creator")
+            if creator and isinstance(creator, str):
+                creator = Pubkey.from_string(creator)
+            elif not isinstance(creator, Pubkey):
+                creator = None
+            
+            # Derive addresses
+            base_vault = address_provider.derive_base_vault(mint)
+            quote_vault = address_provider.derive_quote_vault(mint)
+            
+            # Get config from pool_state or use default
+            config = pool_state.get("config") or BagsAddresses.DEFAULT_CONFIG
+            if isinstance(config, str):
+                config = Pubkey.from_string(config)
+            
+            token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
+            
+            return TokenInfo(
+                name=symbol,
+                symbol=symbol,
+                uri="",
+                mint=mint,
+                platform=Platform.BAGS,
+                pool_state=pool_address,
+                base_vault=base_vault,
+                quote_vault=quote_vault,
+                global_config=config,  # BAGS uses config instead of global_config
+                platform_config=None,
+                creator=creator,
+                user=None,
+                bonding_curve=None,
+                associated_bonding_curve=None,
+                creator_vault=None,
+                token_program_id=token_program_id,
+                creation_timestamp=0,
+            )
+            
+        except Exception as e:
+            logger.warning(f"Failed to create BAGS TokenInfo from mint: {e}")
             return None
 
     def _extract_creator(self, pool_state: dict) -> Pubkey | None:
@@ -1698,41 +1802,78 @@ class UniversalTrader:
     async def _monitor_position_until_exit(
         self, token_info: TokenInfo, position: Position
     ) -> None:
-        """Monitor a position until exit conditions are met."""
+        """Monitor a position until exit conditions are met.
+        
+        UNIFIED STOP-LOSS for all platforms (PUMP, BONK, BAGS):
+        1. Get price from platform-specific curve_manager
+        2. Check TP/SL conditions
+        3. If price unavailable (migrated) - fallback to Jupiter/PumpSwap
+        
+        If price cannot be fetched (e.g., token migrated), will attempt
+        fallback sell via PumpSwap/Jupiter after MAX_PRICE_ERRORS consecutive failures.
+        """
         logger.info(
-            f"Starting position monitoring (check interval: {self.price_check_interval}s)"
+            f"[MONITOR] Starting position monitoring for {token_info.symbol} on {self.platform.value}"
         )
+        logger.info(
+            f"[MONITOR] Entry: {position.entry_price:.10f} SOL, "
+            f"TP: {position.take_profit_price:.10f if position.take_profit_price else 'None'} SOL, "
+            f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'None'} SOL"
+        )
+        logger.info(f"[MONITOR] Check interval: {self.price_check_interval}s")
 
         # Get pool address for price monitoring using platform-agnostic method
         pool_address = self._get_pool_address(token_info)
         curve_manager = self.platform_implementations.curve_manager
+        
+        # Track consecutive price fetch errors for fallback trigger
+        MAX_PRICE_ERRORS = 5  # After 5 consecutive errors, try fallback sell
+        consecutive_price_errors = 0
+        last_known_price = position.entry_price  # Use entry price as fallback
+        check_count = 0
 
         while position.is_active:
+            check_count += 1
             try:
-                # Get current price from pool/curve
+                # Get current price from pool/curve (works for all platforms)
                 current_price = await curve_manager.calculate_price(pool_address)
+                
+                # Reset error counter on successful price fetch
+                consecutive_price_errors = 0
+                last_known_price = current_price
 
-                # Check if position should be exited
+                # Check if position should be exited (UNIFIED for all platforms)
                 should_exit, exit_reason = position.should_exit(current_price)
+                
+                # Calculate current PnL
+                pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+
+                # Log status every 10 checks or on significant change
+                if check_count % 10 == 1 or abs(pnl_pct) > 20:
+                    logger.info(
+                        f"[MONITOR] {token_info.symbol}: {current_price:.10f} SOL "
+                        f"({pnl_pct:+.2f}%) | TP: {position.take_profit_price:.10f if position.take_profit_price else 'N/A'} | "
+                        f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'N/A'}"
+                    )
 
                 if should_exit and exit_reason:
-                    logger.info(f"Exit condition met: {exit_reason.value}")
-                    logger.info(f"Current price: {current_price:.8f} SOL")
+                    logger.warning(f"[EXIT] Exit condition met: {exit_reason.value}")
+                    logger.info(f"[EXIT] Current price: {current_price:.10f} SOL")
 
                     # Log PnL before exit
                     pnl = position.get_pnl(current_price)
                     logger.info(
-                        f"Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
+                        f"[EXIT] Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
                     )
 
-                    # Handle moon_bag exit strategy
-                    if exit_reason.value == "TAKE_PROFIT" and self.moon_bag_percentage > 0:
+                    # Handle moon_bag exit strategy (only for TP)
+                    if exit_reason.value == "take_profit" and self.moon_bag_percentage > 0:
                         sell_quantity = position.quantity * (1 - self.moon_bag_percentage / 100)
-                        logger.info(f"TP reached! Selling {100 - self.moon_bag_percentage:.0f}%, keeping {self.moon_bag_percentage:.0f}% moon bag 🌙")
+                        logger.info(f"[MOON] TP reached! Selling {100 - self.moon_bag_percentage:.0f}%, keeping {self.moon_bag_percentage:.0f}% moon bag 🌙")
                     else:
                         sell_quantity = position.quantity
 
-                    # Execute sell with position quantity and entry price to avoid RPC delays
+                    # Execute sell with position quantity and entry price
                     sell_result = await self.seller.execute(
                         token_info,
                         token_amount=sell_quantity,
@@ -1743,8 +1884,8 @@ class UniversalTrader:
                         # Close position with actual exit price
                         position.close_position(sell_result.price, exit_reason)
 
-                        logger.info(
-                            f"Successfully exited position: {exit_reason.value}"
+                        logger.warning(
+                            f"[OK] Successfully exited position: {exit_reason.value}"
                         )
                         self._log_trade(
                             "sell",
@@ -1757,7 +1898,7 @@ class UniversalTrader:
                         # Log final PnL
                         final_pnl = position.get_pnl()
                         logger.info(
-                            f"Final PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
+                            f"[FINAL] PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
                         )
 
                         # Remove position from saved file
@@ -1776,11 +1917,100 @@ class UniversalTrader:
                         )
                     else:
                         logger.error(
-                            f"Failed to exit position: {sell_result.error_message}"
+                            f"[FAIL] Failed to exit position: {sell_result.error_message}"
                         )
-                        # Keep monitoring in case sell can be retried
+                        # Try fallback sell
+                        logger.warning(f"[FALLBACK] Trying fallback sell for {token_info.symbol}...")
+                        fallback_success = await self._emergency_fallback_sell(
+                            token_info, position, current_price
+                        )
+                        if fallback_success:
+                            logger.info(f"[OK] Fallback sell successful")
+                            break
 
                     break
+
+                # Wait before next price check
+                await asyncio.sleep(self.price_check_interval)
+
+            except Exception as e:
+                consecutive_price_errors += 1
+                error_msg = str(e) if str(e) else type(e).__name__
+                logger.warning(
+                    f"[MONITOR] Price fetch error #{consecutive_price_errors}/{MAX_PRICE_ERRORS} "
+                    f"for {token_info.symbol}: {error_msg}"
+                )
+                
+                # Check if token migrated (platform-agnostic detection)
+                is_migrated = await self._check_if_migrated(token_info, error_msg)
+                
+                if consecutive_price_errors >= MAX_PRICE_ERRORS or is_migrated:
+                    logger.warning(
+                        f"[FALLBACK] {consecutive_price_errors} consecutive price errors or token migrated - "
+                        f"attempting emergency fallback sell for {token_info.symbol}"
+                    )
+                    
+                    # Try fallback sell via PumpSwap/Jupiter
+                    fallback_success = await self._emergency_fallback_sell(
+                        token_info, position, last_known_price
+                    )
+                    
+                    if fallback_success:
+                        logger.info(f"[OK] Emergency fallback sell successful for {token_info.symbol}")
+                        break
+                    else:
+                        # Reset counter and keep trying
+                        consecutive_price_errors = 0
+                        logger.error(
+                            f"[FAIL] Emergency fallback sell failed for {token_info.symbol} - "
+                            "will retry after more price errors"
+                        )
+                
+                await asyncio.sleep(self.price_check_interval)
+    
+    async def _check_if_migrated(self, token_info: TokenInfo, error_msg: str) -> bool:
+        """Check if token has migrated based on platform and error message.
+        
+        UNIFIED migration check for all platforms:
+        - PUMP_FUN: bonding curve complete=True or account not found
+        - LETS_BONK: status != 0 or account not found  
+        - BAGS: status != 0 or account not found
+        
+        Args:
+            token_info: Token information
+            error_msg: Error message from price fetch
+            
+        Returns:
+            True if token appears to be migrated
+        """
+        # Quick check based on error message
+        migration_keywords = ["complete", "not found", "invalid", "migrated", "status"]
+        if any(kw in error_msg.lower() for kw in migration_keywords):
+            return True
+        
+        # Platform-specific migration check
+        try:
+            pool_address = self._get_pool_address(token_info)
+            curve_manager = self.platform_implementations.curve_manager
+            pool_state = await curve_manager.get_pool_state(pool_address)
+            
+            if self.platform == Platform.PUMP_FUN:
+                # Pump.fun: complete=True means migrated to PumpSwap
+                return pool_state.get("complete", False)
+            
+            elif self.platform == Platform.LETS_BONK:
+                # LetsBonk: status != 0 means migrated
+                return pool_state.get("status", 0) != 0
+            
+            elif self.platform == Platform.BAGS:
+                # BAGS: status != 0 means migrated to DAMM v2
+                return pool_state.get("status", 0) != 0
+            
+            return False
+            
+        except Exception:
+            # If we can't check, assume might be migrated
+            return True
                 else:
                     # Log current status
                     pnl = position.get_pnl(current_price)
@@ -1791,11 +2021,106 @@ class UniversalTrader:
                 # Wait before next price check
                 await asyncio.sleep(self.price_check_interval)
 
-            except Exception:
-                logger.exception("Error monitoring position")
-                await asyncio.sleep(
-                    self.price_check_interval
-                )  # Continue monitoring despite errors
+            except Exception as e:
+                consecutive_price_errors += 1
+                error_msg = str(e) if str(e) else type(e).__name__
+                logger.warning(
+                    f"[MONITOR] Price fetch error #{consecutive_price_errors}/{MAX_PRICE_ERRORS} "
+                    f"for {token_info.symbol}: {error_msg}"
+                )
+                
+                # Check if token migrated (bonding curve complete)
+                is_migrated = "complete" in error_msg.lower() or "not found" in error_msg.lower()
+                
+                if consecutive_price_errors >= MAX_PRICE_ERRORS or is_migrated:
+                    logger.warning(
+                        f"[FALLBACK] {consecutive_price_errors} consecutive price errors or token migrated - "
+                        f"attempting emergency fallback sell for {token_info.symbol}"
+                    )
+                    
+                    # Try fallback sell via PumpSwap/Jupiter
+                    fallback_success = await self._emergency_fallback_sell(
+                        token_info, position, last_known_price
+                    )
+                    
+                    if fallback_success:
+                        logger.info(f"[OK] Emergency fallback sell successful for {token_info.symbol}")
+                        break
+                    else:
+                        # Reset counter and keep trying
+                        consecutive_price_errors = 0
+                        logger.error(
+                            f"[FAIL] Emergency fallback sell failed for {token_info.symbol} - "
+                            "will retry after more price errors"
+                        )
+                
+                await asyncio.sleep(self.price_check_interval)
+    
+    async def _emergency_fallback_sell(
+        self, token_info: TokenInfo, position: Position, last_price: float
+    ) -> bool:
+        """Emergency sell via PumpSwap/Jupiter when bonding curve unavailable.
+        
+        Args:
+            token_info: Token information
+            position: Active position to close
+            last_price: Last known price for logging
+            
+        Returns:
+            True if sell was successful, False otherwise
+        """
+        from trading.fallback_seller import FallbackSeller
+        from trading.position import ExitReason
+        
+        logger.warning(
+            f"[EMERGENCY] Starting fallback sell for {token_info.symbol} "
+            f"({position.quantity:.2f} tokens)"
+        )
+        
+        try:
+            # Create fallback seller
+            fallback_seller = FallbackSeller(
+                client=self.solana_client,
+                wallet=self.wallet,
+                slippage=self.sell_slippage,
+                priority_fee=200_000,  # Higher priority for emergency sell
+                max_retries=3,
+                jupiter_api_key=self.jupiter_api_key,
+            )
+            
+            # Try to sell via PumpSwap first, then Jupiter
+            success, tx_sig, error = await fallback_seller.sell(
+                mint=token_info.mint,
+                token_amount=position.quantity,
+                symbol=token_info.symbol,
+            )
+            
+            if success:
+                # Close position
+                position.close_position(last_price, ExitReason.STOP_LOSS)
+                position.is_active = False
+                
+                logger.info(f"[OK] Emergency sell SUCCESS: {tx_sig}")
+                self._log_trade(
+                    "sell",
+                    token_info,
+                    last_price,
+                    position.quantity,
+                    tx_sig,
+                    extra="emergency_fallback",
+                )
+                
+                # Remove position from saved file
+                self._remove_position(str(token_info.mint))
+                
+                return True
+            else:
+                logger.error(f"[FAIL] Emergency sell FAILED: {error}")
+                return False
+                
+        except Exception as e:
+            logger.exception(f"[FAIL] Emergency fallback sell error: {e}")
+            return False
 
     def _get_pool_address(self, token_info: TokenInfo) -> Pubkey:
         """Get the pool/curve address for price monitoring using platform-agnostic method."""

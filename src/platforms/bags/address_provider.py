@@ -30,6 +30,10 @@ class BagsAddresses:
     PROGRAM: Final[Pubkey] = Pubkey.from_string(
         "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
     )
+    # Alias for DBC program
+    DBC_PROGRAM: Final[Pubkey] = Pubkey.from_string(
+        "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+    )
     # Meteora DAMM v2 - for post-migration tokens
     DAMM_V2_PROGRAM: Final[Pubkey] = Pubkey.from_string(
         "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
@@ -41,6 +45,10 @@ class BagsAddresses:
     # Pool Authority PDA for Meteora DBC
     POOL_AUTHORITY: Final[Pubkey] = Pubkey.from_string(
         "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+    )
+    # Default config for BAGS pools (common config used by most BAGS tokens)
+    DEFAULT_CONFIG: Final[Pubkey] = Pubkey.from_string(
+        "BSwp6bEBihVLdqJRKGgzjcGLHkcTuzmSo1TQkHepzH8p"
     )
     # Migration keepers (run by Meteora to auto-migrate pools)
     MIGRATION_KEEPER_1: Final[Pubkey] = Pubkey.from_string(
