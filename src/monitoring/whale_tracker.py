@@ -713,9 +713,12 @@ class WhaleTracker:
                 # Не логируем - это засоряет логи и не несёт пользы
                 return
             
-            # [WHALE] НАШЛИ КИТА!
+            # Found whale transaction
             whale_info = self.whale_wallets[fee_payer]
-            logger.warning(f"[WHALE] WHALE TX DETECTED: {whale_info.get('label', 'whale')} ({fee_payer[:8]}...) on {platform}")
+            logger.warning(
+                f"[WHALE] TX detected: {whale_info.get('label', 'whale')} | "
+                f"wallet: {fee_payer} | platform: {platform}"
+            )
             
             meta = tx.get("meta", {})
             
@@ -742,7 +745,10 @@ class WhaleTracker:
                 logger.warning(f"[WHALE] No token mint found in postTokenBalances")
             
             if sol_spent >= self.min_buy_amount and token_mint:
-                logger.warning(f"[WHALE] WHALE BUY QUALIFIES: {sol_spent:.2f} SOL >= {self.min_buy_amount} SOL on {platform}")
+                logger.warning(
+                    f"[WHALE] Buy qualifies: {sol_spent:.4f} SOL >= {self.min_buy_amount} SOL | "
+                    f"token: {token_mint} | platform: {platform}"
+                )
                 await self._emit_whale_buy(
                     wallet=fee_payer,
                     token_mint=token_mint,
@@ -843,11 +849,17 @@ class WhaleTracker:
             platform=platform,
         )
         
-        logger.warning(
-            f"[WHALE] WHALE BUY: {whale_label} ({wallet[:8]}...) "
-            f"bought {token_mint[:8]}... for {sol_spent:.2f} SOL "
-            f"on {platform} ({age_seconds:.1f}s ago)"
-        )
+        # Clean readable log format without emoji
+        logger.warning("=" * 70)
+        logger.warning("[WHALE BUY DETECTED]")
+        logger.warning(f"  WHALE:     {whale_label}")
+        logger.warning(f"  WALLET:    {wallet}")
+        logger.warning(f"  TOKEN:     {token_mint}")
+        logger.warning(f"  AMOUNT:    {sol_spent:.4f} SOL")
+        logger.warning(f"  PLATFORM:  {platform}")
+        logger.warning(f"  AGE:       {age_seconds:.1f}s ago")
+        logger.warning(f"  TX:        {signature}")
+        logger.warning("=" * 70)
         
         if self.on_whale_buy:
             await self.on_whale_buy(whale_buy)

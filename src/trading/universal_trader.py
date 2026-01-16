@@ -558,10 +558,17 @@ class UniversalTrader:
             self.processed_tokens.add(mint_str)
         
         # Now proceed with buy (outside lock to not block other operations)
-        logger.warning(
-            f"[WHALE] WHALE COPY START: {whale_buy.whale_label} bought {whale_buy.token_symbol} "
-            f"for {whale_buy.amount_sol:.2f} SOL on {whale_buy.platform}"
-        )
+        # Clean readable log format without emoji
+        logger.warning("=" * 70)
+        logger.warning("[WHALE COPY] Starting copy trade")
+        logger.warning(f"  SYMBOL:    {whale_buy.token_symbol}")
+        logger.warning(f"  TOKEN:     {mint_str}")
+        logger.warning(f"  WHALE:     {whale_buy.whale_label}")
+        logger.warning(f"  WALLET:    {whale_buy.whale_wallet}")
+        logger.warning(f"  WHALE_SOL: {whale_buy.amount_sol:.4f} SOL")
+        logger.warning(f"  MY_BUY:    {self.buy_amount:.4f} SOL")
+        logger.warning(f"  PLATFORM:  {whale_buy.platform}")
+        logger.warning("=" * 70)
         
         try:
             # Check wallet balance
@@ -604,11 +611,18 @@ class UniversalTrader:
                     await asyncio.sleep(retry_delay)
             
             if success:
-                logger.warning(
-                    f"[OK] WHALE COPY SUCCESS on {dex_used}: "
-                    f"{whale_buy.token_symbol} | mint: {mint_str} | "
-                    f"whale: {whale_buy.wallet} | tx: {tx_sig}"
-                )
+                # Clean readable success log
+                logger.warning("=" * 70)
+                logger.warning("[WHALE COPY] SUCCESS")
+                logger.warning(f"  SYMBOL:    {whale_buy.token_symbol}")
+                logger.warning(f"  TOKEN:     {mint_str}")
+                logger.warning(f"  DEX:       {dex_used}")
+                logger.warning(f"  AMOUNT:    {token_amount:.2f} tokens")
+                logger.warning(f"  PRICE:     {price:.10f} SOL")
+                logger.warning(f"  WHALE:     {whale_buy.whale_label}")
+                logger.warning(f"  WALLET:    {whale_buy.whale_wallet}")
+                logger.warning(f"  TX:        {tx_sig}")
+                logger.warning("=" * 70)
                 
                 # Save position
                 mint = Pubkey.from_string(mint_str)
@@ -632,7 +646,14 @@ class UniversalTrader:
                     extra=f"whale_copy:{dex_used}:{whale_buy.token_symbol}",
                 )
             else:
-                logger.error(f"[FAIL] WHALE COPY FAILED: {whale_buy.token_symbol} - no liquidity found on any DEX")
+                # Clean readable failure log
+                logger.error("=" * 70)
+                logger.error("[WHALE COPY] FAILED - no liquidity found")
+                logger.error(f"  SYMBOL:    {whale_buy.token_symbol}")
+                logger.error(f"  TOKEN:     {mint_str}")
+                logger.error(f"  WHALE:     {whale_buy.whale_label}")
+                logger.error(f"  WALLET:    {whale_buy.whale_wallet}")
+                logger.error("=" * 70)
             
         except Exception as e:
             logger.exception(f"[WHALE] WHALE COPY FAILED: {e}")
