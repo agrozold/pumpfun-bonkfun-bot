@@ -4,10 +4,13 @@
 - Сколько токенов создал
 - Как давно активен
 - Паттерны скамера (много токенов, все мёртвые)
+
+NOTE: This check is OPTIONAL. If Helius API is unavailable or rate limited,
+the check is skipped and trading continues (better to trade than miss gems).
 """
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiohttp
 
@@ -74,28 +77,71 @@ class DevReputationChecker:
             self._cache[creator_address] = result
             return result
         except Exception as e:
-            logger.warning(f"Helius API failed for {creator_address[:8]}: {e} - skipping dev check")
+            logger.warning(
+                f"Helius API failed for {creator_address[:8]}: {e} - skipping dev check"
+            )
             # При ошибке API пропускаем проверку но логируем
             # Лучше купить с риском чем пропустить все токены
             return {
                 "is_safe": True,
-                "reason": f"API unavailable, skipping check",
+                "reason": "API unavailable, skipping check",
                 "risk_score": 50,
                 "tokens_created": -1,  # Unknown
             }
 
     async def _analyze_dev(self, creator_address: str) -> dict:
-        """Анализ истории дева через Helius API."""
+        """Анализ истории дева через Helius API.
+
+        NOTE: This is optional - if Helius API is unavailable or rate limited,
+        we skip the check and allow the trade (better to trade than miss gems).
+        """
+        if not self.api_key:
+            return {
+                "is_safe": True,
+                "reason": "Helius API key not configured - skipping dev check",
+                "tokens_created": -1,
+                "risk_score": 50,
+            }
+
         url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
-        # Уменьшаем лимит до 20 для экономии запросов
-        # 20 транзакций достаточно чтобы определить серийного скамера
-        params = {"api-key": self.api_key, "limit": 20}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as resp:
-                if resp.status != 200:
-                    raise ValueError(f"Helius API error: {resp.status}")
-                transactions = await resp.json()
+        # Уменьшаем лимит до 10 для экономии запросов (было 20)
+        params = {"api-key": self.api_key, "limit": 10}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, params=params, timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 429:
+                        # Rate limited - skip check, don't block trading
+                        logger.debug(
+                            f"Helius API rate limited for {creator_address[:8]} - skipping"
+                        )
+                        return {
+                            "is_safe": True,
+                            "reason": "Helius rate limited - skipping check",
+                            "tokens_created": -1,
+                            "risk_score": 50,
+                        }
+                    if resp.status != 200:
+                        raise ValueError(f"Helius API error: {resp.status}")
+                    transactions = await resp.json()
+        except TimeoutError:
+            logger.debug(f"Helius API timeout for {creator_address[:8]} - skipping")
+            return {
+                "is_safe": True,
+                "reason": "Helius API timeout - skipping check",
+                "tokens_created": -1,
+                "risk_score": 50,
+            }
+        except Exception as e:
+            logger.debug(f"Helius API error for {creator_address[:8]}: {e} - skipping")
+            return {
+                "is_safe": True,
+                "reason": "API error - skipping check",
+                "tokens_created": -1,
+                "risk_score": 50,
+            }
 
         if not transactions:
             return {
@@ -122,7 +168,7 @@ class DevReputationChecker:
                 if acc.get("account") == PUMP_PROGRAM:
                     pump_txs += 1
                     break
-            
+
             # Также проверяем instructions
             instructions = tx.get("instructions", [])
             for ix in instructions:
@@ -139,7 +185,7 @@ class DevReputationChecker:
         # API возвращает только 20 транзакций, так что если много из них pump.fun - это красный флаг
         total_txs = len(transactions)
         pump_ratio = pump_txs / total_txs if total_txs > 0 else 0
-        
+
         # Агрессивная детекция скамеров (адаптировано для 20 транзакций)
         if pump_txs >= 15:
             # 15+ pump транзакций из 20 = серийный скамер
@@ -151,12 +197,14 @@ class DevReputationChecker:
                 tokens_created = pump_txs * 15
             logger.warning(
                 f"🚨 SCAMMER DETECTED: {creator_address[:8]}... has {pump_txs}/{total_txs} pump.fun txs "
-                f"({pump_ratio*100:.0f}%) - estimated {tokens_created}+ tokens created"
+                f"({pump_ratio * 100:.0f}%) - estimated {tokens_created}+ tokens created"
             )
         elif pump_txs >= 8:
             # 8+ pump транзакций из 20 = подозрительно
             tokens_created = pump_txs * 10
-            logger.warning(f"[WARN] Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - suspicious")
+            logger.warning(
+                f"[WARN] Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - suspicious"
+            )
         else:
             # Нормальный дев
             tokens_created = max(pump_txs // 2, pump_txs - 2) if pump_txs > 0 else 0
@@ -172,8 +220,8 @@ class DevReputationChecker:
         # Вычисляем возраст аккаунта
         account_age_days = 0
         if oldest_tx_time:
-            oldest_dt = datetime.fromtimestamp(oldest_tx_time, tz=timezone.utc)
-            now = datetime.now(tz=timezone.utc)
+            oldest_dt = datetime.fromtimestamp(oldest_tx_time, tz=UTC)
+            now = datetime.now(tz=UTC)
             account_age_days = (now - oldest_dt).days
 
         # Вычисляем risk score
@@ -214,7 +262,7 @@ class DevReputationChecker:
 
     def _calculate_risk_score(self, tokens_created: int, account_age_days: int) -> int:
         """Вычислить оценку риска 0-100.
-        
+
         Новый аккаунт с первым токеном = низкий риск (потенциальный гем).
         Много токенов = высокий риск (серийный скамер).
         """
