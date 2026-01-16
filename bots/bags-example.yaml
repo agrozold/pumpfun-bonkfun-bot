@@ -22,7 +22,7 @@ separate_process: true
 filters:
   listener_type: pumpportal
   max_token_age: 60  # Max 60 seconds old tokens
-  yolo_mode: false
+  yolo_mode: true
   match_string: null
   bro_address: null
 
