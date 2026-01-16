@@ -285,14 +285,52 @@ class SolanaClient:
 
             except Exception as e:
                 last_error = e
-                error_str = str(e).lower()
+                error_str = str(e)
+                error_str_lower = error_str.lower()
 
-                # Handle specific error types
-                if "insufficient" in error_str or "not enough" in error_str:
+                # ============================================
+                # NON-RETRYABLE ERRORS - fail immediately
+                # ============================================
+                
+                # BondingCurveComplete (6005/0x1775) - token migrated to Raydium
+                # No point retrying - bonding curve is permanently closed
+                if "0x1775" in error_str or "6005" in error_str or "bondingcurvecomplete" in error_str_lower:
+                    logger.error(
+                        f"BondingCurveComplete: Token has migrated to Raydium, cannot buy on bonding curve"
+                    )
+                    raise RuntimeError(
+                        "BondingCurveComplete: Token migrated to Raydium"
+                    ) from e
+                
+                # BondingCurveNotComplete (6006/0x1776) - cannot sell, curve still active
+                if "0x1776" in error_str or "6006" in error_str or "bondingcurvenotcomplete" in error_str_lower:
+                    logger.error(
+                        f"BondingCurveNotComplete: Cannot perform this operation, curve still active"
+                    )
+                    raise RuntimeError(
+                        "BondingCurveNotComplete: Bonding curve still active"
+                    ) from e
+                
+                # SlippageExceeded - price moved too much
+                if "slippage" in error_str_lower or "0x1772" in error_str:
+                    logger.error(f"Slippage exceeded: Price moved beyond tolerance")
+                    raise RuntimeError("SlippageExceeded: Price moved too much") from e
+                
+                # InsufficientFunds
+                if "insufficient" in error_str_lower or "not enough" in error_str_lower:
                     logger.error(f"Insufficient funds detected: {e}")
                     raise ValueError(f"Insufficient funds: {e}") from e
+                
+                # AccountNotFound / InvalidAccount - wrong addresses
+                if "account not found" in error_str_lower or "invalid account" in error_str_lower:
+                    logger.error(f"Account error (non-retryable): {e}")
+                    raise RuntimeError(f"Account error: {e}") from e
 
-                if "blockhash not found" in error_str or "blockhashnotfound" in error_str:
+                # ============================================
+                # RETRYABLE ERRORS - continue retry loop
+                # ============================================
+                
+                if "blockhash not found" in error_str_lower or "blockhashnotfound" in error_str_lower:
                     logger.warning(f"Blockhash expired, fetching new one (attempt {attempt + 1})")
                     # Force refresh blockhash
                     try:
