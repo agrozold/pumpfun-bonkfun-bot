@@ -2097,8 +2097,15 @@ class UniversalTrader:
         last_known_price = position.entry_price  # Use entry price as fallback
         check_count = 0
         
-        # EMERGENCY STOP LOSS - sell immediately if loss exceeds this
-        EMERGENCY_STOP_LOSS_PCT = 0.50  # 50% loss = emergency sell
+        # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
+        # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
+        HARD_STOP_LOSS_PCT = 25.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
+        EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
+        
+        # Счётчик неудачных попыток продажи для агрессивного retry
+        sell_retry_count = 0
+        MAX_SELL_RETRIES = 5
+        pending_stop_loss = False  # Флаг что нужно продать по SL
 
         while position.is_active:
             check_count += 1
@@ -2106,6 +2113,12 @@ class UniversalTrader:
                 # Get current price from pool/curve (works for all platforms)
                 current_price = await curve_manager.calculate_price(pool_address)
                 
+                # Если есть pending stop loss - сразу пытаемся продать снова
+                if pending_stop_loss:
+                    logger.warning(
+                        f"[RETRY SL] Pending stop loss for {token_info.symbol}, "
+                        f"retry #{sell_retry_count}, current price: {current_price:.10f}"
+                    )
                 # Reset error counter on successful price fetch
                 consecutive_price_errors = 0
                 last_known_price = current_price
@@ -2116,23 +2129,37 @@ class UniversalTrader:
                 # Calculate current PnL
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
                 
-                # EMERGENCY STOP LOSS CHECK - override normal SL if loss is catastrophic
-                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT * 100:
+                # ============================================
+                # HARD STOP LOSS - ЖЁСТКАЯ ЗАЩИТА ОТ УБЫТКОВ
+                # ============================================
+                # Проверка 1: Обычный HARD STOP LOSS (25%)
+                if pnl_pct <= -HARD_STOP_LOSS_PCT:
                     logger.error(
-                        f"[EMERGENCY] {token_info.symbol}: CATASTROPHIC LOSS {pnl_pct:.1f}%! "
-                        f"Emergency sell triggered (threshold: -{EMERGENCY_STOP_LOSS_PCT*100:.0f}%)"
+                        f"[HARD SL] {token_info.symbol}: LOSS {pnl_pct:.1f}%! "
+                        f"HARD STOP LOSS triggered (threshold: -{HARD_STOP_LOSS_PCT:.0f}%)"
                     )
                     should_exit = True
                     exit_reason = ExitReason.STOP_LOSS
+                    pending_stop_loss = True
+                
+                # Проверка 2: EMERGENCY STOP LOSS (40%) - максимальный приоритет
+                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT:
+                    logger.error(
+                        f"[EMERGENCY] {token_info.symbol}: CATASTROPHIC LOSS {pnl_pct:.1f}%! "
+                        f"EMERGENCY sell triggered (threshold: -{EMERGENCY_STOP_LOSS_PCT:.0f}%)"
+                    )
+                    should_exit = True
+                    exit_reason = ExitReason.STOP_LOSS
+                    pending_stop_loss = True
 
-                # Log status every 10 checks or on significant change (> 20% loss)
-                # IMPROVED: Always log when loss > 20%
-                if check_count % 10 == 1 or pnl_pct < -20:
-                    log_level = logger.warning if pnl_pct < -20 else logger.info
+                # Log status EVERY check when in loss, or every 10 checks otherwise
+                if pnl_pct < 0 or check_count % 10 == 1:
+                    log_level = logger.error if pnl_pct < -20 else (logger.warning if pnl_pct < 0 else logger.info)
                     log_level(
                         f"[MONITOR] {token_info.symbol}: {current_price:.10f} SOL "
                         f"({pnl_pct:+.2f}%) | TP: {position.take_profit_price:.10f if position.take_profit_price else 'N/A'} | "
-                        f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'N/A'}"
+                        f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'N/A'} | "
+                        f"HARD_SL: -{HARD_STOP_LOSS_PCT:.0f}%"
                     )
 
                 if should_exit and exit_reason:
@@ -2145,69 +2172,107 @@ class UniversalTrader:
                         f"[EXIT] Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
                     )
 
-                    # Handle moon_bag exit strategy (only for TP)
+                    # Handle moon_bag exit strategy (only for TP, NOT for SL!)
                     if exit_reason.value == "take_profit" and self.moon_bag_percentage > 0:
                         sell_quantity = position.quantity * (1 - self.moon_bag_percentage / 100)
                         logger.info(f"[MOON] TP reached! Selling {100 - self.moon_bag_percentage:.0f}%, keeping {self.moon_bag_percentage:.0f}% moon bag 🌙")
                     else:
+                        # STOP LOSS - продаём ВСЁ, никаких moon bags!
                         sell_quantity = position.quantity
+                        if exit_reason.value == "stop_loss":
+                            logger.warning(f"[SL] STOP LOSS - selling 100% of position, NO moon bag!")
 
-                    # Execute sell with position quantity and entry price
-                    sell_result = await self.seller.execute(
-                        token_info,
-                        token_amount=sell_quantity,
-                        token_price=position.entry_price,
-                    )
-
-                    if sell_result.success:
-                        # Close position with actual exit price
-                        position.close_position(sell_result.price, exit_reason)
-
-                        logger.warning(
-                            f"[OK] Successfully exited position: {exit_reason.value}"
-                        )
-                        self._log_trade(
-                            "sell",
+                    # ============================================
+                    # AGGRESSIVE SELL RETRY для STOP LOSS
+                    # ============================================
+                    sell_success = False
+                    for sell_attempt in range(1, MAX_SELL_RETRIES + 1):
+                        logger.warning(f"[SELL] Attempt {sell_attempt}/{MAX_SELL_RETRIES} for {token_info.symbol}")
+                        
+                        # Execute sell with position quantity and entry price
+                        sell_result = await self.seller.execute(
                             token_info,
-                            sell_result.price,
-                            sell_result.amount,
-                            sell_result.tx_signature,
+                            token_amount=sell_quantity,
+                            token_price=position.entry_price,
                         )
 
-                        # Log final PnL
-                        final_pnl = position.get_pnl()
-                        logger.info(
-                            f"[FINAL] PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
-                        )
+                        if sell_result.success:
+                            sell_success = True
+                            # Close position with actual exit price
+                            position.close_position(sell_result.price, exit_reason)
 
-                        # Remove position from saved file
-                        self._remove_position(str(token_info.mint))
+                            logger.warning(
+                                f"[OK] Successfully exited position: {exit_reason.value}"
+                            )
+                            self._log_trade(
+                                "sell",
+                                token_info,
+                                sell_result.price,
+                                sell_result.amount,
+                                sell_result.tx_signature,
+                            )
 
-                        # Close ATA if enabled
-                        await handle_cleanup_after_sell(
-                            self.solana_client,
-                            self.wallet,
-                            token_info.mint,
-                            token_info.token_program_id,
-                            self.priority_fee_manager,
-                            self.cleanup_mode,
-                            self.cleanup_with_priority_fee,
-                            self.cleanup_force_close_with_burn,
-                        )
-                    else:
+                            # Log final PnL
+                            final_pnl = position.get_pnl()
+                            logger.info(
+                                f"[FINAL] PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
+                            )
+
+                            # Remove position from saved file
+                            self._remove_position(str(token_info.mint))
+
+                            # Close ATA if enabled
+                            await handle_cleanup_after_sell(
+                                self.solana_client,
+                                self.wallet,
+                                token_info.mint,
+                                token_info.token_program_id,
+                                self.priority_fee_manager,
+                                self.cleanup_mode,
+                                self.cleanup_with_priority_fee,
+                                self.cleanup_force_close_with_burn,
+                            )
+                            break
+                        else:
+                            logger.error(
+                                f"[FAIL] Sell attempt {sell_attempt} failed: {sell_result.error_message}"
+                            )
+                            # Короткая пауза перед retry
+                            if sell_attempt < MAX_SELL_RETRIES:
+                                await asyncio.sleep(0.5)
+                    
+                    # Если все попытки обычной продажи не удались - FALLBACK
+                    if not sell_success:
                         logger.error(
-                            f"[FAIL] Failed to exit position: {sell_result.error_message}"
+                            f"[CRITICAL] All {MAX_SELL_RETRIES} sell attempts failed! Trying FALLBACK..."
                         )
-                        # Try fallback sell
-                        logger.warning(f"[FALLBACK] Trying fallback sell for {token_info.symbol}...")
                         fallback_success = await self._emergency_fallback_sell(
                             token_info, position, current_price
                         )
                         if fallback_success:
                             logger.info(f"[OK] Fallback sell successful")
-                            break
-
-                    break
+                            sell_success = True
+                        else:
+                            # КРИТИЧЕСКАЯ СИТУАЦИЯ - не можем продать!
+                            # Продолжаем мониторинг и пробуем снова на следующей итерации
+                            logger.error(
+                                f"[CRITICAL] FALLBACK ALSO FAILED for {token_info.symbol}! "
+                                f"Will retry on next price check. Position still open!"
+                            )
+                            pending_stop_loss = True
+                            sell_retry_count += 1
+                            
+                            # Если слишком много неудачных попыток - уменьшаем интервал проверки
+                            if sell_retry_count >= 3:
+                                logger.error(
+                                    f"[CRITICAL] {sell_retry_count} failed sell cycles! "
+                                    f"Reducing check interval to 1 second"
+                                )
+                            await asyncio.sleep(1)  # Быстрый retry
+                            continue  # НЕ выходим из цикла, пробуем снова!
+                    
+                    if sell_success:
+                        break  # Успешно продали - выходим из цикла мониторинга
 
                 # Wait before next price check
                 await asyncio.sleep(self.price_check_interval)
