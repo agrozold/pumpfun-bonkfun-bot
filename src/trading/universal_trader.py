@@ -31,7 +31,7 @@ from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.position import Position, save_positions, load_positions, remove_position
+from trading.position import Position, save_positions, load_positions, remove_position, ExitReason
 from utils.logger import get_logger
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -1995,28 +1995,37 @@ class UniversalTrader:
         2. Check TP/SL conditions
         3. If price unavailable (migrated) - fallback to Jupiter/PumpSwap
         
+        AGGRESSIVE STOP-LOSS: 
+        - Reduced MAX_PRICE_ERRORS from 5 to 2 for faster fallback
+        - Emergency sell if price drops > 50% regardless of SL setting
+        - Log every price check when loss > 20%
+        
         If price cannot be fetched (e.g., token migrated), will attempt
         fallback sell via PumpSwap/Jupiter after MAX_PRICE_ERRORS consecutive failures.
         """
-        logger.info(
+        logger.warning(
             f"[MONITOR] Starting position monitoring for {token_info.symbol} on {self.platform.value}"
         )
-        logger.info(
+        logger.warning(
             f"[MONITOR] Entry: {position.entry_price:.10f} SOL, "
             f"TP: {position.take_profit_price:.10f if position.take_profit_price else 'None'} SOL, "
             f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'None'} SOL"
         )
-        logger.info(f"[MONITOR] Check interval: {self.price_check_interval}s")
+        logger.warning(f"[MONITOR] Check interval: {self.price_check_interval}s")
 
         # Get pool address for price monitoring using platform-agnostic method
         pool_address = self._get_pool_address(token_info)
         curve_manager = self.platform_implementations.curve_manager
         
         # Track consecutive price fetch errors for fallback trigger
-        MAX_PRICE_ERRORS = 5  # After 5 consecutive errors, try fallback sell
+        # REDUCED from 5 to 2 for faster fallback on migrated tokens
+        MAX_PRICE_ERRORS = 2
         consecutive_price_errors = 0
         last_known_price = position.entry_price  # Use entry price as fallback
         check_count = 0
+        
+        # EMERGENCY STOP LOSS - sell immediately if loss exceeds this
+        EMERGENCY_STOP_LOSS_PCT = 0.50  # 50% loss = emergency sell
 
         while position.is_active:
             check_count += 1
@@ -2033,10 +2042,21 @@ class UniversalTrader:
                 
                 # Calculate current PnL
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+                
+                # EMERGENCY STOP LOSS CHECK - override normal SL if loss is catastrophic
+                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT * 100:
+                    logger.error(
+                        f"[EMERGENCY] {token_info.symbol}: CATASTROPHIC LOSS {pnl_pct:.1f}%! "
+                        f"Emergency sell triggered (threshold: -{EMERGENCY_STOP_LOSS_PCT*100:.0f}%)"
+                    )
+                    should_exit = True
+                    exit_reason = ExitReason.STOP_LOSS
 
-                # Log status every 10 checks or on significant change
-                if check_count % 10 == 1 or abs(pnl_pct) > 20:
-                    logger.info(
+                # Log status every 10 checks or on significant change (> 20% loss)
+                # IMPROVED: Always log when loss > 20%
+                if check_count % 10 == 1 or pnl_pct < -20:
+                    log_level = logger.warning if pnl_pct < -20 else logger.info
+                    log_level(
                         f"[MONITOR] {token_info.symbol}: {current_price:.10f} SOL "
                         f"({pnl_pct:+.2f}%) | TP: {position.take_profit_price:.10f if position.take_profit_price else 'N/A'} | "
                         f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'N/A'}"
@@ -2044,7 +2064,7 @@ class UniversalTrader:
 
                 if should_exit and exit_reason:
                     logger.warning(f"[EXIT] Exit condition met: {exit_reason.value}")
-                    logger.info(f"[EXIT] Current price: {current_price:.10f} SOL")
+                    logger.warning(f"[EXIT] Current price: {current_price:.10f} SOL, PnL: {pnl_pct:+.2f}%")
 
                     # Log PnL before exit
                     pnl = position.get_pnl(current_price)
@@ -2425,32 +2445,43 @@ class UniversalTrader:
             if position.bonding_curve:
                 bonding_curve = Pubkey.from_string(position.bonding_curve)
                 try:
-                    # Fetch curve state to get creator
+                    # Fetch pool state to get creator (FIXED: was get_curve_state)
                     curve_manager = self.platform_implementations.curve_manager
-                    curve_state = await curve_manager.get_curve_state(bonding_curve)
+                    pool_state = await curve_manager.get_pool_state(bonding_curve)
                     
-                    # Check if token migrated to Raydium
-                    if curve_state is None:
+                    # Check if token migrated to Raydium/PumpSwap
+                    if pool_state is None:
                         logger.warning(
                             f"[WARN] Position {position.symbol}: bonding curve not found - "
-                            "token may have migrated to Raydium. Removing corrupted position."
+                            "token may have migrated. Removing corrupted position."
                         )
                         token_migrated = True
-                    elif hasattr(curve_state, "complete") and curve_state.complete:
+                    elif pool_state.get("complete", False):
                         logger.warning(
-                            f"[WARN] Position {position.symbol}: token migrated to Raydium. "
+                            f"[WARN] Position {position.symbol}: token migrated to PumpSwap. "
                             "Cannot sell via bonding curve - removing position."
                         )
                         token_migrated = True
-                    elif hasattr(curve_state, "creator") and curve_state.creator:
-                        creator = curve_state.creator
+                    elif pool_state.get("status", 0) != 0:
+                        logger.warning(
+                            f"[WARN] Position {position.symbol}: token migrated (status={pool_state.get('status')}). "
+                            "Cannot sell via bonding curve - removing position."
+                        )
+                        token_migrated = True
+                    elif pool_state.get("creator"):
+                        creator_str = pool_state.get("creator")
+                        if isinstance(creator_str, str):
+                            creator = Pubkey.from_string(creator_str)
+                        else:
+                            creator = creator_str
                         # Derive creator vault
                         address_provider = self.platform_implementations.address_provider
                         creator_vault = address_provider.derive_creator_vault(creator)
-                        logger.info(f"Got creator {str(creator)[:8]}... from curve state")
+                        logger.info(f"Got creator {str(creator)[:8]}... from pool state")
                 except Exception as e:
-                    logger.warning(f"Failed to get creator from curve: {e} - removing position")
-                    token_migrated = True
+                    logger.warning(f"Failed to get creator from pool: {e} - will try fallback sell")
+                    # Don't mark as migrated - try to sell anyway via fallback
+                    token_migrated = False
             else:
                 logger.warning(f"Position {position.symbol} has no bonding_curve - removing")
                 token_migrated = True
