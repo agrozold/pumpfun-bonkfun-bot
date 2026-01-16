@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 
 import websockets
 from solana.rpc.async_api import AsyncClient
+from solders.signature import Signature
 from solders.transaction import VersionedTransaction
 
 from interfaces.core import Platform, TokenInfo
@@ -278,9 +279,12 @@ class BagsLogsListener(BaseTokenListener):
         """Fetch transaction and parse token creation data."""
         try:
             async with AsyncClient(self.rpc_endpoint) as client:
+                # Convert string signature to Signature object
+                sig = Signature.from_string(signature)
+                
                 # Fetch transaction with full encoding
                 response = await client.get_transaction(
-                    signature,
+                    sig,
                     encoding="base64",
                     max_supported_transaction_version=0,
                 )
