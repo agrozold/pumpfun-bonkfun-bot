@@ -103,9 +103,15 @@ class WhaleTracker:
         self._cache_ttl = 60.0  # 60 seconds TTL (extended for quota saving)
         self._cache_max_size = 500  # LRU cache size
         
-        # Helius rate limiting (now PRIMARY, reduced rate limit)
+        # Helius rate limiting - STRICT for quota conservation
+        # Budget: 380k credits / 14 days = 27k/day = 1125/hour
+        # Whale tracker budget: ~30% = 337/hour = 5.6/min = 1 per 10 seconds
         self._last_helius_call = 0.0
-        self._helius_rate_limit = 2.0  # 1 request per 2 seconds (was 5s)
+        self._helius_rate_limit = 10.0  # 1 request per 10 seconds (strict!)
+        
+        # TX queue for rate-limited processing
+        self._pending_txs: list[tuple[str, str]] = []  # (signature, platform)
+        self._max_pending = 50  # Don't queue more than 50 TXs
         
         # Performance metrics
         self._metrics = {
@@ -422,11 +428,10 @@ class WhaleTracker:
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
         
-        HELIUS PRIMARY стратегия:
-        1. Wait for TX confirmation (500ms delay)
-        2. Cache check (60s TTL, 40%+ hit ratio)
-        3. Helius RPC (PRIMARY, 1.5s timeout, ultra-fast)
-        4. Public RPC fallback (only on Helius failure)
+        QUOTA CONSERVATION MODE:
+        - Max 1 RPC request per 10 seconds (6/min, 360/hour, 8640/day)
+        - Skip if queue is full (>50 pending TXs)
+        - This uses ~32% of daily Helius budget
         
         Args:
             signature: Сигнатура транзакции
@@ -439,32 +444,33 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
-        # Step 0: Wait for TX to be confirmed with retry
-        # logsSubscribe gives us TX immediately (commitment: processed)
-        # but getTransaction needs it to be confirmed/finalized
-        # RATE LIMIT PROTECTION: Only 1 Helius request per attempt, longer delays
+        # QUOTA CONSERVATION: Strict rate limiting
+        now = time.time()
+        time_since_last = now - self._last_helius_call
         
-        tx = None
-        for attempt in range(2):  # 2 attempts only (reduce load)
-            delay = 3.0 + attempt * 2  # 3s, 5s (longer delays)
-            await asyncio.sleep(delay)
-            
-            logger.info(f"[WHALE] Checking TX {signature[:16]}... attempt {attempt + 1}/2")
-            
-            # Try ONLY Helius (conserve rate limits, skip fallbacks)
-            self._metrics["helius_calls"] += 1
-            self._metrics["requests_today"] += 1
-            tx = await self._get_tx_from_endpoint(signature, HELIUS_RPC_ENDPOINT, timeout=5.0)
-            
-            if tx:
-                self._metrics["helius_success"] += 1
-                self._cache_tx(signature, tx)
-                logger.info(f"[WHALE] Helius OK on attempt {attempt + 1} for {signature[:16]}...")
-                await self._process_rpc_tx(tx, signature, platform)
-                return
+        if time_since_last < self._helius_rate_limit:
+            # Skip this TX - rate limited
+            # We can't queue all TXs, just skip older ones
+            logger.debug(f"[WHALE] Skipped {signature[:16]}... (rate limit, {time_since_last:.1f}s < {self._helius_rate_limit}s)")
+            return
         
-        # All attempts failed - don't log at INFO level to reduce noise
-        logger.debug(f"[WHALE] TX not found after 2 attempts: {signature[:16]}...")
+        # Wait for TX confirmation (3 seconds minimum)
+        await asyncio.sleep(3.0)
+        
+        self._last_helius_call = time.time()
+        self._metrics["helius_calls"] += 1
+        self._metrics["requests_today"] += 1
+        
+        logger.info(f"[WHALE] Checking TX {signature[:16]}... (req #{self._metrics['requests_today']} today)")
+        tx = await self._get_tx_from_endpoint(signature, HELIUS_RPC_ENDPOINT, timeout=5.0)
+        
+        if tx:
+            self._metrics["helius_success"] += 1
+            self._cache_tx(signature, tx)
+            logger.info(f"[WHALE] Helius OK for {signature[:16]}...")
+            await self._process_rpc_tx(tx, signature, platform)
+        else:
+            logger.debug(f"[WHALE] TX not found: {signature[:16]}...")
         return
         
         # Cache check moved inside retry loop above
