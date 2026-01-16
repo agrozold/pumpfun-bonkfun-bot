@@ -478,10 +478,15 @@ class TrendingScanner:
                         base = pair.get("baseToken", {})
                         mint = base.get("address", "")
 
-                        # Support both pump.fun and bonk.fun tokens
                         if mint in seen_mints:
                             continue
-                        if not (mint.endswith("pump") or mint.endswith("bonk")):
+                        
+                        # Support pump.fun, bonk.fun, and migrated tokens
+                        # Migrated tokens trade on Raydium/PumpSwap but keep original mint
+                        is_pump_bonk = mint.endswith("pump") or mint.endswith("bonk")
+                        is_raydium = pair.get("dexId") in ("raydium", "pumpswap")
+                        
+                        if not (is_pump_bonk or is_raydium):
                             continue
 
                         seen_mints.add(mint)
@@ -526,8 +531,12 @@ class TrendingScanner:
 
                     base = pair.get("baseToken", {})
                     mint_addr = base.get("address", "")
-                    # Support both pump.fun and bonk.fun tokens
-                    if not (mint_addr.endswith("pump") or mint_addr.endswith("bonk")):
+                    
+                    # Support pump.fun, bonk.fun, and migrated tokens on Raydium
+                    is_pump_bonk = mint_addr.endswith("pump") or mint_addr.endswith("bonk")
+                    is_raydium = pair.get("dexId") in ("raydium", "pumpswap")
+                    
+                    if not (is_pump_bonk or is_raydium):
                         continue
 
                     token = self._parse_dexscreener_pair(pair)
@@ -661,13 +670,13 @@ class TrendingScanner:
 
                 mints = await resp.json()
 
-                # Filter pump.fun and bonk.fun tokens (end with "pump" or "bonk")
-                pump_mints = [m for m in mints if m.endswith("pump") or m.endswith("bonk")][:25]
+                # Filter pump.fun, bonk.fun tokens, and include all tradeable for migrated
+                pump_bonk_mints = [m for m in mints if m.endswith("pump") or m.endswith("bonk")][:25]
 
-                if pump_mints:
-                    prices = await self._fetch_jupiter_prices(pump_mints)
+                if pump_bonk_mints:
+                    prices = await self._fetch_jupiter_prices(pump_bonk_mints)
 
-                    for mint in pump_mints:
+                    for mint in pump_bonk_mints:
                         price_info = prices.get(mint, {})
                         token = TrendingToken(
                             mint=mint,
@@ -779,9 +788,12 @@ class TrendingScanner:
 
                 for item in data.get("data", {}).get("items", [])[:30]:
                     token = self._parse_birdeye_token(item)
-                    # Support both pump.fun and bonk.fun tokens
-                    if token and (token.mint.endswith("pump") or token.mint.endswith("bonk")):
-                        tokens.append(token)
+                    # Support pump.fun, bonk.fun, and all Solana tokens (for migrated)
+                    if token:
+                        is_pump_bonk = token.mint.endswith("pump") or token.mint.endswith("bonk")
+                        # Include all tokens from Birdeye trending (they filter for quality)
+                        if is_pump_bonk or token.volume_24h > 50000:
+                            tokens.append(token)
 
         except Exception as e:
             logger.debug(f"Birdeye fetch error: {e}")

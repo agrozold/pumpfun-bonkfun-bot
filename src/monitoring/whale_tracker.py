@@ -8,6 +8,8 @@ Whale Tracker - отслеживает транзакции китов в РЕА
 Поддерживает ВСЕ платформы:
 - pump.fun (6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P)
 - letsbonk/Raydium LaunchLab (LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj)
+- PumpSwap AMM (PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP) - migrated tokens
+- Raydium AMM (675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8) - migrated tokens
 """
 
 import asyncio
@@ -27,14 +29,19 @@ logger = logging.getLogger(__name__)
 # Program IDs for all supported platforms
 PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 LETS_BONK_PROGRAM = "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"
+# Migrated tokens trade on these DEXes
+PUMPSWAP_PROGRAM = "PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP"
+RAYDIUM_AMM_PROGRAM = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 
-# All programs to monitor
-ALL_PROGRAMS = [PUMP_FUN_PROGRAM, LETS_BONK_PROGRAM]
+# All programs to monitor (bonding curves + DEXes for migrated)
+ALL_PROGRAMS = [PUMP_FUN_PROGRAM, LETS_BONK_PROGRAM, PUMPSWAP_PROGRAM, RAYDIUM_AMM_PROGRAM]
 
 # Program ID to platform mapping
 PROGRAM_TO_PLATFORM: dict[str, str] = {
     PUMP_FUN_PROGRAM: "pump_fun",
     LETS_BONK_PROGRAM: "lets_bonk",
+    PUMPSWAP_PROGRAM: "pumpswap",
+    RAYDIUM_AMM_PROGRAM: "raydium",
 }
 
 # Public RPC endpoints for fallback only (free, no rate limit)
@@ -408,11 +415,20 @@ class WhaleTracker:
             if self.target_platform and platform != self.target_platform:
                 return
             
-            # Проверяем что это Buy инструкция (работает для обеих платформ)
+            # Проверяем что это Buy/Swap инструкция
             is_buy = False
             for log in logs:
-                # pump.fun и letsbonk оба используют "Instruction: Buy"
+                # pump.fun и letsbonk используют "Instruction: Buy"
+                # Raydium/PumpSwap используют "Instruction: swap" или transfer patterns
                 if "Instruction: Buy" in log or "Instruction: buy" in log.lower():
+                    is_buy = True
+                    break
+                # Raydium AMM swap detection
+                if "Instruction: swap" in log.lower() or "ray_log" in log.lower():
+                    is_buy = True
+                    break
+                # PumpSwap detection
+                if PUMPSWAP_PROGRAM in log and ("swap" in log.lower() or "buy" in log.lower()):
                     is_buy = True
                     break
             
