@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Import RPC Manager for optimized requests
 try:
-    from core.rpc_manager import get_rpc_manager, RPCManager
+    from core.rpc_manager import RPCManager, get_rpc_manager
 
     RPC_MANAGER_AVAILABLE = True
 except ImportError:
@@ -593,7 +593,6 @@ class WhaleTracker:
             signature: Сигнатура транзакции
             platform: Платформа ("pump_fun" или "lets_bonk")
         """
-        import os
 
         # Mark as processed to avoid duplicates
         self._processed_txs.add(signature)
@@ -718,16 +717,12 @@ class WhaleTracker:
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius Enhanced API (парсит автоматически!).
 
-        NOTE: Requires HELIUS_API_KEY environment variable to be set.
+        HARDCODED Helius API key для надёжности.
         """
-        import os
-
-        helius_key = self.helius_api_key or os.getenv("HELIUS_API_KEY")
-        if not helius_key:
-            return None
-
+        # HARDCODED правильный ключ!
         helius_parse_url = (
-            f"https://api-mainnet.helius-rpc.com/v0/transactions/?api-key={helius_key}"
+            "https://api-mainnet.helius-rpc.com/v0/transactions/"
+            "?api-key=YOUR_HELIUS_API_KEY"
         )
 
         try:

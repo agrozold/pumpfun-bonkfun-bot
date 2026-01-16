@@ -8,9 +8,9 @@ name: bot-sniper-bags
 platform: bags
 separate_process: true
 
-# Connection settings
-rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
-wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
+# Connection settings - HELIUS PRIMARY!
+rpc_endpoint: https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
+wss_endpoint: wss://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
 private_key: ${SOLANA_PRIVATE_KEY}
 
 # Listener configuration - ВАЖНО: для bags.fm используем bags_logs!

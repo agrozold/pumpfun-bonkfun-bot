@@ -1,14 +1,19 @@
 """
-Global RPC Manager with rate limiting and round-robin between providers.
+Global RPC Manager - Helius PRIMARY, Alchemy/Public as FALLBACK.
 
-Solves the 429 rate limit problem by:
-1. Round-robin between multiple RPC providers
-2. Global rate limiting per provider
-3. Automatic fallback on 429 errors
-4. Request queuing for burst protection
+HELIUS FREE TIER LIMITS:
+- 1,000,000 credits/month = ~33,333 credits/day
+- Standard RPC: 1 credit per request
+- Enhanced API: 50 credits per request
+- With 6 bots running 24/7: ~1,388 credits/hour = ~231 credits/min
+
+STRATEGY:
+1. Helius = PRIMARY (best quality, use 80% of budget)
+2. Alchemy = FALLBACK #1 (when Helius rate limited)
+3. Public Solana = FALLBACK #2 (last resort)
 
 Usage:
-    from src.core.rpc_manager import get_rpc_manager
+    from core.rpc_manager import get_rpc_manager
 
     rpc = get_rpc_manager()
     result = await rpc.get_transaction(signature)
@@ -27,6 +32,29 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# =============================================================================
+# HELIUS BUDGET CALCULATION (1,000,000 credits/month)
+# =============================================================================
+# Daily budget: 1,000,000 / 30 = 33,333 credits/day
+# Hourly budget: 33,333 / 24 = 1,388 credits/hour
+# Per-minute budget: 1,388 / 60 = 23 credits/minute
+# With 6 bots: 23 / 6 = ~3.8 credits/minute per bot
+# Standard RPC = 1 credit, so ~3.8 req/min = 0.063 req/s per bot
+# BUT we want to use 80% Helius, 20% fallback, so: 0.05 req/s per bot
+# =============================================================================
+
+HELIUS_MONTHLY_CREDITS = 1_000_000
+HELIUS_DAILY_CREDITS = HELIUS_MONTHLY_CREDITS // 30  # 33,333
+HELIUS_HOURLY_CREDITS = HELIUS_DAILY_CREDITS // 24  # 1,388
+NUM_BOTS = 6
+
+# Conservative rate: use 70% of budget to leave room for spikes
+HELIUS_SAFE_HOURLY = int(HELIUS_HOURLY_CREDITS * 0.7)  # 971 credits/hour
+HELIUS_REQ_PER_SEC = HELIUS_SAFE_HOURLY / 3600 / NUM_BOTS  # ~0.045 req/s per bot
+
+# Enhanced API costs 50 credits, so much more limited
+HELIUS_ENHANCED_REQ_PER_SEC = HELIUS_REQ_PER_SEC / 50  # ~0.0009 req/s
+
 
 class RPCProvider(Enum):
     """Supported RPC providers."""
@@ -34,7 +62,6 @@ class RPCProvider(Enum):
     HELIUS = "helius"
     ALCHEMY = "alchemy"
     PUBLIC_SOLANA = "public_solana"
-    CUSTOM = "custom"
 
 
 @dataclass
@@ -47,6 +74,7 @@ class ProviderConfig:
     rate_limit_per_second: float = 10.0  # requests per second
     priority: int = 1  # lower = higher priority
     enabled: bool = True
+    is_primary: bool = False  # Primary provider flag
 
     # Runtime state
     last_request_time: float = field(default=0.0, repr=False)
@@ -54,37 +82,40 @@ class ProviderConfig:
     total_requests: int = field(default=0, repr=False)
     total_errors: int = field(default=0, repr=False)
     backoff_until: float = field(default=0.0, repr=False)
+    daily_requests: int = field(default=0, repr=False)
+    daily_reset_time: float = field(default=0.0, repr=False)
 
 
 class RPCManager:
-    """Global RPC manager with rate limiting and provider rotation.
+    """Global RPC manager - Helius PRIMARY, others FALLBACK.
 
     Features:
-    - Round-robin between providers based on availability
-    - Per-provider rate limiting
-    - Automatic backoff on 429 errors
-    - Request queuing for burst protection
-    - Metrics tracking
+    - Helius as primary RPC (best quality)
+    - Alchemy as fallback #1
+    - Public Solana as fallback #2
+    - Daily budget tracking for Helius
+    - Automatic fallback on rate limits
     """
 
     _instance: "RPCManager | None" = None
     _lock = asyncio.Lock()
 
-    # HTTP status codes
     HTTP_OK = 200
     HTTP_RATE_LIMITED = 429
+
+    # HARDCODED HELIUS RPC - правильный ключ!
+    HELIUS_RPC = (
+        "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY"
+    )
+    HELIUS_WSS = (
+        "wss://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY"
+    )
+    HELIUS_ENHANCED = "https://api-mainnet.helius-rpc.com/v0/transactions/?api-key=YOUR_HELIUS_API_KEY"
 
     def __init__(self) -> None:
         self.providers: dict[str, ProviderConfig] = {}
         self._session: aiohttp.ClientSession | None = None
-        self._request_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
-        self._queue_processor_task: asyncio.Task | None = None
         self._initialized = False
-
-        # Global rate limiting
-        self._global_rate_limit = 50.0  # total requests per second across all providers
-        self._global_last_request = 0.0
-        self._global_lock = asyncio.Lock()
 
         # Metrics
         self._metrics = {
@@ -93,11 +124,12 @@ class RPCManager:
             "rate_limited": 0,
             "fallback_used": 0,
             "cache_hits": 0,
+            "helius_credits_used": 0,
         }
 
-        # Simple response cache
+        # Response cache
         self._cache: dict[str, tuple[Any, float]] = {}
-        self._cache_ttl = 60.0  # 60 seconds
+        self._cache_ttl = 60.0
         self._cache_max_size = 1000
 
     @classmethod
@@ -111,7 +143,7 @@ class RPCManager:
         return cls._instance
 
     async def _initialize(self) -> None:
-        """Initialize providers from environment variables."""
+        """Initialize providers - Helius PRIMARY, others FALLBACK."""
         if self._initialized:
             return
 
@@ -120,68 +152,70 @@ class RPCManager:
             connector=aiohttp.TCPConnector(limit=50, limit_per_host=10),
         )
 
-        # Load Helius (highest priority - best for parsed transactions)
-        helius_key = os.getenv("HELIUS_API_KEY")
-        if helius_key:
-            self.providers["helius"] = ProviderConfig(
-                name="Helius",
-                http_endpoint=f"https://mainnet.helius-rpc.com/?api-key={helius_key}",
-                wss_endpoint=f"wss://mainnet.helius-rpc.com/?api-key={helius_key}",
-                rate_limit_per_second=8.0,  # Helius free tier: ~10 req/s, leave buffer
-                priority=1,
-            )
-            # Helius Enhanced API (for parsed transactions)
-            self.providers["helius_enhanced"] = ProviderConfig(
-                name="Helius Enhanced",
-                http_endpoint=f"https://api-mainnet.helius-rpc.com/v0/transactions/?api-key={helius_key}",
-                rate_limit_per_second=1.5,  # Enhanced API: 2 req/s limit
-                priority=0,  # Highest priority for TX parsing
-            )
-            logger.info(
-                "[RPC] Helius provider configured (8 req/s RPC, 1.5 req/s Enhanced)"
-            )
+        # =================================================================
+        # HELIUS = PRIMARY (hardcoded correct key!)
+        # Rate: 0.045 req/s per bot = 2.7 req/min = 162 req/hour
+        # =================================================================
+        self.providers["helius"] = ProviderConfig(
+            name="Helius",
+            http_endpoint=self.HELIUS_RPC,
+            wss_endpoint=self.HELIUS_WSS,
+            rate_limit_per_second=0.05,  # Conservative: ~3 req/min per bot
+            priority=0,  # HIGHEST priority
+            is_primary=True,
+        )
+        logger.info(
+            "[RPC] ✓ HELIUS PRIMARY configured (0.05 req/s = ~3 req/min per bot)"
+        )
+        logger.info(f"[RPC]   Daily budget: {HELIUS_DAILY_CREDITS} credits")
 
-        # Load Alchemy
+        # Helius Enhanced API (50 credits per request!)
+        self.providers["helius_enhanced"] = ProviderConfig(
+            name="Helius Enhanced",
+            http_endpoint=self.HELIUS_ENHANCED,
+            rate_limit_per_second=0.001,  # Very limited: 50 credits each!
+            priority=0,
+            is_primary=True,
+        )
+        logger.info("[RPC] ✓ Helius Enhanced configured (0.001 req/s - expensive!)")
+
+        # =================================================================
+        # ALCHEMY = FALLBACK #1
+        # =================================================================
         alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
         if alchemy_endpoint:
             self.providers["alchemy"] = ProviderConfig(
                 name="Alchemy",
                 http_endpoint=alchemy_endpoint,
-                rate_limit_per_second=15.0,  # Alchemy has higher limits
-                priority=2,
+                rate_limit_per_second=0.5,  # Conservative fallback
+                priority=5,  # Lower priority than Helius
+                is_primary=False,
             )
-            logger.info("[RPC] Alchemy provider configured (15 req/s)")
+            logger.info("[RPC] ✓ Alchemy FALLBACK #1 configured")
+        else:
+            logger.warning("[RPC] ⚠ ALCHEMY_RPC_ENDPOINT not set - no fallback #1")
 
-        # Load custom RPC from env
-        custom_rpc = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
-        custom_wss = os.getenv("SOLANA_NODE_WSS_ENDPOINT")
-        if custom_rpc and "mainnet-beta.solana.com" not in custom_rpc:
-            self.providers["custom"] = ProviderConfig(
-                name="Custom RPC",
-                http_endpoint=custom_rpc,
-                wss_endpoint=custom_wss,
-                rate_limit_per_second=20.0,  # Assume paid RPC has good limits
-                priority=2,
-            )
-            logger.info(f"[RPC] Custom provider configured: {custom_rpc[:40]}...")
-
-        # Public Solana (lowest priority, fallback only)
+        # =================================================================
+        # PUBLIC SOLANA = FALLBACK #2 (last resort)
+        # =================================================================
         self.providers["public_solana"] = ProviderConfig(
             name="Public Solana",
             http_endpoint="https://api.mainnet-beta.solana.com",
             wss_endpoint="wss://api.mainnet-beta.solana.com",
-            rate_limit_per_second=2.0,  # Very conservative for public RPC
-            priority=10,  # Lowest priority
+            rate_limit_per_second=0.2,  # Very limited
+            priority=10,  # LOWEST priority
+            is_primary=False,
         )
-        logger.info("[RPC] Public Solana fallback configured (2 req/s)")
+        logger.info("[RPC] ✓ Public Solana FALLBACK #2 configured")
 
         self._initialized = True
-        logger.info(f"[RPC] Manager initialized with {len(self.providers)} providers")
+        logger.info(f"[RPC] Manager initialized: {len(self.providers)} providers")
+        logger.info("[RPC] Priority: Helius -> Alchemy -> Public Solana")
 
     def _get_available_provider(
-        self, exclude: set[str] | None = None
+        self, exclude: set[str] | None = None, prefer_primary: bool = True
     ) -> ProviderConfig | None:
-        """Get the best available provider based on rate limits and priority."""
+        """Get best available provider - Helius first, then fallbacks."""
         exclude = exclude or set()
         now = time.time()
 
@@ -190,7 +224,7 @@ class RPCManager:
             if name in exclude or not provider.enabled:
                 continue
 
-            # Check if in backoff
+            # Skip if in backoff
             if now < provider.backoff_until:
                 continue
 
@@ -200,12 +234,17 @@ class RPCManager:
             if time_since_last < min_interval:
                 continue
 
+            # Reset daily counter if new day
+            if now - provider.daily_reset_time > 86400:
+                provider.daily_requests = 0
+                provider.daily_reset_time = now
+
             available.append((provider.priority, name, provider))
 
         if not available:
             return None
 
-        # Sort by priority (lower = better)
+        # Sort by priority (lower = better) - Helius first!
         available.sort(key=lambda x: x[0])
         return available[0][2]
 
@@ -240,8 +279,16 @@ class RPCManager:
         """Handle successful request."""
         provider.consecutive_errors = 0
         provider.total_requests += 1
+        provider.daily_requests += 1
         self._metrics["total_requests"] += 1
         self._metrics["successful_requests"] += 1
+
+        # Track Helius credits
+        if provider.is_primary:
+            if "enhanced" in provider.name.lower():
+                self._metrics["helius_credits_used"] += 50  # Enhanced = 50 credits
+            else:
+                self._metrics["helius_credits_used"] += 1  # Standard = 1 credit
 
     async def post_rpc(
         self,
@@ -447,25 +494,34 @@ class RPCManager:
             del self._cache[oldest]
 
     def get_metrics(self) -> dict[str, Any]:
-        """Get current metrics."""
+        """Get current metrics including Helius budget usage."""
         provider_stats = {}
         for name, provider in self.providers.items():
             provider_stats[name] = {
                 "total_requests": provider.total_requests,
+                "daily_requests": provider.daily_requests,
                 "total_errors": provider.total_errors,
                 "consecutive_errors": provider.consecutive_errors,
                 "enabled": provider.enabled,
+                "is_primary": provider.is_primary,
                 "in_backoff": time.time() < provider.backoff_until,
             }
 
+        helius_daily_used = self._metrics.get("helius_credits_used", 0)
+        helius_daily_remaining = HELIUS_DAILY_CREDITS - helius_daily_used
+        helius_usage_percent = (helius_daily_used / HELIUS_DAILY_CREDITS) * 100
+
         return {
             **self._metrics,
+            "helius_daily_budget": HELIUS_DAILY_CREDITS,
+            "helius_daily_remaining": helius_daily_remaining,
+            "helius_usage_percent": f"{helius_usage_percent:.1f}%",
             "cache_size": len(self._cache),
             "providers": provider_stats,
         }
 
     def log_metrics(self) -> None:
-        """Log current metrics."""
+        """Log current metrics with Helius budget info."""
         m = self._metrics
         success_rate = (
             m["successful_requests"] / m["total_requests"] * 100
@@ -473,16 +529,23 @@ class RPCManager:
             else 0
         )
 
+        helius_used = m.get("helius_credits_used", 0)
+        helius_pct = (helius_used / HELIUS_DAILY_CREDITS) * 100
+
         logger.info(
-            f"[RPC STATS] Total: {m['total_requests']}, Success: {m['successful_requests']} "
-            f"({success_rate:.1f}%), Rate limited: {m['rate_limited']}, "
-            f"Fallbacks: {m['fallback_used']}, Cache hits: {m['cache_hits']}"
+            f"[RPC STATS] Total: {m['total_requests']}, Success: {success_rate:.1f}%, "
+            f"Rate limited: {m['rate_limited']}, Fallbacks: {m['fallback_used']}"
+        )
+        logger.info(
+            f"[RPC HELIUS] Credits used today: {helius_used}/{HELIUS_DAILY_CREDITS} "
+            f"({helius_pct:.1f}%), Cache hits: {m['cache_hits']}"
         )
 
-        for _name, provider in self.providers.items():
+        for name, provider in self.providers.items():
             if provider.total_requests > 0:
+                role = "PRIMARY" if provider.is_primary else "FALLBACK"
                 logger.info(
-                    f"[RPC] {provider.name}: {provider.total_requests} requests, "
+                    f"[RPC] {provider.name} ({role}): {provider.total_requests} req, "
                     f"{provider.total_errors} errors"
                 )
 
