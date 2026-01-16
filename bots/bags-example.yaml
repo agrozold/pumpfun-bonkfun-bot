@@ -1,8 +1,6 @@
-# BAGS Platform Bot Configuration Example
+# BAGS Platform Bot Configuration
 # BAGS tokens are identified by mint addresses ending with "bags"
-# BAGS uses Meteora DBC (Dynamic Bonding Curve) for token trading:
-# - DBC Program ID: dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN
-# - DAMM v2 Program ID: cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG (post-migration)
+# BAGS uses Meteora DBC (Dynamic Bonding Curve) for token trading
 
 enabled: true
 env_file: .env
@@ -14,80 +12,98 @@ rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
 private_key: ${SOLANA_PRIVATE_KEY}
 
-# Run in separate process for isolation
 separate_process: true
 
 # Listener configuration
-# BAGS supports: blocks, geyser, pumpportal, fallback
 filters:
-  listener_type: pumpportal
-  max_token_age: 60  # Max 60 seconds old tokens
+  listener_type: fallback
+  max_token_age: 60  # Токены >= 1 минуты
   yolo_mode: true
   match_string: null
   bro_address: null
 
-# PumpPortal WebSocket for real-time token events
+# PumpPortal WebSocket
 pumpportal:
   url: wss://pumpportal.fun/api/data
 
 # Trading parameters
 trade:
-  buy_amount: 0.01  # SOL amount per trade
-  buy_slippage: 0.3  # 30% slippage tolerance
+  buy_amount: 0.01
+  buy_slippage: 0.3
   sell_slippage: 0.25
-  exit_strategy: tp_sl  # time_based, tp_sl, or manual
-  max_hold_time: 3600  # 1 hour max hold
-  min_sol_balance: 0.05  # Reserve for gas fees
-  moon_bag_percentage: 20  # Keep 20% on take profit
+  exit_strategy: tp_sl
+  max_hold_time: 3600
+  min_sol_balance: 0.05
+  moon_bag_percentage: 20
   price_check_interval: 5
-  stop_loss_percentage: 0.3  # -30% stop loss
-  take_profit_percentage: 1.0  # +100% take profit
+  stop_loss_percentage: 0.3
+  take_profit_percentage: 1.0
 
-# Priority fees for faster transactions
+# Priority fees
 priority_fees:
   enable_dynamic: false
   enable_fixed: true
-  fixed_amount: 300000  # microlamports
+  fixed_amount: 300000
 
-# Pattern Detection for BAGS tokens - Ужесточённые фильтры
+# ============================================
+# PATTERN DETECTION
+# ============================================
 pattern_detection:
   enabled: true
-  buy_pressure_threshold: 0.70     # 70% покупок
-  trade_velocity_threshold: 200    # 200 сделок за 5 мин
-  price_momentum_threshold: 0.05   # 5% рост
-  volume_spike_threshold: 2.5
+  pattern_only_mode: true
+  
+  min_patterns_to_buy: 1
+  min_signal_strength: 0.7
   min_whale_buys: 1
-  min_patterns_to_buy: 2
-  min_signal_strength: 0.6
-  pattern_only_mode: false
+  
+  buy_pressure_threshold: 0.75
+  trade_velocity_threshold: 300
+  price_momentum_threshold: 0.05
+  volume_spike_threshold: 3.0
+  
+  # High Volume Sideways
+  high_volume_buys_1h: 400
+  high_volume_sells_1h: 200
+  high_volume_alt_buys_1h: 100
+  high_volume_alt_max_sells_1h: 100
+  
+  # EXTREME BUY PRESSURE 5min
+  extreme_buy_pressure_min_buys_5m: 700
+  extreme_buy_pressure_max_sells_5m: 200
 
-# Token Scoring
+# ============================================
+# TOKEN SCORING
+# ============================================
 scoring:
   enabled: true
-  min_score: 50
+  min_score: 60
 
-# Whale Copy Trading
+# ============================================
+# WHALE COPY
+# ============================================
 whale_copy:
   enabled: true
   wallets_file: "smart_money_wallets.json"
   min_buy_amount: 0.3
   helius_api_key: ${HELIUS_API_KEY}
 
-# Dev Reputation Check
+# ============================================
+# DEV CHECK
+# ============================================
 dev_check:
   enabled: true
-  max_tokens_created: 20
+  max_tokens_created: 50
   min_account_age_days: 1
 
-# Trending Scanner - ищет РЕЗКИЕ ВСПЛЕСКИ покупок
-# ВАЖНО: trending scanner обходит scoring и dev_check (skip_checks=True)
-# Поэтому фильтры здесь должны быть СТРОГИМИ!
+# ============================================
+# TRENDING SCANNER
+# ============================================
 trending_scanner:
   enabled: true
-  min_volume_1h: 30000        # Минимум $30k объёма за 1 ЧАС
-  min_market_cap: 5000        # Минимум $5k маркеткап
-  max_market_cap: 0           # 0 = без лимита
-  min_price_change_5m: 10     # Минимум +10% за 5 МИНУТ
-  min_price_change_1h: 30     # Минимум +30% за час
-  min_buy_pressure: 0.75      # 75% покупок
-  scan_interval: 30           # Сканировать каждые 30 сек
+  min_volume_1h: 30000
+  min_market_cap: 5000
+  max_market_cap: 0
+  min_price_change_5m: 10
+  min_price_change_1h: 30
+  min_buy_pressure: 0.75
+  scan_interval: 30

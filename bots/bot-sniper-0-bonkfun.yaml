@@ -1,5 +1,5 @@
-# LETSBONK.FUN Sniper Bot - Улучшенные фильтры
-# Ужесточённые настройки для избежания покупки падающих токенов
+# LETSBONK.FUN Sniper Bot
+# Bonk токены редкие (~2-3% от pump.fun)
 
 enabled: true
 env_file: .env
@@ -12,8 +12,8 @@ filters:
   bro_address: null
   listener_type: fallback
   match_string: null
-  max_token_age: 60  # Токены >= 1 минуты (60 секунд)
-  yolo_mode: false   # Отключить YOLO для осторожной торговли
+  max_token_age: 60  # Токены >= 1 минуты
+  yolo_mode: true
 
 # RPC
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
@@ -44,39 +44,37 @@ trade:
   take_profit_percentage: 1.0
 
 # ============================================
-# PATTERN DETECTION - УЖЕСТОЧЁННЫЕ ФИЛЬТРЫ
+# PATTERN DETECTION
 # ============================================
 pattern_detection:
   enabled: true
   pattern_only_mode: true
   
-  # УЖЕСТОЧЕНО
-  min_patterns_to_buy: 2           # Минимум 2 паттерна
-  min_signal_strength: 0.7         # 70% сила сигнала
-  min_whale_buys: 1                # 1 whale покупка
+  min_patterns_to_buy: 1
+  min_signal_strength: 0.7
+  min_whale_buys: 1
   
-  # Пороги паттернов
-  buy_pressure_threshold: 0.75     # 75% покупок
-  trade_velocity_threshold: 300    # 300 сделок за 5 мин
-  price_momentum_threshold: 0.10   # 10% рост
-  volume_spike_threshold: 3.0      # 3x объём
+  buy_pressure_threshold: 0.75
+  trade_velocity_threshold: 300
+  price_momentum_threshold: 0.05
+  volume_spike_threshold: 3.0
   
   # High Volume Sideways
   high_volume_buys_1h: 400
-  high_volume_sells_1h: 250
-  high_volume_alt_buys_1h: 150
-  high_volume_alt_max_sells_1h: 80
+  high_volume_sells_1h: 200
+  high_volume_alt_buys_1h: 100
+  high_volume_alt_max_sells_1h: 100
   
   # EXTREME BUY PRESSURE 5min
   extreme_buy_pressure_min_buys_5m: 700
-  extreme_buy_pressure_max_sells_5m: 150
+  extreme_buy_pressure_max_sells_5m: 200
 
 # ============================================
-# TOKEN SCORING - УЖЕСТОЧЕНО
+# TOKEN SCORING
 # ============================================
 scoring:
   enabled: true
-  min_score: 70
+  min_score: 60
 
 # ============================================
 # WHALE COPY
@@ -84,26 +82,26 @@ scoring:
 whale_copy:
   enabled: true
   wallets_file: "smart_money_wallets.json"
-  min_buy_amount: 0.5
+  min_buy_amount: 0.3
   helius_api_key: ${HELIUS_API_KEY}
 
 # ============================================
-# DEV CHECK - УЖЕСТОЧЕНО
+# DEV CHECK
 # ============================================
 dev_check:
   enabled: true
-  max_tokens_created: 20
+  max_tokens_created: 50
   min_account_age_days: 1
 
 # ============================================
-# TRENDING SCANNER - УЖЕСТОЧЕНО
+# TRENDING SCANNER
 # ============================================
 trending_scanner:
   enabled: true
-  min_volume_1h: 50000
-  min_market_cap: 10000
+  min_volume_1h: 30000
+  min_market_cap: 5000
   max_market_cap: 0
-  min_price_change_5m: 15
-  min_price_change_1h: 40
-  min_buy_pressure: 0.80
+  min_price_change_5m: 10
+  min_price_change_1h: 30
+  min_buy_pressure: 0.75
   scan_interval: 30
