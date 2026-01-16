@@ -77,7 +77,7 @@ class TokenVolumeAnalysis:
     @property
     def is_healthy(self) -> bool:
         """Токен здоровый для торговли."""
-        return self.health_score >= 60 and self.risk_level != RiskLevel.EXTREME
+        return self.health_score >= 70 and self.risk_level != RiskLevel.EXTREME
 
     @property
     def is_opportunity(self) -> bool:
@@ -92,9 +92,10 @@ class VolumePatternAnalyzer:
         self,
         min_volume_1h: float = 10000,
         volume_spike_threshold: float = 3.0,
-        min_trades_5m: int = 20,
-        scan_interval: float = 30.0,
+        min_trades_5m: int = 200,
+        scan_interval: float = 100.0,
         max_tokens_per_scan: int = 50,
+        min_health_score: int = 70,
     ):
         """Initialize analyzer."""
         self.min_volume_1h = min_volume_1h
@@ -102,6 +103,7 @@ class VolumePatternAnalyzer:
         self.min_trades_5m = min_trades_5m
         self.scan_interval = scan_interval
         self.max_tokens_per_scan = max_tokens_per_scan
+        self.min_health_score = min_health_score
         self._session: aiohttp.ClientSession | None = None
         self._running = False
         self._scan_task: asyncio.Task | None = None
@@ -314,9 +316,9 @@ class VolumePatternAnalyzer:
                 s += 15
             elif p.pattern_type == PatternType.ORGANIC_GROWTH:
                 s += 10
-        if health < 40:
+        if health < 70:
             s = int(s * 0.5)
-        elif health >= 70:
+        elif health >= 80:
             s = int(s * 1.2)
         return max(0, min(100, s))
 
@@ -324,11 +326,11 @@ class VolumePatternAnalyzer:
         """Get recommendation."""
         if risk == RiskLevel.EXTREME:
             return "DANGER"
-        if health < 40:
+        if health < 70:
             return "SKIP"
-        if opp >= 80 and health >= 70:
+        if opp >= 80 and health >= 80:
             return "STRONG_BUY"
-        if opp >= 70 and health >= 60:
+        if opp >= 70 and health >= 70:
             return "BUY"
         if opp >= 50:
             return "WATCH"
