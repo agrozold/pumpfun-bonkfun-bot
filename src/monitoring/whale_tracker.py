@@ -37,6 +37,12 @@ PROGRAM_TO_PLATFORM: dict[str, str] = {
     LETS_BONK_PROGRAM: "lets_bonk",
 }
 
+# Public RPC endpoints for rotation (free, no rate limit)
+PUBLIC_RPC_ENDPOINTS = [
+    "https://api.mainnet-beta.solana.com",
+    "https://rpc.ankr.com/solana",
+]
+
 
 @dataclass
 class WhaleBuy:
@@ -88,6 +94,23 @@ class WhaleTracker:
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._processed_txs: set[str] = set()
+        
+        # RPC optimization: TX cache with TTL
+        self._tx_cache: dict[str, tuple[dict, float]] = {}  # sig -> (result, timestamp)
+        self._cache_ttl = 30.0  # 30 seconds TTL
+        
+        # Helius rate limiting
+        self._last_helius_call = 0.0
+        self._helius_rate_limit = 5.0  # 1 request per 5 seconds
+        
+        # Performance metrics
+        self._metrics = {
+            "public_rpc_calls": 0,
+            "public_rpc_success": 0,
+            "helius_fallbacks": 0,
+            "cache_hits": 0,
+            "timeouts": 0,
+        }
         
         self._load_wallets()
         
@@ -393,6 +416,12 @@ class WhaleTracker:
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
         
+        Оптимизированная версия с:
+        - TX кэшированием (30s TTL)
+        - Endpoint rotation (несколько публичных RPC)
+        - Helius fallback с rate limiting
+        - Performance telemetry
+        
         Args:
             signature: Сигнатура транзакции
             platform: Платформа ("pump_fun" или "lets_bonk")
@@ -404,35 +433,72 @@ class WhaleTracker:
         if len(self._processed_txs) > 1000:
             self._processed_txs = set(list(self._processed_txs)[-500:])
         
+        # Check cache first
+        if signature in self._tx_cache:
+            cached_tx, cache_time = self._tx_cache[signature]
+            if time.time() - cache_time < self._cache_ttl:
+                self._metrics["cache_hits"] += 1
+                logger.debug(f"[WHALE] Cache HIT for {signature[:16]}...")
+                await self._process_rpc_tx(cached_tx, signature, platform)
+                return
+        
         start_time = time.time()
+        tx = None
         
-        # ПРИОРИТЕТ 1: Публичный Solana RPC (бесплатный, без rate limit)
-        public_rpc = "https://api.mainnet-beta.solana.com"
-        tx = await self._get_tx_from_endpoint(signature, public_rpc, timeout=3.0)
+        # Try all public RPC endpoints with rotation
+        for endpoint in PUBLIC_RPC_ENDPOINTS:
+            self._metrics["public_rpc_calls"] += 1
+            tx = await self._get_tx_from_endpoint(signature, endpoint, timeout=2.0)
+            elapsed = time.time() - start_time
+            
+            if tx:
+                self._metrics["public_rpc_success"] += 1
+                # Cache successful result
+                self._tx_cache[signature] = (tx, time.time())
+                # Clean old cache entries
+                if len(self._tx_cache) > 200:
+                    oldest = sorted(self._tx_cache.items(), key=lambda x: x[1][1])[:100]
+                    for k, _ in oldest:
+                        del self._tx_cache[k]
+                
+                if elapsed > 1.0:
+                    logger.warning(f"[WHALE] SLOW RPC: {elapsed:.2f}s for {signature[:16]}...")
+                else:
+                    logger.info(f"[WHALE] RPC OK: {elapsed:.2f}s for {signature[:16]}...")
+                
+                await self._process_rpc_tx(tx, signature, platform)
+                return
         
-        elapsed = time.time() - start_time
-        if tx:
-            if elapsed > 1.0:
-                logger.warning(f"[WHALE] SLOW RPC: {elapsed:.2f}s for {signature[:16]}...")
-            else:
-                logger.info(f"[WHALE] RPC OK: {elapsed:.2f}s for {signature[:16]}...")
-            await self._process_rpc_tx(tx, signature, platform)
-            return
-        
-        # ПРИОРИТЕТ 2: Helius RPC (fallback с rate limiting)
-        # Rate limit: max 1 запрос в 2 секунды для экономии квоты
+        # All public endpoints failed - try Helius fallback with rate limiting
         if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
             now = time.time()
-            if not hasattr(self, "_last_helius_call"):
-                self._last_helius_call = 0
+            time_since_last = now - self._last_helius_call
             
-            if now - self._last_helius_call >= 2.0:
+            if time_since_last >= self._helius_rate_limit:
                 self._last_helius_call = now
-                tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=3.0)
+                self._metrics["helius_fallbacks"] += 1
+                
+                tx = await self._get_tx_from_endpoint(
+                    signature, self.rpc_endpoint, timeout=3.0
+                )
+                elapsed = time.time() - start_time
+                
                 if tx:
-                    logger.info(f"[WHALE] Got TX from Helius fallback for {signature[:16]}...")
+                    self._tx_cache[signature] = (tx, time.time())
+                    logger.warning(
+                        f"[WHALE] Helius fallback OK: {elapsed:.2f}s for {signature[:16]}..."
+                    )
                     await self._process_rpc_tx(tx, signature, platform)
                     return
+                else:
+                    logger.warning(
+                        f"[WHALE] Helius fallback FAILED for {signature[:16]}..."
+                    )
+            else:
+                wait_time = self._helius_rate_limit - time_since_last
+                logger.debug(
+                    f"[WHALE] Helius rate limited, wait {wait_time:.1f}s"
+                )
 
     async def _get_tx_helius(self, signature: str) -> dict | None:
         """Получить транзакцию через Helius."""
