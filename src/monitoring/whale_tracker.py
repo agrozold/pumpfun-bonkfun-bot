@@ -60,9 +60,29 @@ PUBLIC_RPC_FALLBACK = [
 ]
 
 # Helius API endpoints - loaded from HELIUS_API_KEY env var
-# Budget: 1M credits / 14 days = 71k/day = 3k/hour
-# Whale tracker budget: ~40% = 1.2k/hour = 20/min
-HELIUS_RATE_LIMIT_SECONDS = 3.0  # 1 request per 3 seconds = 20/min max
+# ============================================
+# BUDGET CALCULATION (1M credits / 14 days):
+# - Daily budget: 71,428 requests
+# - Hourly budget: 2,976 requests
+# - Per minute: ~50 requests
+#
+# ACTIVE BOTS (each with whale_copy + dev_check):
+# - bot-sniper-pump (whale + dev)
+# - bot-sniper-bonk (whale + dev)
+# - bot-sniper-bags (whale + dev)
+# - bot-whale-copy (whale + dev)
+# - bot-volume-sniper (NO whale, NO dev)
+# = 4 bots with Helius usage
+#
+# ALLOCATION PER BOT (4 bots sharing 50 req/min):
+# - Each whale_tracker: 10 req/min = 600/hr = 14,400/day
+# - Each dev_checker: 2 req/min = 120/hr = 2,880/day (cached)
+# - Total per bot: ~12 req/min
+# - Total 4 bots: ~48 req/min (within 50/min budget)
+#
+# Rate limit: 1 request per 6 seconds = 10/min per whale tracker
+# ============================================
+HELIUS_RATE_LIMIT_SECONDS = 6.0  # 1 request per 6 seconds = 10/min per bot
 
 
 @dataclass
@@ -122,19 +142,19 @@ class WhaleTracker:
 
         # RPC optimization: TX cache with extended TTL for quota saving
         self._tx_cache: dict[str, tuple[dict, float]] = {}  # sig -> (result, timestamp)
-        self._cache_ttl = 120.0  # 120 seconds TTL (extended for quota saving)
-        self._cache_max_size = 1000  # Larger LRU cache to reduce API calls
+        self._cache_ttl = 180.0  # 180 seconds TTL (3 min - extended for quota saving)
+        self._cache_max_size = 1500  # Larger LRU cache to reduce API calls
 
         # Helius rate limiting - optimized for 1M credits / 14 days
-        # Budget: 71k/day = 3k/hour, whale tracker gets ~40% = 1.2k/hour = 20/min
+        # Budget: 71k/day = 3k/hour, whale tracker gets ~60% = 1.8k/hour = 30/min
         self._last_helius_call = 0.0
         self._helius_rate_limit = HELIUS_RATE_LIMIT_SECONDS  # Use global constant
 
         # TX queue for rate-limited processing
         self._pending_txs: list[tuple[str, str]] = []  # (signature, platform)
-        self._max_pending = 50  # Don't queue more than 50 TXs
+        self._max_pending = 100  # Queue up to 100 TXs for processing
 
-        # Performance metrics
+        # Performance metrics for quota monitoring
         self._metrics = {
             "helius_calls": 0,
             "helius_success": 0,
@@ -142,6 +162,7 @@ class WhaleTracker:
             "cache_hits": 0,
             "timeouts": 0,
             "requests_today": 0,
+            "day_start": time.time(),
         }
 
         self._load_wallets()
@@ -306,7 +327,7 @@ class WhaleTracker:
                 await asyncio.sleep(1.0)
 
     def _log_quota_stats(self):
-        """Log Helius quota usage statistics."""
+        """Log Helius quota usage statistics with daily budget tracking."""
         m = self._metrics
         total_calls = m["helius_calls"] + m["public_fallback_calls"]
         cache_rate = (
@@ -315,10 +336,28 @@ class WhaleTracker:
             else 0
         )
 
+        # Calculate daily usage
+        now = time.time()
+        hours_elapsed = (now - m["day_start"]) / 3600
+        if hours_elapsed > 0:
+            hourly_rate = m["helius_calls"] / hours_elapsed
+            daily_projection = hourly_rate * 24
+        else:
+            hourly_rate = 0
+            daily_projection = 0
+
+        # Budget: ~14k/day per bot (4 bots with whale_copy = 56k/day total)
+        # This bot's share: 14,400/day
+        daily_budget = 14400
+        budget_used_pct = (m["helius_calls"] / daily_budget * 100) if daily_budget > 0 else 0
+
         logger.info(
             f"[WHALE STATS] Helius: {m['helius_calls']} calls ({m['helius_success']} success), "
-            f"Fallback: {m['public_fallback_calls']}, Cache hits: {m['cache_hits']} ({cache_rate:.1f}%), "
-            f"Queue: {len(self._pending_txs)}/{self._max_pending}"
+            f"Fallback: {m['public_fallback_calls']}, Cache: {m['cache_hits']} ({cache_rate:.1f}%)"
+        )
+        logger.info(
+            f"[WHALE QUOTA] Rate: {hourly_rate:.0f}/hr, Projection: {daily_projection:.0f}/day, "
+            f"Budget: {budget_used_pct:.1f}% of {daily_budget}/day, Queue: {len(self._pending_txs)}"
         )
 
     async def stop(self):
