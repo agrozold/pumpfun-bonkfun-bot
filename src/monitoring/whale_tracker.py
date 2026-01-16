@@ -435,9 +435,6 @@ class WhaleTracker:
             if not is_buy:
                 return
             
-            # Логируем что нашли Buy транзакцию
-            logger.info(f"[WHALE] BUY TX detected on {platform}: {signature[:16]}...")
-            
             # Получаем детали транзакции и проверяем кошелёк
             await self._check_if_whale_tx(signature, platform)
             
@@ -659,10 +656,8 @@ class WhaleTracker:
             first_key = account_keys[0]
             fee_payer = first_key.get("pubkey", "") if isinstance(first_key, dict) else str(first_key)
             
-            logger.info(f"[WHALE] TX {signature[:16]}... fee_payer: {fee_payer[:8]}...")
-            
             if fee_payer not in self.whale_wallets:
-                logger.info(f"[WHALE] Fee payer {fee_payer} NOT in whale list")
+                # Не логируем - это засоряет логи и не несёт пользы
                 return
             
             # [WHALE] НАШЛИ КИТА!
