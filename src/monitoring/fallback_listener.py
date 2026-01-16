@@ -2,9 +2,13 @@
 Fallback listener that automatically switches between data sources.
 
 Priority order:
-1. PumpPortal (fastest for new tokens)
+1. PumpPortal (fastest for new tokens) - NOTE: Does NOT support bonk.fun!
 2. Solana logsSubscribe (reliable fallback)
 3. Solana blockSubscribe (last resort)
+
+For bonk.fun (lets_bonk platform):
+- Uses specialized BonkLogsListener that subscribes to Raydium LaunchLab program
+- PumpPortal does NOT send bonk.fun tokens!
 """
 
 import asyncio
@@ -23,6 +27,7 @@ class FallbackListener(BaseTokenListener):
     def __init__(
         self,
         wss_endpoint: str,
+        rpc_endpoint: str | None = None,
         platforms: list[Platform] | None = None,
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         pumpportal_api_key: str | None = None,
@@ -34,6 +39,7 @@ class FallbackListener(BaseTokenListener):
 
         Args:
             wss_endpoint: Solana WebSocket endpoint
+            rpc_endpoint: Solana HTTP RPC endpoint (for bonk listener)
             platforms: Platforms to monitor
             pumpportal_url: PumpPortal WebSocket URL
             pumpportal_api_key: PumpPortal API key
@@ -43,6 +49,7 @@ class FallbackListener(BaseTokenListener):
         """
         super().__init__()
         self.wss_endpoint = wss_endpoint
+        self.rpc_endpoint = rpc_endpoint or wss_endpoint.replace("wss://", "https://").replace("ws://", "http://")
         self.platforms = platforms
         self.pumpportal_url = pumpportal_url
         self.pumpportal_api_key = pumpportal_api_key
@@ -55,26 +62,57 @@ class FallbackListener(BaseTokenListener):
         self._error_count = 0
         self._listener_index = -1  # Start with primary
         
+        # Check if we need specialized bonk listener
+        self._needs_bonk_listener = (
+            platforms and 
+            Platform.LETS_BONK in platforms
+        )
+        
         # Build listener order: primary first, then fallbacks
         self._listener_order = [primary_listener] + [
             l for l in self.fallback_listeners if l != primary_listener
         ]
         
+        # For bonk platform, add bonk_logs as high priority fallback
+        if self._needs_bonk_listener and "bonk_logs" not in self._listener_order:
+            # Insert bonk_logs right after primary (or as primary if pumpportal)
+            if primary_listener == "pumpportal":
+                self._listener_order.insert(1, "bonk_logs")
+            else:
+                self._listener_order.append("bonk_logs")
+        
         logger.info(
             f"FallbackListener initialized: primary={primary_listener}, "
-            f"fallbacks={self.fallback_listeners}"
+            f"fallbacks={self.fallback_listeners}, needs_bonk={self._needs_bonk_listener}"
         )
 
     def _create_listener(self, listener_type: str) -> BaseTokenListener | None:
         """Create a specific listener type."""
         try:
-            if listener_type == "pumpportal":
+            if listener_type == "bonk_logs":
+                # Specialized listener for bonk.fun tokens
+                from monitoring.bonk_logs_listener import BonkLogsListener
+                return BonkLogsListener(
+                    wss_endpoint=self.wss_endpoint,
+                    rpc_endpoint=self.rpc_endpoint,
+                    raise_on_max_errors=True,
+                    max_consecutive_errors=3,
+                )
+            elif listener_type == "pumpportal":
                 from monitoring.universal_pumpportal_listener import (
                     UniversalPumpPortalListener,
                 )
+                # Filter out LETS_BONK from pumpportal - it doesn't support bonk.fun!
+                pumpportal_platforms = self.platforms
+                if pumpportal_platforms and Platform.LETS_BONK in pumpportal_platforms:
+                    pumpportal_platforms = [p for p in pumpportal_platforms if p != Platform.LETS_BONK]
+                    if not pumpportal_platforms:
+                        logger.warning("PumpPortal doesn't support bonk.fun, skipping...")
+                        return None
+                
                 return UniversalPumpPortalListener(
                     pumpportal_url=self.pumpportal_url,
-                    platforms=self.platforms,
+                    platforms=pumpportal_platforms,
                     api_key=self.pumpportal_api_key,
                     raise_on_max_errors=True,  # Allow FallbackListener to switch
                     max_consecutive_errors=3,  # Switch faster
