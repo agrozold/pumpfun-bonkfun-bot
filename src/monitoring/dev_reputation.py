@@ -34,8 +34,9 @@ except ImportError:
 # Pump.fun program ID
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 
-# Rate limiting - now handled by RPC Manager
-DEV_CHECK_RATE_LIMIT_SECONDS = 2.0
+# Rate limiting - CRITICAL: 60 seconds between requests to save Helius quota!
+# With 6 bots, each checking devs = massive API usage
+DEV_CHECK_RATE_LIMIT_SECONDS = 60.0  # 1 request per minute per bot
 
 
 class DevReputationChecker:
@@ -49,7 +50,7 @@ class DevReputationChecker:
         helius_api_key: str | None = None,
         max_tokens_created: int = 50,
         min_account_age_days: int = 1,
-        enabled: bool = True,
+        enabled: bool = False,  # DISABLED by default - saves Helius quota!
     ):
         """Инициализация чекера.
 
