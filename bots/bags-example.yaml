@@ -26,16 +26,23 @@ pumpportal:
   url: wss://pumpportal.fun/api/data
 
 # Trading parameters
+# ============================================
+# ЖЁСТКИЙ STOP LOSS - КРИТИЧЕСКИ ВАЖНО!
+# В коде есть ДОПОЛНИТЕЛЬНАЯ защита:
+# - HARD_STOP_LOSS: 25% убыток = НЕМЕДЛЕННАЯ продажа
+# - EMERGENCY_STOP_LOSS: 40% убыток = ЭКСТРЕННАЯ продажа
+# - Агрессивный retry при неудачной продаже (5 попыток)
+# ============================================
 trade:
   buy_amount: 0.01
   buy_slippage: 0.3
-  sell_slippage: 0.25
+  sell_slippage: 0.35              # Увеличен slippage для быстрой продажи
   exit_strategy: tp_sl
   max_hold_time: 86400
   min_sol_balance: 0.03
-  moon_bag_percentage: 20
-  price_check_interval: 2
-  stop_loss_percentage: 0.3
+  moon_bag_percentage: 0           # НЕТ moon bag при SL! Продаём ВСЁ!
+  price_check_interval: 1          # КАЖДУЮ СЕКУНДУ проверяем цену!
+  stop_loss_percentage: 0.20       # 20% SL (в коде есть доп. защита на 25% и 40%)
   take_profit_percentage: 1.0
 
 # Priority fees
