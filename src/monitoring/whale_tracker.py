@@ -530,6 +530,8 @@ class WhaleTracker:
             "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
         }
         
+        endpoint_name = "Helius" if "helius" in endpoint.lower() else endpoint[:30]
+        
         try:
             async with self._session.post(
                 endpoint, json=payload,
@@ -540,20 +542,24 @@ class WhaleTracker:
                     data = await resp.json()
                     result = data.get("result")
                     if result:
+                        logger.debug(f"[WHALE] {endpoint_name} returned TX data")
                         return result
                     # result is None - TX not found yet
+                    error = data.get("error")
+                    if error:
+                        logger.warning(f"[WHALE] {endpoint_name} error: {error}")
                     return None
                 elif resp.status == 429:
-                    logger.debug(f"[WHALE] Rate limited by {endpoint[:30]}...")
+                    logger.warning(f"[WHALE] {endpoint_name} rate limited (429)")
                     return None
                 else:
-                    logger.debug(f"[WHALE] HTTP {resp.status} from {endpoint[:30]}...")
+                    logger.warning(f"[WHALE] {endpoint_name} HTTP {resp.status}")
                     return None
         except asyncio.TimeoutError:
-            logger.warning(f"[WHALE] TIMEOUT ({timeout}s) from {endpoint[:30]}...")
+            logger.warning(f"[WHALE] {endpoint_name} TIMEOUT ({timeout}s)")
             return None
         except Exception as e:
-            logger.debug(f"[WHALE] Error from {endpoint[:30]}: {e}")
+            logger.warning(f"[WHALE] {endpoint_name} error: {e}")
             return None
 
     async def _get_tx_rpc(self, signature: str) -> dict | None:
