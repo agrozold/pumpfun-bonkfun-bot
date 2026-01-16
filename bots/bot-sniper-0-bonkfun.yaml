@@ -27,7 +27,7 @@ priority_fees:
 filters:
   match_string: null
   bro_address: null
-  listener_type: logs
+  listener_type: fallback
   max_token_age: 0  # Без ограничения - покупаем по паттернам
   marry_mode: false
   yolo_mode: true

@@ -22,17 +22,20 @@ class ListenerFactory:
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         pumpportal_api_key: str | None = None,
         platforms: list[Platform] | None = None,
+        enable_fallback: bool = True,
     ) -> BaseTokenListener:
         """Create a token listener based on the specified type.
 
         Args:
-            listener_type: Type of listener ('logs', 'blocks', 'geyser', or 'pumpportal')
+            listener_type: Type of listener ('logs', 'blocks', 'geyser', 'pumpportal', or 'fallback')
             wss_endpoint: WebSocket endpoint URL (for logs/blocks listeners)
             geyser_endpoint: Geyser gRPC endpoint URL (for geyser listener)
             geyser_api_token: Geyser API token (for geyser listener)
             geyser_auth_type: Geyser authentication type
             pumpportal_url: PumpPortal WebSocket URL (for pumpportal listener)
+            pumpportal_api_key: PumpPortal API key for PumpSwap data
             platforms: List of platforms to monitor (if None, monitor all)
+            enable_fallback: If True and listener fails, auto-switch to fallback
 
         Returns:
             Configured token listener
@@ -41,6 +44,31 @@ class ListenerFactory:
             ValueError: If listener type is invalid or required parameters are missing
         """
         listener_type = listener_type.lower()
+
+        # Fallback listener - auto-switches between sources
+        if listener_type == "fallback" or (enable_fallback and listener_type in ["pumpportal", "logs"]):
+            if not wss_endpoint:
+                raise ValueError("WebSocket endpoint required for fallback listener")
+            
+            from monitoring.fallback_listener import FallbackListener
+            
+            # Determine primary based on requested type
+            primary = listener_type if listener_type != "fallback" else "pumpportal"
+            fallbacks = ["logs", "pumpportal", "blocks"]
+            fallbacks = [f for f in fallbacks if f != primary]
+            
+            listener = FallbackListener(
+                wss_endpoint=wss_endpoint,
+                platforms=platforms,
+                pumpportal_url=pumpportal_url,
+                pumpportal_api_key=pumpportal_api_key,
+                primary_listener=primary,
+                fallback_listeners=fallbacks,
+            )
+            logger.info(
+                f"Created FallbackListener: primary={primary}, fallbacks={fallbacks}"
+            )
+            return listener
 
         if listener_type == "geyser":
             if not geyser_endpoint or not geyser_api_token:
