@@ -43,6 +43,9 @@ PUBLIC_RPC_FALLBACK = [
     "https://api.mainnet-beta.solana.com",
 ]
 
+# Helius RPC - PRIMARY endpoint (fast, reliable)
+HELIUS_RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=a53d15c7-d5f5-40fc-81fe-49942d03d4f3"
+
 
 @dataclass
 class WhaleBuy:
@@ -121,6 +124,7 @@ class WhaleTracker:
             f"WhaleTracker initialized: {len(self.whale_wallets)} wallets, "
             f"min_buy={min_buy_amount} SOL, time_window={time_window_minutes} min, {platform_info}"
         )
+        logger.info(f"[WHALE] RPC: Helius PRIMARY (hardcoded), fallback: Ankr, Solana mainnet")
 
     def _load_wallets(self):
         """Загрузить список кошельков китов."""
@@ -447,18 +451,19 @@ class WhaleTracker:
             
             logger.info(f"[WHALE] Checking TX {signature[:16]}... attempt {attempt + 1}/3 (after {delay}s)")
             
-            # Try Helius first
-            if self.rpc_endpoint and "helius" in self.rpc_endpoint.lower():
-                self._metrics["helius_calls"] += 1
-                self._metrics["requests_today"] += 1
-                tx = await self._get_tx_from_endpoint(signature, self.rpc_endpoint, timeout=3.0)
-                
-                if tx:
-                    self._metrics["helius_success"] += 1
-                    self._cache_tx(signature, tx)
-                    logger.info(f"[WHALE] Helius OK on attempt {attempt + 1} for {signature[:16]}...")
-                    await self._process_rpc_tx(tx, signature, platform)
-                    return
+            # Try Helius first (hardcoded endpoint for reliability)
+            self._metrics["helius_calls"] += 1
+            self._metrics["requests_today"] += 1
+            tx = await self._get_tx_from_endpoint(signature, HELIUS_RPC_ENDPOINT, timeout=3.0)
+            
+            if tx:
+                self._metrics["helius_success"] += 1
+                self._cache_tx(signature, tx)
+                logger.info(f"[WHALE] Helius OK on attempt {attempt + 1} for {signature[:16]}...")
+                await self._process_rpc_tx(tx, signature, platform)
+                return
+            else:
+                logger.debug(f"[WHALE] Helius null on attempt {attempt + 1}")
             
             # Try fallback endpoints
             for endpoint in PUBLIC_RPC_FALLBACK:
