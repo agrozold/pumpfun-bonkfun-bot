@@ -437,7 +437,10 @@ class UniversalTrader:
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
     ):
-        """Callback when pump pattern is detected - trigger buy if in pattern_only_mode."""
+        """Callback when pump pattern is detected - trigger buy if in pattern_only_mode.
+        
+        CRITICAL: This now performs MANDATORY scoring check before buying!
+        """
         logger.warning(
             f"[SIGNAL] PUMP SIGNAL: {symbol} ({mint[:8]}...) - "
             f"{len(patterns)} patterns, strength: {strength:.2f}"
@@ -446,18 +449,48 @@ class UniversalTrader:
         
         # Check minimum signal strength
         if strength < self.pattern_min_signal_strength:
-            logger.info(
-                f"[WARN] Signal too weak for {symbol}: {strength:.2f} < {self.pattern_min_signal_strength:.2f} - skipping"
+            logger.warning(
+                f"[SKIP] Signal too weak for {symbol}: {strength:.2f} < {self.pattern_min_signal_strength:.2f}"
+            )
+            return
+        
+        # Check minimum patterns count
+        if len(patterns) < 2:
+            logger.warning(
+                f"[SKIP] Not enough patterns for {symbol}: {len(patterns)} < 2 required"
             )
             return
         
         # Cleanup old pending tokens (older than 5 minutes)
         self._cleanup_pending_tokens()
         
-        # If pattern_only_mode and we have pending token_info - buy now!
+        # If pattern_only_mode and we have pending token_info - check scoring FIRST!
         if self.pattern_only_mode and mint in self.pending_tokens:
             token_info = self.pending_tokens.pop(mint)
-            logger.warning(f"[BUY] BUYING on STRONG pump signal: {symbol} (strength: {strength:.2f})")
+            
+            # MANDATORY SCORING CHECK before buying on signal
+            if self.token_scorer:
+                try:
+                    should_buy, score = await self.token_scorer.should_buy(mint, symbol)
+                    logger.info(
+                        f"[SCORE] Signal token {symbol}: {score.total_score}/100 -> {score.recommendation}"
+                    )
+                    if not should_buy:
+                        logger.warning(
+                            f"[SKIP] {symbol} - score {score.total_score} below threshold despite signal"
+                        )
+                        return
+                except Exception as e:
+                    logger.warning(f"Scoring failed for signal token {symbol}: {e}")
+                    # If scoring fails, require VERY strong signal
+                    if strength < 0.85:
+                        logger.warning(f"[SKIP] {symbol} - scoring failed and signal not strong enough")
+                        return
+            
+            logger.warning(
+                f"[BUY] BUYING on STRONG pump signal: {symbol} "
+                f"(strength: {strength:.2f}, patterns: {len(patterns)})"
+            )
             # Process token with signal (skip_checks=False to still do dev check)
             asyncio.create_task(self._handle_token(token_info, skip_checks=False))
 
@@ -1702,21 +1735,52 @@ class UniversalTrader:
             if self.pattern_detector:
                 self.pattern_detector.start_tracking(mint_str, token_info.symbol)
 
-            # Check pattern_only_mode - wait for Birdeye data before checking patterns
+            # Check pattern_only_mode - wait for API data before checking patterns
             if not skip_checks and self.pattern_only_mode:
-                # Wait for pattern detector to fetch data from Birdeye (up to 3 seconds)
-                logger.info(f"Pattern mode: waiting for Birdeye data for {token_info.symbol}...")
-                for _ in range(6):  # 6 x 0.5s = 3 seconds max
+                # Wait for pattern detector to fetch data (up to 5 seconds)
+                # Uses DexScreener as fallback when Birdeye fails
+                logger.info(f"Pattern mode: waiting for market data for {token_info.symbol}...")
+                
+                signal_detected = False
+                for i in range(10):  # 10 x 0.5s = 5 seconds max
                     await asyncio.sleep(0.5)
                     if self._has_pump_signal(mint_str):
                         logger.warning(f"[SIGNAL] PUMP SIGNAL detected for {token_info.symbol}!")
+                        signal_detected = True
                         break
+                    
+                    # Check if we have STRONG activity data even without full signal
+                    # ЖЁСТКИЕ ПОРОГИ: buys_5m >= 500 ИЛИ buys_1h >= 1000
+                    if self.pattern_detector and mint_str in self.pattern_detector.tokens:
+                        metrics = self.pattern_detector.tokens[mint_str]
+                        total_trades = metrics.buys_5m + metrics.sells_5m
+                        buy_ratio = metrics.buys_5m / total_trades if total_trades > 0 else 0
+                        
+                        # Требуем СИЛЬНУЮ активность И высокий buy pressure
+                        if (metrics.buys_5m >= 500 or metrics.buys_1h >= 1000) and buy_ratio >= 0.75:
+                            logger.warning(
+                                f"[ACTIVITY] STRONG activity for {token_info.symbol}: "
+                                f"buys_5m={metrics.buys_5m}, buys_1h={metrics.buys_1h}, "
+                                f"buy_ratio={buy_ratio:.1%}"
+                            )
+                            signal_detected = True
+                            break
                 
                 # Check if signal arrived
-                if not self._has_pump_signal(mint_str):
-                    logger.info(
-                        f"Pattern only mode: skipping {token_info.symbol} - no pump signal detected"
-                    )
+                if not signal_detected:
+                    # Final check - maybe we have some activity data
+                    if self.pattern_detector and mint_str in self.pattern_detector.tokens:
+                        metrics = self.pattern_detector.tokens[mint_str]
+                        if metrics.buys_5m > 0 or metrics.buys_1h > 0:
+                            logger.info(
+                                f"Pattern mode: {token_info.symbol} has weak activity "
+                                f"(buys_5m={metrics.buys_5m}, buys_1h={metrics.buys_1h}) "
+                                f"- storing for later signal"
+                            )
+                    else:
+                        logger.info(
+                            f"Pattern only mode: skipping {token_info.symbol} - no pump signal detected"
+                        )
                     # Store token_info for later if signal arrives
                     self.pending_tokens[mint_str] = token_info
                     return

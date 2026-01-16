@@ -715,10 +715,6 @@ class WhaleTracker:
             
             # Found whale transaction
             whale_info = self.whale_wallets[fee_payer]
-            logger.warning(
-                f"[WHALE] TX detected: {whale_info.get('label', 'whale')} | "
-                f"wallet: {fee_payer} | platform: {platform}"
-            )
             
             meta = tx.get("meta", {})
             
@@ -730,8 +726,6 @@ class WhaleTracker:
             post = meta.get("postBalances", [])
             sol_spent = (pre[0] - post[0]) / 1e9 if pre and post else 0
             
-            logger.warning(f"[WHALE] Whale spent: {sol_spent:.4f} SOL (min: {self.min_buy_amount})")
-            
             # Ищем токен
             token_mint = None
             for bal in meta.get("postTokenBalances", []):
@@ -739,12 +733,14 @@ class WhaleTracker:
                     token_mint = bal.get("mint")
                     break
             
-            if token_mint:
-                logger.warning(f"[WHALE] Token mint: {token_mint[:16]}...")
-            else:
-                logger.warning(f"[WHALE] No token mint found in postTokenBalances")
-            
+            # ФИЛЬТР: Только логируем если сумма >= min_buy_amount
             if sol_spent >= self.min_buy_amount and token_mint:
+                logger.warning(
+                    f"[WHALE] TX detected: {whale_info.get('label', 'whale')} | "
+                    f"wallet: {fee_payer} | platform: {platform}"
+                )
+                logger.warning(f"[WHALE] Whale spent: {sol_spent:.4f} SOL (min: {self.min_buy_amount})")
+                logger.warning(f"[WHALE] Token mint: {token_mint[:16]}...")
                 logger.warning(
                     f"[WHALE] Buy qualifies: {sol_spent:.4f} SOL >= {self.min_buy_amount} SOL | "
                     f"token: {token_mint} | platform: {platform}"
@@ -759,10 +755,11 @@ class WhaleTracker:
                     platform=platform,
                 )
             else:
+                # Тихо пропускаем микро-транзакции (только DEBUG лог)
                 if sol_spent < self.min_buy_amount:
-                    logger.info(f"[WHALE] Amount too small: {sol_spent:.4f} < {self.min_buy_amount}")
+                    logger.debug(f"[WHALE] Skip small TX: {sol_spent:.4f} < {self.min_buy_amount} SOL")
                 if not token_mint:
-                    logger.info(f"[WHALE] No token mint found")
+                    logger.debug(f"[WHALE] Skip TX without token mint")
                 
         except Exception as e:
             logger.warning(f"[WHALE] Error processing RPC tx: {e}")

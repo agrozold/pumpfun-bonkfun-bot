@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # API URLs
 BIRDEYE_API_URL = "https://public-api.birdeye.so"
+DEXSCREENER_API_URL = "https://api.dexscreener.com"  # FREE, no API key needed!
 DEXCHECK_API_URL = "https://api.dexcheck.ai"
 CODEX_API_URL = "https://graph.codex.io/graphql"
 GOLDRUSH_API_URL = "https://api.covalenthq.com/v1"
@@ -259,11 +260,15 @@ class PumpPatternDetector:
                 if self._birdeye_failures >= 5:
                     logger.warning("Birdeye API failing, switching to fallback")
         
-        # 2. Try DexCheck as fallback
+        # 2. Try DexScreener as PRIMARY fallback (FREE, no API key!)
+        if not data:
+            data = await self._fetch_from_dexscreener(mint)
+        
+        # 3. Try DexCheck as fallback
         if not data and self.dexcheck_api_key:
             data = await self._fetch_from_dexcheck(mint)
         
-        # 3. Try Codex as fallback
+        # 4. Try Codex as fallback
         if not data and self.codex_api_key:
             data = await self._fetch_from_codex(mint)
         
@@ -301,9 +306,14 @@ class PumpPatternDetector:
         metrics.volume_history = [(t, v) for t, v in metrics.volume_history if t > cutoff_10m][-50:]
         metrics.trade_history_5m = [(t, b, s) for t, b, s in metrics.trade_history_5m if t > cutoff_1h]
         
-        # Calculate 1-hour totals from accumulated 5-min snapshots
-        metrics.buys_1h = sum(b for _, b, _ in metrics.trade_history_5m)
-        metrics.sells_1h = sum(s for _, _, s in metrics.trade_history_5m)
+        # Use direct 1h data from DexScreener if available, otherwise accumulate
+        if data.get("buys_1h") is not None:
+            metrics.buys_1h = data.get("buys_1h", 0) or 0
+            metrics.sells_1h = data.get("sells_1h", 0) or 0
+        else:
+            # Calculate 1-hour totals from accumulated 5-min snapshots
+            metrics.buys_1h = sum(b for _, b, _ in metrics.trade_history_5m)
+            metrics.sells_1h = sum(s for _, _, s in metrics.trade_history_5m)
         
         metrics.last_update = now
         
@@ -328,6 +338,58 @@ class PumpPatternDetector:
                 }
         except Exception as e:
             logger.debug(f"Birdeye error for {mint[:8]}...: {e}")
+        return None
+
+    async def _fetch_from_dexscreener(self, mint: str) -> dict | None:
+        """Получить данные из DexScreener API (FREE, no API key needed!).
+        
+        DexScreener is the PRIMARY fallback because:
+        - No API key required
+        - No strict rate limits
+        - Provides buy/sell counts and volume data
+        """
+        if not self._session:
+            return None
+        
+        try:
+            url = f"{DEXSCREENER_API_URL}/latest/dex/tokens/{mint}"
+            
+            async with self._session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get("pairs", [])
+                    
+                    if not pairs:
+                        return None
+                    
+                    # Use the first (most liquid) pair
+                    pair = pairs[0]
+                    txns = pair.get("txns", {})
+                    m5 = txns.get("m5", {})
+                    h1 = txns.get("h1", {})
+                    volume = pair.get("volume", {})
+                    price_change = pair.get("priceChange", {})
+                    
+                    return {
+                        "price": float(pair.get("priceUsd", 0) or 0),
+                        "volume_24h": float(volume.get("h24", 0) or 0),
+                        "price_change_5m": float(price_change.get("m5", 0) or 0),
+                        "price_change_1h": float(price_change.get("h1", 0) or 0),
+                        "buys_5m": int(m5.get("buys", 0) or 0),
+                        "sells_5m": int(m5.get("sells", 0) or 0),
+                        "buy_volume_5m": float(volume.get("m5", 0) or 0) / 2,  # Approximate
+                        "sell_volume_5m": float(volume.get("m5", 0) or 0) / 2,
+                        # Extra data from DexScreener
+                        "buys_1h": int(h1.get("buys", 0) or 0),
+                        "sells_1h": int(h1.get("sells", 0) or 0),
+                        "liquidity": float(pair.get("liquidity", {}).get("usd", 0) or 0),
+                        "market_cap": float(pair.get("marketCap", 0) or 0),
+                    }
+        except Exception as e:
+            logger.debug(f"DexScreener error for {mint[:8]}...: {e}")
         return None
 
     async def _fetch_from_dexcheck(self, mint: str) -> dict | None:
