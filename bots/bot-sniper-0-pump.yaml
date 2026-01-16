@@ -4,7 +4,7 @@ enabled: true
 env_file: .env
 filters:
   bro_address: null
-  listener_type: logs
+  listener_type: fallback
   match_string: null
   max_token_age: 0  # Без ограничения по возрасту - покупаем по паттернам
   yolo_mode: true
