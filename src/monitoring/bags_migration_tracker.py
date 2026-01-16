@@ -146,7 +146,12 @@ class BagsMigrationTracker:
         
         while self._running:
             try:
-                async with websockets.connect(self.wss_endpoint) as ws:
+                async with websockets.connect(
+                    self.wss_endpoint,
+                    ping_interval=30,
+                    ping_timeout=60,
+                    close_timeout=10,
+                ) as ws:
                     # Subscribe to DBC program logs
                     subscribe_msg = {
                         "jsonrpc": "2.0",
