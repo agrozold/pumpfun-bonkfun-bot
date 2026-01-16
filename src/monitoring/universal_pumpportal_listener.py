@@ -47,15 +47,13 @@ class UniversalPumpPortalListener(BaseTokenListener):
         self.max_consecutive_errors = max_consecutive_errors
 
         # Get platform-specific processors
-        from platforms.bags.pumpportal_processor import BagsPumpPortalProcessor
-        from platforms.letsbonk.pumpportal_processor import LetsBonkPumpPortalProcessor
+        # NOTE: PumpPortal only supports pump.fun tokens!
+        # bonk.fun and bags.fm tokens are NOT sent by PumpPortal
         from platforms.pumpfun.pumpportal_processor import PumpFunPumpPortalProcessor
 
-        # Create processor instances
+        # Create processor instances - only PumpFun is supported
         all_processors = [
             PumpFunPumpPortalProcessor(),
-            LetsBonkPumpPortalProcessor(),
-            BagsPumpPortalProcessor(),
         ]
 
         # Filter processors based on requested platforms
@@ -225,11 +223,8 @@ class UniversalPumpPortalListener(BaseTokenListener):
     def _detect_platform_from_mint(self, mint: str) -> str | None:
         """Detect platform from mint address suffix.
         
-        PumpPortal sends all tokens with pool="pump", but we can detect
-        the actual platform from the mint address suffix:
-        - ...pump -> pump_fun
-        - ...bonk -> lets_bonk
-        - ...bags -> bags
+        PumpPortal only supports pump.fun tokens.
+        bonk.fun and bags.fm tokens are NOT sent by PumpPortal!
         
         Args:
             mint: Token mint address
@@ -240,10 +235,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         mint_lower = mint.lower()
         if mint_lower.endswith("pump"):
             return "pump"
-        elif mint_lower.endswith("bonk"):
-            return "bonk"
-        elif mint_lower.endswith("bags"):
-            return "bags"
+        # bonk.fun and bags.fm are NOT supported by PumpPortal
         return None
 
     async def _wait_for_token_creation(self, websocket) -> TokenInfo | None:

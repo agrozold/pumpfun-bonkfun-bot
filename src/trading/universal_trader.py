@@ -151,12 +151,12 @@ class UniversalTrader:
         logger.warning("=" * 60)
         logger.warning("[VERSION] UniversalTrader VERSION: 2026-01-16-v6-ANTI-DUPLICATE")
         logger.warning("=" * 60)
-        
+
         # Store endpoints and API keys for later use
         self.rpc_endpoint = rpc_endpoint
         self.wss_endpoint = wss_endpoint
         self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_API_KEY")
-        
+
         # Core components
         logger.warning("=== INIT: Creating core components ===")
         self.solana_client = SolanaClient(rpc_endpoint)
@@ -227,7 +227,7 @@ class UniversalTrader:
         logger.warning("=== INIT: Starting token scoring setup ===")
         self.enable_scoring = enable_scoring
         self.token_scorer: TokenScorer | None = None
-        
+
         if enable_scoring:
             self.token_scorer = TokenScorer(
                 min_score=scoring_min_score,
@@ -249,18 +249,18 @@ class UniversalTrader:
         print(f"[WHALE] wallets_file = {whale_wallets_file}", flush=True)
         print(f"[WHALE] min_buy_amount = {whale_min_buy_amount}", flush=True)
         print("=" * 50, flush=True)
-        
+
         logger.warning("=" * 50)
         logger.warning("[WHALE] WHALE COPY SETUP START")
         logger.warning(f"[WHALE] enable_whale_copy = {enable_whale_copy}")
         logger.warning(f"[WHALE] wallets_file = {whale_wallets_file}")
         logger.warning(f"[WHALE] min_buy_amount = {whale_min_buy_amount}")
         logger.warning("=" * 50)
-        
+
         self.enable_whale_copy = enable_whale_copy
         self.whale_tracker: WhaleTracker | None = None
         self.helius_api_key = helius_api_key
-        
+
         if enable_whale_copy:
             try:
                 logger.warning("[WHALE] Creating WhaleTracker instance...")
@@ -276,20 +276,20 @@ class UniversalTrader:
                     platform=self.platform.value,  # Слушаем только свою платформу!
                 )
                 self.whale_tracker.set_callback(self._on_whale_buy)
-                
+
                 # Log wallet count
                 wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
                 logger.warning(f"[WHALE] WhaleTracker CREATED: {wallet_count} wallets")
                 logger.warning(f"[WHALE] Platform filter: {self.platform.value}")
                 logger.warning(f"[WHALE] WSS endpoint: {wss_endpoint[:50] if wss_endpoint else 'None'}...")
-                
+
                 if wallet_count == 0:
                     logger.error("[WHALE] ERROR: No whale wallets loaded!")
                 else:
                     # Log first few wallets
                     sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
                     logger.warning(f"[WHALE] Sample wallets: {sample_wallets}")
-                    
+
             except Exception as e:
                 logger.exception(f"[WHALE] EXCEPTION creating WhaleTracker: {e}")
                 self.whale_tracker = None
@@ -367,6 +367,7 @@ class UniversalTrader:
         self.token_listener = ListenerFactory.create_listener(
             listener_type=listener_type,
             wss_endpoint=wss_endpoint,
+            rpc_endpoint=rpc_endpoint,  # Needed for bonk_logs listener
             geyser_endpoint=geyser_endpoint,
             geyser_api_token=geyser_api_token,
             geyser_auth_type=geyser_auth_type,
@@ -421,7 +422,7 @@ class UniversalTrader:
         self.pump_signals: dict[str, list] = {}  # mint -> detected patterns
         self.pending_tokens: dict[str, TokenInfo] = {}  # mint -> TokenInfo for pattern-only mode
         self.active_positions: list[Position] = []  # Active positions for persistence
-        
+
         # ANTI-DUPLICATE PROTECTION (CRITICAL!)
         # Single lock for ALL buy operations to prevent race conditions
         self._buy_lock = asyncio.Lock()
@@ -429,7 +430,7 @@ class UniversalTrader:
         # This is checked INSIDE the lock to prevent duplicates
         self._buying_tokens: set[str] = set()  # Tokens currently being bought (in progress)
         self._bought_tokens: set[str] = set()  # Tokens successfully bought (completed)
-        
+
         # CRITICAL BALANCE PROTECTION
         # When balance <= 0.02 SOL, bot stops completely
         self._critical_low_balance: bool = False
@@ -446,28 +447,28 @@ class UniversalTrader:
             f"{len(patterns)} patterns, strength: {strength:.2f}"
         )
         self.pump_signals[mint] = patterns
-        
+
         # Check minimum signal strength
         if strength < self.pattern_min_signal_strength:
             logger.warning(
                 f"[SKIP] Signal too weak for {symbol}: {strength:.2f} < {self.pattern_min_signal_strength:.2f}"
             )
             return
-        
+
         # Check minimum patterns count
         if len(patterns) < 2:
             logger.warning(
                 f"[SKIP] Not enough patterns for {symbol}: {len(patterns)} < 2 required"
             )
             return
-        
+
         # Cleanup old pending tokens (older than 5 minutes)
         self._cleanup_pending_tokens()
-        
+
         # If pattern_only_mode and we have pending token_info - check scoring FIRST!
         if self.pattern_only_mode and mint in self.pending_tokens:
             token_info = self.pending_tokens.pop(mint)
-            
+
             # MANDATORY SCORING CHECK before buying on signal
             if self.token_scorer:
                 try:
@@ -486,7 +487,7 @@ class UniversalTrader:
                     if strength < 0.85:
                         logger.warning(f"[SKIP] {symbol} - scoring failed and signal not strong enough")
                         return
-            
+
             logger.warning(
                 f"[BUY] BUYING on STRONG pump signal: {symbol} "
                 f"(strength: {strength:.2f}, patterns: {len(patterns)})"
@@ -499,14 +500,14 @@ class UniversalTrader:
         import time
         now = time.time()
         max_age = 300  # 5 minutes
-        
+
         to_remove = []
         for mint_str in self.pending_tokens:
             if mint_str in self.token_timestamps:
                 age = now - self.token_timestamps[mint_str]
                 if age > max_age:
                     to_remove.append(mint_str)
-        
+
         for mint_str in to_remove:
             self.pending_tokens.pop(mint_str, None)
             if to_remove:
@@ -531,7 +532,7 @@ class UniversalTrader:
         """
         mint_str = token.mint.lower()
         dex_id = (token.dex_id or "").lower()
-        
+
         # Check mint suffix
         if mint_str.endswith("pump"):
             return Platform.PUMP_FUN
@@ -539,7 +540,7 @@ class UniversalTrader:
             return Platform.LETS_BONK
         elif mint_str.endswith("bags"):
             return Platform.BAGS
-        
+
         # Check dex_id
         if dex_id in ("pumpfun", "pump.fun", "pump_fun"):
             return Platform.PUMP_FUN
@@ -547,7 +548,7 @@ class UniversalTrader:
             return Platform.LETS_BONK
         elif dex_id == "bags":
             return Platform.BAGS
-        
+
         # Cannot determine - return None (will use current bot platform)
         return None
 
@@ -576,9 +577,9 @@ class UniversalTrader:
         if self._critical_low_balance:
             logger.warning("[WHALE] Bot stopped due to critical low balance, ignoring whale signal")
             return
-        
+
         mint_str = whale_buy.token_mint
-        
+
         # ============================================
         # ANTI-DUPLICATE CHECK (CRITICAL!)
         # ============================================
@@ -586,7 +587,7 @@ class UniversalTrader:
         if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
             logger.info(f"[WHALE] Token {mint_str[:8]}... already bought/buying, skipping")
             return
-        
+
         # ============================================
         # SCORING CHECK - ФИЛЬТР МУСОРА!
         # ============================================
@@ -600,7 +601,7 @@ class UniversalTrader:
                     f"[WHALE SCORE] Details: vol={score.volume_score}, bp={score.buy_pressure_score}, "
                     f"mom={score.momentum_score}, liq={score.liquidity_score}"
                 )
-                
+
                 if not should_buy:
                     logger.warning(
                         f"[WHALE] SKIP LOW SCORE: {whale_buy.token_symbol} score={score.total_score} "
@@ -610,7 +611,7 @@ class UniversalTrader:
                         f"[WHALE] Token {mint_str} rejected by scoring despite whale buy"
                     )
                     return
-                    
+
                 logger.info(
                     f"[WHALE] SCORE OK: {whale_buy.token_symbol} score={score.total_score} >= {self.token_scorer.min_score}"
                 )
@@ -618,28 +619,28 @@ class UniversalTrader:
                 # CRITICAL: Если scoring упал - НЕ покупаем! Безопасность важнее
                 logger.warning(f"[WHALE] SKIP - Scoring check failed: {e} - NOT buying without score!")
                 return
-        
+
         # Use lock to prevent race condition between ALL buy paths
         async with self._buy_lock:
             # Re-check after acquiring lock (another task might have started buying)
             if mint_str in self._bought_tokens:
                 logger.info(f"[WHALE] Token {mint_str[:8]}... already bought (after lock), skipping")
                 return
-            
+
             if mint_str in self._buying_tokens:
                 logger.info(f"[WHALE] Token {mint_str[:8]}... already being bought (after lock), skipping")
                 return
-            
+
             # Check if already have position in this token
             for pos in self.active_positions:
                 if str(pos.mint) == mint_str:
                     logger.info(f"[WHALE] Already have position in {mint_str[:8]}..., skipping")
                     self._bought_tokens.add(mint_str)  # Mark as bought to prevent future attempts
                     return
-            
+
             # Mark as BUYING (in progress) BEFORE releasing lock
             self._buying_tokens.add(mint_str)
-        
+
         # Now proceed with buy (outside lock to not block other operations)
         try:
             # Clean readable log format
@@ -653,49 +654,49 @@ class UniversalTrader:
             logger.warning(f"  MY_BUY:    {self.buy_amount:.4f} SOL")
             logger.warning(f"  PLATFORM:  {whale_buy.platform}")
             logger.warning("=" * 70)
-            
+
             # Check wallet balance
             balance_ok = await self._check_balance_before_buy()
             if not balance_ok:
                 return
-            
+
             # RETRY LOGIC: Для свежих токенов RPC может не успеть проиндексировать
             # bonding curve. Делаем до 3 попыток с задержкой.
             max_retries = 3
             retry_delay = 2.0  # секунды между попытками
-            
+
             success = False
             tx_sig = None
             dex_used = "none"
             token_amount = 0.0
             price = 0.0
-            
+
             for attempt in range(1, max_retries + 1):
                 logger.warning(
                     f"[WHALE] UNIVERSAL BUY attempt {attempt}/{max_retries}: "
                     f"Searching for liquidity for {mint_str[:8]}..."
                 )
-                
+
                 success, tx_sig, dex_used, token_amount, price = await self._buy_any_dex(
                     mint_str=mint_str,
                     symbol=whale_buy.token_symbol,
                     sol_amount=self.buy_amount,
                 )
-                
+
                 if success:
                     break
-                
+
                 # Если не последняя попытка - ждём и пробуем снова
                 if attempt < max_retries:
                     logger.warning(
                         f"[WHALE] Attempt {attempt} failed, waiting {retry_delay}s before retry..."
                     )
                     await asyncio.sleep(retry_delay)
-            
+
             if success:
                 # Mark as BOUGHT (completed)
                 self._bought_tokens.add(mint_str)
-                
+
                 # Clean readable success log
                 logger.warning("=" * 70)
                 logger.warning("[WHALE COPY] SUCCESS")
@@ -708,11 +709,11 @@ class UniversalTrader:
                 logger.warning(f"  WALLET:    {whale_buy.whale_wallet}")
                 logger.warning(f"  TX:        {tx_sig}")
                 logger.warning("=" * 70)
-                
+
                 # Save position WITH TP/SL settings!
                 mint = Pubkey.from_string(mint_str)
                 entry_price = price if price > 0 else self.buy_amount / max(token_amount, 1)
-                
+
                 # CRITICAL: Create position with TP/SL using same method as regular buys!
                 position = Position.create_from_buy_result(
                     mint=mint,
@@ -725,16 +726,16 @@ class UniversalTrader:
                     platform=dex_used,
                     bonding_curve=None,  # Will be derived if needed
                 )
-                
+
                 self.active_positions.append(position)
                 save_positions(self.active_positions)
-                
+
                 # Log TP/SL targets
                 if position.take_profit_price:
                     logger.warning(f"[WHALE] Take profit target: {position.take_profit_price:.10f} SOL")
                 if position.stop_loss_price:
                     logger.warning(f"[WHALE] Stop loss target: {position.stop_loss_price:.10f} SOL")
-                
+
                 self._log_trade(
                     "buy",
                     None,  # No TokenInfo for universal buy
@@ -743,14 +744,14 @@ class UniversalTrader:
                     tx_sig,
                     extra=f"whale_copy:{dex_used}:{whale_buy.token_symbol}",
                 )
-                
+
                 # ============================================
                 # CRITICAL: START SL/TP MONITORING!
                 # Without this, stop loss will NEVER trigger!
                 # ============================================
                 if self.exit_strategy == "tp_sl" and not self.marry_mode:
                     logger.warning(f"[WHALE] Starting TP/SL monitor for {whale_buy.token_symbol}")
-                    
+
                     # Create minimal TokenInfo for monitoring
                     from interfaces.core import TokenInfo
                     token_info = TokenInfo(
@@ -763,7 +764,7 @@ class UniversalTrader:
                         creator=None,
                         creation_timestamp=0,
                     )
-                    
+
                     # Start monitoring in background task (don't await - let it run)
                     asyncio.create_task(
                         self._monitor_whale_position(token_info, position, dex_used)
@@ -777,7 +778,7 @@ class UniversalTrader:
                 logger.error(f"  WHALE:     {whale_buy.whale_label}")
                 logger.error(f"  WALLET:    {whale_buy.whale_wallet}")
                 logger.error("=" * 70)
-            
+
         except Exception as e:
             logger.exception(f"[WHALE] WHALE COPY FAILED: {e}")
         finally:
@@ -809,7 +810,7 @@ class UniversalTrader:
             f"TP: {position.take_profit_price:.10f if position.take_profit_price else 'None'} SOL, "
             f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'None'} SOL"
         )
-        
+
         try:
             # Use the same monitoring logic as regular positions
             await self._monitor_position_until_exit(token_info, position)
@@ -861,9 +862,9 @@ class UniversalTrader:
             Tuple of (success, tx_signature, dex_used, token_amount, price)
         """
         from trading.fallback_seller import FallbackSeller
-        
+
         mint = Pubkey.from_string(mint_str)
-        
+
         # ============================================
         # [1/4] TRY PLATFORM-SPECIFIC BONDING CURVE
         # ============================================
@@ -871,30 +872,30 @@ class UniversalTrader:
             logger.info(f"[CHECK] [1/4] Checking Pump.Fun bonding curve for {symbol}...")
             try:
                 from platforms.pumpfun.address_provider import PumpFunAddresses
-                
+
                 # Derive bonding curve
                 bonding_curve, _ = Pubkey.find_program_address(
                     [b"bonding-curve", bytes(mint)],
                     PumpFunAddresses.PROGRAM
                 )
-                
+
                 # Check if bonding curve exists and not migrated
                 curve_manager = self.platform_implementations.curve_manager
                 pool_state = await curve_manager.get_pool_state(bonding_curve)
-                
+
                 if pool_state and not pool_state.get("complete", False):
                     # Bonding curve available! Use normal pump.fun buy
                     logger.info(f"[OK] Pump.Fun bonding curve available for {symbol}")
-                    
+
                     # Create TokenInfo for pump.fun buy
                     token_info = await self._create_pumpfun_token_info_from_mint(
                         mint_str, symbol, bonding_curve, pool_state
                     )
-                    
+
                     if token_info:
                         # Execute buy via normal flow
                         buy_result = await self.buyer.execute(token_info)
-                        
+
                         if buy_result.success:
                             logger.warning(f"[OK] Pump.Fun BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
                             return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
@@ -902,35 +903,35 @@ class UniversalTrader:
                             logger.warning(f"[WARN] Pump.Fun buy failed: {buy_result.error_message}")
                 else:
                     logger.info(f"[WARN] Pump.Fun bonding curve migrated or unavailable for {symbol}")
-                    
+
             except Exception as e:
                 logger.info(f"[WARN] Pump.Fun check failed: {e}")
-        
+
         elif self.platform == Platform.LETS_BONK:
             logger.info(f"[CHECK] [1/4] Checking LetsBonk bonding curve for {symbol}...")
             try:
                 from platforms.letsbonk.address_provider import LetsBonkAddressProvider
-                
+
                 address_provider = LetsBonkAddressProvider()
                 pool_address = address_provider.derive_pool_address(mint)
-                
+
                 # Check if pool exists and not migrated
                 curve_manager = self.platform_implementations.curve_manager
                 pool_state = await curve_manager.get_pool_state(pool_address)
-                
+
                 if pool_state and not pool_state.get("complete", False) and pool_state.get("status") != "migrated":
                     # Bonding curve available! Use normal letsbonk buy
                     logger.info(f"[OK] LetsBonk bonding curve available for {symbol}")
-                    
+
                     # Create TokenInfo for letsbonk buy
                     token_info = await self._create_letsbonk_token_info_from_mint(
                         mint_str, symbol, pool_address, pool_state
                     )
-                    
+
                     if token_info:
                         # Execute buy via normal flow
                         buy_result = await self.buyer.execute(token_info)
-                        
+
                         if buy_result.success:
                             logger.warning(f"[OK] LetsBonk BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
                             return True, buy_result.tx_signature, "lets_bonk", buy_result.amount or 0, buy_result.price or 0
@@ -938,35 +939,35 @@ class UniversalTrader:
                             logger.warning(f"[WARN] LetsBonk buy failed: {buy_result.error_message}")
                 else:
                     logger.info(f"[WARN] LetsBonk bonding curve migrated or unavailable for {symbol}")
-                    
+
             except Exception as e:
                 logger.info(f"[WARN] LetsBonk check failed: {e}")
-        
+
         elif self.platform == Platform.BAGS:
             logger.info(f"[CHECK] [1/4] Checking BAGS (Meteora DBC) pool for {symbol}...")
             try:
                 from platforms.bags.address_provider import BagsAddressProvider
-                
+
                 address_provider = BagsAddressProvider()
                 pool_address = address_provider.derive_pool_address(mint)
-                
+
                 # Check if pool exists and not migrated
                 curve_manager = self.platform_implementations.curve_manager
                 pool_state = await curve_manager.get_pool_state(pool_address)
-                
+
                 if pool_state and pool_state.get("status") != "migrated":
                     # BAGS pool available! Use normal bags buy
                     logger.info(f"[OK] BAGS pool available for {symbol}")
-                    
+
                     # Create TokenInfo for bags buy
                     token_info = await self._create_bags_token_info_from_mint(
                         mint_str, symbol, pool_address, pool_state
                     )
-                    
+
                     if token_info:
                         # Execute buy via normal flow
                         buy_result = await self.buyer.execute(token_info)
-                        
+
                         if buy_result.success:
                             logger.warning(f"[OK] BAGS BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
                             return True, buy_result.tx_signature, "bags", buy_result.amount or 0, buy_result.price or 0
@@ -974,15 +975,15 @@ class UniversalTrader:
                             logger.warning(f"[WARN] BAGS buy failed: {buy_result.error_message}")
                 else:
                     logger.info(f"[WARN] BAGS pool migrated or unavailable for {symbol}")
-                    
+
             except Exception as e:
                 logger.info(f"[WARN] BAGS check failed: {e}")
-        
+
         # ============================================
         # [2/4] TRY PUMPSWAP (for migrated tokens)
         # ============================================
         logger.info(f"[CHECK] [2/4] Trying PumpSwap for {symbol}...")
-        
+
         try:
             fallback = FallbackSeller(
                 client=self.solana_client,
@@ -992,27 +993,27 @@ class UniversalTrader:
                 max_retries=self.max_retries,
                 jupiter_api_key=self.jupiter_api_key,
             )
-            
+
             success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
                 mint=mint,
                 sol_amount=sol_amount,
                 symbol=symbol,
             )
-            
+
             if success:
                 logger.warning(f"[OK] PumpSwap BUY SUCCESS: {symbol} - {sig}")
                 return True, sig, "pumpswap", token_amount, price
             else:
                 logger.info(f"[WARN] PumpSwap failed: {error}")
-                
+
         except Exception as e:
             logger.info(f"[WARN] PumpSwap error: {e}")
-        
+
         # ============================================
         # [3/4] TRY JUPITER (universal fallback)
         # ============================================
         logger.info(f"[CHECK] [3/4] Trying Jupiter aggregator for {symbol}...")
-        
+
         try:
             fallback = FallbackSeller(
                 client=self.solana_client,
@@ -1022,13 +1023,13 @@ class UniversalTrader:
                 max_retries=self.max_retries,
                 jupiter_api_key=self.jupiter_api_key,
             )
-            
+
             success, sig, error = await fallback.buy_via_jupiter(
                 mint=mint,
                 sol_amount=sol_amount,
                 symbol=symbol,
             )
-            
+
             if success:
                 # Jupiter doesn't return exact amounts, estimate from SOL spent
                 estimated_price = sol_amount / 1000000  # Rough estimate
@@ -1037,10 +1038,10 @@ class UniversalTrader:
                 return True, sig, "jupiter", estimated_tokens, estimated_price
             else:
                 logger.info(f"[WARN] Jupiter failed: {error}")
-                
+
         except Exception as e:
             logger.info(f"[WARN] Jupiter error: {e}")
-        
+
         # ============================================
         # [FAIL] NO LIQUIDITY FOUND
         # ============================================
@@ -1068,32 +1069,32 @@ class UniversalTrader:
         from interfaces.core import TokenInfo
         from platforms.pumpfun.address_provider import PumpFunAddresses
         from core.pubkeys import SystemAddresses
-        
+
         try:
             mint = Pubkey.from_string(mint_str)
-            
+
             # Extract creator
             creator = pool_state.get("creator")
             if creator and isinstance(creator, str):
                 creator = Pubkey.from_string(creator)
             elif not isinstance(creator, Pubkey):
                 creator = None
-            
+
             # Derive addresses
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
-            
+
             associated_bonding_curve, _ = Pubkey.find_program_address(
                 [bytes(bonding_curve), bytes(token_program_id), bytes(mint)],
                 SystemAddresses.ASSOCIATED_TOKEN_PROGRAM
             )
-            
+
             creator_vault = None
             if creator:
                 creator_vault, _ = Pubkey.find_program_address(
                     [b"creator-vault", bytes(creator)],
                     PumpFunAddresses.PROGRAM
                 )
-            
+
             return TokenInfo(
                 name=symbol,
                 symbol=symbol,
@@ -1111,7 +1112,7 @@ class UniversalTrader:
                 token_program_id=token_program_id,
                 creation_timestamp=0,
             )
-            
+
         except Exception as e:
             logger.warning(f"Failed to create TokenInfo from mint: {e}")
             return None
@@ -1140,33 +1141,33 @@ class UniversalTrader:
             LetsBonkAddresses,
         )
         from core.pubkeys import SystemAddresses
-        
+
         try:
             mint = Pubkey.from_string(mint_str)
             address_provider = LetsBonkAddressProvider()
-            
+
             # Extract creator
             creator = pool_state.get("creator")
             if creator and isinstance(creator, str):
                 creator = Pubkey.from_string(creator)
             elif not isinstance(creator, Pubkey):
                 creator = None
-            
+
             # Derive addresses
             base_vault = address_provider.derive_base_vault(mint)
             quote_vault = address_provider.derive_quote_vault(mint)
-            
+
             # Get global_config and platform_config
             global_config = pool_state.get("global_config") or LetsBonkAddresses.GLOBAL_CONFIG
             platform_config = pool_state.get("platform_config") or LetsBonkAddresses.PLATFORM_CONFIG
-            
+
             if isinstance(global_config, str):
                 global_config = Pubkey.from_string(global_config)
             if isinstance(platform_config, str):
                 platform_config = Pubkey.from_string(platform_config)
-            
+
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
-            
+
             return TokenInfo(
                 name=symbol,
                 symbol=symbol,
@@ -1186,7 +1187,7 @@ class UniversalTrader:
                 token_program_id=token_program_id,
                 creation_timestamp=0,
             )
-            
+
         except Exception as e:
             logger.warning(f"Failed to create LetsBonk TokenInfo from mint: {e}")
             return None
@@ -1212,29 +1213,29 @@ class UniversalTrader:
         from interfaces.core import TokenInfo
         from platforms.bags.address_provider import BagsAddressProvider, BagsAddresses
         from core.pubkeys import SystemAddresses
-        
+
         try:
             mint = Pubkey.from_string(mint_str)
             address_provider = BagsAddressProvider()
-            
+
             # Extract creator
             creator = pool_state.get("creator")
             if creator and isinstance(creator, str):
                 creator = Pubkey.from_string(creator)
             elif not isinstance(creator, Pubkey):
                 creator = None
-            
+
             # Derive addresses
             base_vault = address_provider.derive_base_vault(mint)
             quote_vault = address_provider.derive_quote_vault(mint)
-            
+
             # Get config from pool_state or use default
             config = pool_state.get("config") or BagsAddresses.DEFAULT_CONFIG
             if isinstance(config, str):
                 config = Pubkey.from_string(config)
-            
+
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
-            
+
             return TokenInfo(
                 name=symbol,
                 symbol=symbol,
@@ -1254,7 +1255,7 @@ class UniversalTrader:
                 token_program_id=token_program_id,
                 creation_timestamp=0,
             )
-            
+
         except Exception as e:
             logger.warning(f"Failed to create BAGS TokenInfo from mint: {e}")
             return None
@@ -1290,7 +1291,7 @@ class UniversalTrader:
         """
         if not self.dev_checker or not creator:
             return True
-        
+
         try:
             dev_result = await self.dev_checker.check_dev(str(creator))
             logger.info(
@@ -1306,7 +1307,7 @@ class UniversalTrader:
         except Exception as e:
             logger.warning(f"[DEV] Dev check failed for {symbol}: {e}")
             # Continue if dev check fails - better to buy than miss
-        
+
         return True
 
     async def _on_trending_token(self, token: TrendingToken):
@@ -1319,7 +1320,7 @@ class UniversalTrader:
         to prevent ANY duplicate purchases across ALL buy paths.
         """
         mint_str = token.mint
-        
+
         # ============================================
         # ANTI-DUPLICATE CHECK (CRITICAL!)
         # ============================================
@@ -1327,60 +1328,99 @@ class UniversalTrader:
         if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
             logger.info(f"[TRENDING] Token {token.symbol} already bought/buying, skipping")
             return
-        
+
         # Use lock to prevent race condition between ALL buy paths
         async with self._buy_lock:
             # Re-check after acquiring lock (another task might have started buying)
             if mint_str in self._bought_tokens:
                 logger.info(f"[TRENDING] Token {token.symbol} already bought (after lock), skipping")
                 return
-            
+
             if mint_str in self._buying_tokens:
                 logger.info(f"[TRENDING] Token {token.symbol} already being bought (after lock), skipping")
                 return
-            
+
             # Check if already have position in this token
             for pos in self.active_positions:
                 if str(pos.mint) == mint_str:
                     logger.info(f"[TRENDING] Already have position in {token.symbol}, skipping")
                     self._bought_tokens.add(mint_str)  # Mark as bought to prevent future attempts
                     return
-            
+
             # Mark as BUYING (in progress) BEFORE releasing lock
             self._buying_tokens.add(mint_str)
-        
+
         # Now proceed with buy (outside lock to not block other operations)
         try:
+            # ============================================
+            # MANDATORY SCORING CHECK - ФИЛЬТР МУСОРА!
+            # Trending scanner проверяет только базовые метрики,
+            # но scoring проверяет качество токена глубже.
+            # БЕЗ ЭТОЙ ПРОВЕРКИ ПОКУПАЕМ МУСОР!
+            # ============================================
+            if self.token_scorer:
+                try:
+                    should_buy, score = await self.token_scorer.should_buy(
+                        mint_str, token.symbol
+                    )
+                    logger.warning(
+                        f"[TRENDING SCORE] {token.symbol}: {score.total_score}/100 "
+                        f"-> {score.recommendation}"
+                    )
+                    logger.info(
+                        f"[TRENDING SCORE] Details: vol={score.volume_score}, "
+                        f"bp={score.buy_pressure_score}, mom={score.momentum_score}, "
+                        f"liq={score.liquidity_score}"
+                    )
+
+                    if not should_buy:
+                        logger.warning(
+                            f"[TRENDING] SKIP LOW SCORE: {token.symbol} "
+                            f"score={score.total_score} < min_score={self.token_scorer.min_score}"
+                        )
+                        return
+
+                    logger.info(
+                        f"[TRENDING] SCORE OK: {token.symbol} "
+                        f"score={score.total_score} >= {self.token_scorer.min_score}"
+                    )
+                except Exception as e:
+                    # CRITICAL: Если scoring упал - НЕ покупаем! Безопасность важнее
+                    logger.warning(
+                        f"[TRENDING] SKIP - Scoring check failed: {e} - NOT buying!"
+                    )
+                    return
+
             logger.warning(
                 f"[TRENDING] TRENDING BUY: {token.symbol} - "
                 f"MC: ${token.market_cap:,.0f}, Vol: ${token.volume_24h:,.0f}, "
                 f"+{token.price_change_1h:.1f}% 1h"
             )
-            
+
             # Start pattern tracking for this token (works for ALL tokens, not just new)
             if self.pattern_detector:
                 self.pattern_detector.start_tracking(mint_str, token.symbol)
                 logger.info(f"[TRENDING] Started pattern tracking for {token.symbol}")
-            
+
             from interfaces.core import TokenInfo
             from core.pubkeys import SystemAddresses
-            
+
             mint = Pubkey.from_string(mint_str)
-            
+
             # Determine platform from token mint suffix or dex_id
             detected_platform = self._detect_token_platform(token)
-            
+
             # Use detected platform or current bot platform
             target_platform = detected_platform or self.platform
-            
+
             logger.info(f"[TRENDING] Token platform: {target_platform.value}")
-            
+
             # Get platform-specific addresses
             bonding_curve = None
             is_migrated = False
             pool_state = None
             creator = None
-            
+
             if target_platform == Platform.PUMP_FUN:
                 from platforms.pumpfun.address_provider import PumpFunAddresses
                 bonding_curve, _ = Pubkey.find_program_address(
@@ -1399,7 +1439,7 @@ class UniversalTrader:
                     [b"pool", bytes(mint)],
                     BagsAddresses.DBC_PROGRAM
                 )
-            
+
             # Check if migrated (bonding curve complete or unavailable)
             if bonding_curve:
                 try:
@@ -1420,14 +1460,14 @@ class UniversalTrader:
             else:
                 # No bonding curve = migrated or unknown platform
                 is_migrated = True
-            
+
             # If migrated - buy via PumpSwap (Raydium AMM)
             if is_migrated:
                 from trading.fallback_seller import FallbackSeller
-                
+
                 logger.info(f"[TRENDING] {token.symbol} is migrated, attempting PumpSwap buy...")
                 logger.info(f"[TRENDING] DexScreener info: dex_id={token.dex_id}, pair_address={token.pair_address}")
-                
+
                 fallback = FallbackSeller(
                     client=self.solana_client,
                     wallet=self.wallet,
@@ -1436,7 +1476,7 @@ class UniversalTrader:
                     max_retries=self.max_retries,
                     jupiter_api_key=self.jupiter_api_key,
                 )
-                
+
                 # Use pair_address from DexScreener if available
                 # PumpSwap pools can show as "pumpswap", "raydium", or other dex_id
                 market_address = None
@@ -1446,17 +1486,17 @@ class UniversalTrader:
                         logger.info(f"[TRENDING] Using DexScreener pair as market: {token.pair_address}")
                     except Exception as e:
                         logger.warning(f"[TRENDING] Invalid pair_address: {e}")
-                
+
                 if not market_address:
                     logger.info(f"[TRENDING] No pair_address, will lookup PumpSwap market via RPC")
-                
+
                 success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
                     mint=mint,
                     sol_amount=self.buy_amount,
                     symbol=token.symbol,
                     market_address=market_address,
                 )
-                
+
                 if success:
                     logger.warning(f"[OK] TRENDING PumpSwap BUY: {token.symbol} - {sig}")
                     logger.info(f"[OK] Got {token_amount:,.2f} tokens at price {price:.10f} SOL")
@@ -1476,11 +1516,11 @@ class UniversalTrader:
                 else:
                     logger.error(f"[FAIL] TRENDING PumpSwap BUY failed: {token.symbol} - {error or 'Unknown error'}")
                 return
-            
+
             # Not migrated - use normal flow with platform-specific addresses
             from core.pubkeys import SystemAddresses
             token_program_id = SystemAddresses.TOKEN_2022_PROGRAM
-            
+
             # Get platform-specific program for creator_vault
             program_address = None
             if target_platform == Platform.PUMP_FUN:
@@ -1492,19 +1532,19 @@ class UniversalTrader:
             elif target_platform == Platform.BAGS:
                 from platforms.bags.address_provider import BagsAddresses
                 program_address = BagsAddresses.DBC_PROGRAM
-            
+
             associated_bonding_curve, _ = Pubkey.find_program_address(
                 [bytes(bonding_curve), bytes(token_program_id), bytes(mint)],
                 SystemAddresses.ASSOCIATED_TOKEN_PROGRAM
             )
-            
+
             creator_vault = None
             if creator and program_address:
                 creator_vault, _ = Pubkey.find_program_address(
                     [b"creator-vault", bytes(creator)],
                     program_address
                 )
-            
+
             token_info = TokenInfo(
                 name=token.name,
                 symbol=token.symbol,
@@ -1522,12 +1562,13 @@ class UniversalTrader:
                 token_program_id=token_program_id,
                 creation_timestamp=int(token.created_at.timestamp()) if token.created_at else 0,
             )
-            
-            # Покупаем! skip_checks=True - trending scanner уже проверил метрики
-            await self._handle_token(token_info, skip_checks=True)
+
+            # Покупаем! skip_checks=False - пусть проходит dev check и другие проверки
+            # Scoring уже проверен выше, но _handle_token пропустит повторную проверку
+            await self._handle_token(token_info, skip_checks=False)
             # Mark as BOUGHT after successful _handle_token
             self._bought_tokens.add(mint_str)
-            
+
         except Exception as e:
             logger.exception(f"Failed to buy trending token: {e}")
         finally:
@@ -1748,7 +1789,7 @@ class UniversalTrader:
         if token_key in self.processed_tokens:
             logger.debug(f"Token {token_info.symbol} already processed. Skipping...")
             return
-        
+
         if token_key in self._bought_tokens or token_key in self._buying_tokens:
             logger.debug(f"Token {token_info.symbol} already bought/buying. Skipping queue...")
             return
@@ -1771,7 +1812,7 @@ class UniversalTrader:
                 logger.error("🛑 Bot stopped due to critical low balance (≤ 0.02 SOL)")
                 logger.error("🛑 Please top up your wallet and restart the bot.")
                 break
-            
+
             token_info = None
             try:
                 token_info = await self.token_queue.get()
@@ -1811,7 +1852,7 @@ class UniversalTrader:
                         )
                         self.token_queue.task_done()
                         continue
-                    
+
                     # Mark as BUYING before releasing lock
                     self._buying_tokens.add(token_key)
 
@@ -1820,7 +1861,7 @@ class UniversalTrader:
                 logger.info(
                     f"Processing fresh token: {token_info.symbol} (age: {token_age:.1f}s)"
                 )
-                
+
                 try:
                     await self._handle_token(token_info)
                     # Mark as BOUGHT after successful buy
@@ -1828,7 +1869,7 @@ class UniversalTrader:
                 finally:
                     # Remove from "buying" set (either succeeded or failed)
                     self._buying_tokens.discard(token_key)
-                
+
                 self.token_queue.task_done()
 
             except asyncio.CancelledError:
@@ -1865,7 +1906,7 @@ class UniversalTrader:
                 # Wait for pattern detector to fetch data (up to 5 seconds)
                 # Uses DexScreener as fallback when Birdeye fails
                 logger.info(f"Pattern mode: waiting for market data for {token_info.symbol}...")
-                
+
                 signal_detected = False
                 for i in range(10):  # 10 x 0.5s = 5 seconds max
                     await asyncio.sleep(0.5)
@@ -1873,14 +1914,14 @@ class UniversalTrader:
                         logger.warning(f"[SIGNAL] PUMP SIGNAL detected for {token_info.symbol}!")
                         signal_detected = True
                         break
-                    
+
                     # Check if we have STRONG activity data even without full signal
                     # ЖЁСТКИЕ ПОРОГИ: buys_5m >= 500 ИЛИ buys_1h >= 1000
                     if self.pattern_detector and mint_str in self.pattern_detector.tokens:
                         metrics = self.pattern_detector.tokens[mint_str]
                         total_trades = metrics.buys_5m + metrics.sells_5m
                         buy_ratio = metrics.buys_5m / total_trades if total_trades > 0 else 0
-                        
+
                         # Требуем СИЛЬНУЮ активность И высокий buy pressure
                         if (metrics.buys_5m >= 500 or metrics.buys_1h >= 1000) and buy_ratio >= 0.75:
                             logger.warning(
@@ -1890,7 +1931,7 @@ class UniversalTrader:
                             )
                             signal_detected = True
                             break
-                
+
                 # Check if signal arrived
                 if not signal_detected:
                     # Final check - maybe we have some activity data
@@ -1984,7 +2025,7 @@ class UniversalTrader:
                 logger.info(
                     f"Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
                 )
-            
+
             try:
                 logger.info(f"[BUY] Calling buyer.execute for {token_info.symbol}...")
                 buy_result: TradeResult = await self.buyer.execute(token_info)
@@ -2027,7 +2068,7 @@ class UniversalTrader:
             client = await self.solana_client.get_client()
             balance_resp = await client.get_balance(self.wallet.pubkey)
             balance_sol = balance_resp.value / 1_000_000_000  # LAMPORTS_PER_SOL
-            
+
             # CRITICAL BALANCE CHECK: Stop bot completely if balance <= 0.02 SOL
             # This applies to ALL platforms: PUMP, BONK, BAGS
             CRITICAL_BALANCE_THRESHOLD = 0.02
@@ -2040,10 +2081,10 @@ class UniversalTrader:
                 # Set flag to stop the bot completely
                 self._critical_low_balance = True
                 return False
-            
+
             # Check if we have enough for buy + reserve for sells
             required = self.buy_amount + self.min_sol_balance
-            
+
             if balance_sol < required:
                 logger.warning(
                     f"[BALANCE] LOW BALANCE: {balance_sol:.4f} SOL < {required:.4f} SOL required "
@@ -2051,10 +2092,10 @@ class UniversalTrader:
                 )
                 logger.warning("⛔ Skipping buy to preserve SOL for selling positions")
                 return False
-            
+
             logger.debug(f"Balance OK: {balance_sol:.4f} SOL")
             return True
-            
+
         except Exception as e:
             logger.warning(f"Failed to check balance: {e} - proceeding anyway")
             return True  # Don't block on balance check errors
@@ -2117,7 +2158,7 @@ class UniversalTrader:
             bonding_curve_str = str(token_info.bonding_curve)
         elif hasattr(token_info, "pool_state") and token_info.pool_state:
             bonding_curve_str = str(token_info.pool_state)
-            
+
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
@@ -2240,22 +2281,22 @@ class UniversalTrader:
         # Get pool address for price monitoring using platform-agnostic method
         pool_address = self._get_pool_address(token_info)
         curve_manager = self.platform_implementations.curve_manager
-        
+
         # Track consecutive price fetch errors for fallback trigger
         # REDUCED from 5 to 2 for faster fallback on migrated tokens
         MAX_PRICE_ERRORS = 2
         consecutive_price_errors = 0
         last_known_price = position.entry_price  # Use entry price as fallback
         check_count = 0
-        
+
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
         HARD_STOP_LOSS_PCT = 25.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
         EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
-        
+
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
-        
+
         # CRITICAL: Track total monitor iterations to detect stuck loops
         max_iterations = 86400  # Max 24 hours of 1-second checks
         total_iterations = 0
@@ -2265,7 +2306,7 @@ class UniversalTrader:
         while position.is_active:
             total_iterations += 1
             check_count += 1
-            
+
             # Safety check: prevent infinite loops
             if total_iterations > max_iterations:
                 logger.error(
@@ -2274,11 +2315,11 @@ class UniversalTrader:
                 )
                 await self._emergency_fallback_sell(token_info, position, last_known_price)
                 break
-            
+
             try:
                 # Get current price from pool/curve (works for all platforms)
                 current_price = await curve_manager.calculate_price(pool_address)
-                
+
                 # Если есть pending stop loss - сразу пытаемся продать снова
                 if pending_stop_loss:
                     logger.warning(
@@ -2291,17 +2332,17 @@ class UniversalTrader:
 
                 # Calculate current PnL FIRST (needed for all checks)
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
-                
+
                 # ============================================
                 # STOP LOSS CHECKS - ORDER MATTERS!
                 # 1. Config SL (from position.stop_loss_price) - checked in should_exit
                 # 2. HARD SL (25%) - backup protection
                 # 3. EMERGENCY SL (40%) - last resort
                 # ============================================
-                
+
                 # Check if position should be exited (includes config SL check!)
                 should_exit, exit_reason = position.should_exit(current_price)
-                
+
                 # ============================================
                 # CRITICAL: Log when approaching SL threshold
                 # ============================================
@@ -2311,7 +2352,7 @@ class UniversalTrader:
                         f"[SL WARNING] {token_info.symbol}: Price {current_price:.10f} approaching "
                         f"SL {position.stop_loss_price:.10f} (PnL: {pnl_pct:+.2f}%)"
                     )
-                
+
                 # If config SL triggered - mark as pending
                 if should_exit and exit_reason == ExitReason.STOP_LOSS:
                     logger.error(
@@ -2319,7 +2360,7 @@ class UniversalTrader:
                         f"Price {current_price:.10f} <= SL {position.stop_loss_price:.10f}"
                     )
                     pending_stop_loss = True
-                
+
                 # ============================================
                 # HARD STOP LOSS - ЖЁСТКАЯ ЗАЩИТА ОТ УБЫТКОВ
                 # ============================================
@@ -2332,7 +2373,7 @@ class UniversalTrader:
                     should_exit = True
                     exit_reason = ExitReason.STOP_LOSS
                     pending_stop_loss = True
-                
+
                 # Проверка 2: EMERGENCY STOP LOSS (40%) - максимальный приоритет
                 if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT:
                     logger.error(
@@ -2379,7 +2420,7 @@ class UniversalTrader:
                     sell_success = False
                     for sell_attempt in range(1, MAX_SELL_RETRIES + 1):
                         logger.warning(f"[SELL] Attempt {sell_attempt}/{MAX_SELL_RETRIES} for {token_info.symbol}")
-                        
+
                         # Execute sell with position quantity and entry price
                         sell_result = await self.seller.execute(
                             token_info,
@@ -2431,7 +2472,7 @@ class UniversalTrader:
                             # Короткая пауза перед retry
                             if sell_attempt < MAX_SELL_RETRIES:
                                 await asyncio.sleep(0.5)
-                    
+
                     # Если все попытки обычной продажи не удались - FALLBACK
                     if not sell_success:
                         logger.error(
@@ -2452,7 +2493,7 @@ class UniversalTrader:
                             )
                             pending_stop_loss = True
                             sell_retry_count += 1
-                            
+
                             # Если слишком много неудачных попыток - уменьшаем интервал проверки
                             if sell_retry_count >= 3:
                                 logger.error(
@@ -2461,7 +2502,7 @@ class UniversalTrader:
                                 )
                             await asyncio.sleep(1)  # Быстрый retry
                             continue  # НЕ выходим из цикла, пробуем снова!
-                    
+
                     if sell_success:
                         break  # Успешно продали - выходим из цикла мониторинга
 
@@ -2475,7 +2516,7 @@ class UniversalTrader:
                     f"[MONITOR] Price fetch error #{consecutive_price_errors}/{MAX_PRICE_ERRORS} "
                     f"for {token_info.symbol}: {error_msg}"
                 )
-                
+
                 # ============================================
                 # CRITICAL FIX: Check SL even when price fetch fails!
                 # Use last_known_price to check if we should emergency sell
@@ -2486,7 +2527,7 @@ class UniversalTrader:
                         f"[MONITOR] Using last known price {last_known_price:.10f} SOL "
                         f"(estimated PnL: {pnl_pct_estimate:+.2f}%)"
                     )
-                    
+
                     # If we're in significant loss based on last price - SELL IMMEDIATELY
                     if pnl_pct_estimate <= -HARD_STOP_LOSS_PCT:
                         logger.error(
@@ -2504,21 +2545,21 @@ class UniversalTrader:
                             # Don't reset counter - keep trying aggressively
                             await asyncio.sleep(1)  # Fast retry
                             continue
-                
+
                 # Check if token migrated (platform-agnostic detection)
                 is_migrated = await self._check_if_migrated(token_info, error_msg)
-                
+
                 if consecutive_price_errors >= MAX_PRICE_ERRORS or is_migrated:
                     logger.warning(
                         f"[FALLBACK] {consecutive_price_errors} consecutive price errors or token migrated - "
                         f"attempting emergency fallback sell for {token_info.symbol}"
                     )
-                    
+
                     # Try fallback sell via PumpSwap/Jupiter
                     fallback_success = await self._emergency_fallback_sell(
                         token_info, position, last_known_price
                     )
-                    
+
                     if fallback_success:
                         logger.info(f"[OK] Emergency fallback sell successful for {token_info.symbol}")
                         break
@@ -2530,9 +2571,9 @@ class UniversalTrader:
                             f"[FAIL] Emergency fallback sell failed for {token_info.symbol} - "
                             f"will retry (errors: {consecutive_price_errors})"
                         )
-                
+
                 await asyncio.sleep(self.price_check_interval)
-    
+
     async def _check_if_migrated(self, token_info: TokenInfo, error_msg: str) -> bool:
         """Check if token has migrated based on platform and error message.
         
@@ -2552,31 +2593,31 @@ class UniversalTrader:
         migration_keywords = ["complete", "not found", "invalid", "migrated", "status"]
         if any(kw in error_msg.lower() for kw in migration_keywords):
             return True
-        
+
         # Platform-specific migration check
         try:
             pool_address = self._get_pool_address(token_info)
             curve_manager = self.platform_implementations.curve_manager
             pool_state = await curve_manager.get_pool_state(pool_address)
-            
+
             if self.platform == Platform.PUMP_FUN:
                 # Pump.fun: complete=True means migrated to PumpSwap
                 return pool_state.get("complete", False)
-            
+
             elif self.platform == Platform.LETS_BONK:
                 # LetsBonk: status != 0 means migrated
                 return pool_state.get("status", 0) != 0
-            
+
             elif self.platform == Platform.BAGS:
                 # BAGS: status != 0 means migrated to DAMM v2
                 return pool_state.get("status", 0) != 0
-            
+
             return False
-            
+
         except Exception:
             # If we can't check, assume might be migrated
             return True
-    
+
     async def _emergency_fallback_sell(
         self, token_info: TokenInfo, position: Position, last_price: float
     ) -> bool:
@@ -2592,12 +2633,12 @@ class UniversalTrader:
         """
         from trading.fallback_seller import FallbackSeller
         from trading.position import ExitReason
-        
+
         logger.warning(
             f"[EMERGENCY] Starting fallback sell for {token_info.symbol} "
             f"({position.quantity:.2f} tokens)"
         )
-        
+
         try:
             # Create fallback seller
             fallback_seller = FallbackSeller(
@@ -2608,19 +2649,19 @@ class UniversalTrader:
                 max_retries=3,
                 jupiter_api_key=self.jupiter_api_key,
             )
-            
+
             # Try to sell via PumpSwap first, then Jupiter
             success, tx_sig, error = await fallback_seller.sell(
                 mint=token_info.mint,
                 token_amount=position.quantity,
                 symbol=token_info.symbol,
             )
-            
+
             if success:
                 # Close position
                 position.close_position(last_price, ExitReason.STOP_LOSS)
                 position.is_active = False
-                
+
                 logger.info(f"[OK] Emergency sell SUCCESS: {tx_sig}")
                 self._log_trade(
                     "sell",
@@ -2630,15 +2671,15 @@ class UniversalTrader:
                     tx_sig,
                     extra="emergency_fallback",
                 )
-                
+
                 # Remove position from saved file
                 self._remove_position(str(token_info.mint))
-                
+
                 return True
             else:
                 logger.error(f"[FAIL] Emergency sell FAILED: {error}")
                 return False
-                
+
         except Exception as e:
             logger.exception(f"[FAIL] Emergency fallback sell error: {e}")
             return False
@@ -2745,7 +2786,7 @@ class UniversalTrader:
                 "amount": amount,
                 "tx_hash": str(tx_hash) if tx_hash else None,
             }
-            
+
             if extra:
                 log_entry["extra"] = extra
 
@@ -2769,45 +2810,45 @@ class UniversalTrader:
         """Restore and resume monitoring of saved positions on startup."""
         logger.info("[RESTORE] Checking for saved positions to restore...")
         positions = load_positions()
-        
+
         if not positions:
             logger.info("[RESTORE] No saved positions found")
             return
 
         logger.info(f"[RESTORE] Found {len(positions)} saved positions to restore")
-        
+
         for position in positions:
             mint_str = str(position.mint)
             logger.info(
                 f"[RESTORE] Checking position: {position.symbol} ({mint_str[:8]}...) "
                 f"platform={position.platform}, is_active={position.is_active}"
             )
-            
+
             # Only restore positions for our platform
             if position.platform != self.platform.value:
                 logger.info(f"[RESTORE] Skipping position {position.symbol} - different platform ({position.platform} != {self.platform.value})")
                 continue
-                
+
             if not position.is_active:
                 logger.info(f"[RESTORE] Skipping closed position {position.symbol}")
                 continue
 
             logger.info(f"[RESTORE] Restoring position: {position.symbol} on {position.platform}")
             self.active_positions.append(position)
-            
+
             # Get creator from bonding curve state for proper sell instruction
             creator = None
             creator_vault = None
             bonding_curve = None
             token_migrated = False
-            
+
             if position.bonding_curve:
                 bonding_curve = Pubkey.from_string(position.bonding_curve)
                 try:
                     # Fetch pool state to get creator (FIXED: was get_curve_state)
                     curve_manager = self.platform_implementations.curve_manager
                     pool_state = await curve_manager.get_pool_state(bonding_curve)
-                    
+
                     # Check if token migrated to Raydium/PumpSwap
                     if pool_state is None:
                         logger.warning(
@@ -2844,12 +2885,12 @@ class UniversalTrader:
             else:
                 logger.warning(f"Position {position.symbol} has no bonding_curve - removing")
                 token_migrated = True
-            
+
             # Skip and remove corrupted/migrated positions
             if token_migrated:
                 remove_position(position.mint)
                 continue
-            
+
             # Create TokenInfo with creator info for proper sell
             token_info = TokenInfo(
                 name=position.symbol,
@@ -2861,7 +2902,7 @@ class UniversalTrader:
                 creator=creator,
                 creator_vault=creator_vault,
             )
-            
+
             # Start monitoring in background
             logger.info(f"[RESTORE] Starting position monitor for {position.symbol} (TP: {position.take_profit_price}, SL: {position.stop_loss_price})")
             asyncio.create_task(self._monitor_position_until_exit(token_info, position))

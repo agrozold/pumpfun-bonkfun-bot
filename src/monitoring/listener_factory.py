@@ -16,6 +16,7 @@ class ListenerFactory:
     def create_listener(
         listener_type: str,
         wss_endpoint: str | None = None,
+        rpc_endpoint: str | None = None,
         geyser_endpoint: str | None = None,
         geyser_api_token: str | None = None,
         geyser_auth_type: str = "x-token",
@@ -29,6 +30,7 @@ class ListenerFactory:
         Args:
             listener_type: Type of listener ('logs', 'blocks', 'geyser', 'pumpportal', or 'fallback')
             wss_endpoint: WebSocket endpoint URL (for logs/blocks listeners)
+            rpc_endpoint: HTTP RPC endpoint (for bonk listener transaction fetching)
             geyser_endpoint: Geyser gRPC endpoint URL (for geyser listener)
             geyser_api_token: Geyser API token (for geyser listener)
             geyser_auth_type: Geyser authentication type
@@ -44,6 +46,46 @@ class ListenerFactory:
             ValueError: If listener type is invalid or required parameters are missing
         """
         listener_type = listener_type.lower()
+
+        # Explicit bonk_logs listener type
+        if listener_type == "bonk_logs":
+            if not wss_endpoint:
+                raise ValueError("WebSocket endpoint required for bonk_logs listener")
+            
+            from monitoring.bonk_logs_listener import BonkLogsListener
+            
+            # Try to get RPC endpoint from WSS endpoint
+            if not rpc_endpoint and wss_endpoint:
+                rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace("ws://", "http://")
+            
+            listener = BonkLogsListener(
+                wss_endpoint=wss_endpoint,
+                rpc_endpoint=rpc_endpoint or "",
+            )
+            logger.info("Created BonkLogsListener for bonk.fun tokens")
+            return listener
+
+        # Check if ONLY lets_bonk platform is requested - use specialized listener
+        if platforms and len(platforms) == 1 and platforms[0] == Platform.LETS_BONK:
+            if listener_type in ["logs", "fallback", "pumpportal"]:
+                if not wss_endpoint:
+                    raise ValueError("WebSocket endpoint required for bonk listener")
+                
+                # Use specialized BonkLogsListener for better detection
+                from monitoring.bonk_logs_listener import BonkLogsListener
+                
+                # Try to get RPC endpoint from WSS endpoint
+                if not rpc_endpoint and wss_endpoint:
+                    rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace("ws://", "http://")
+                
+                listener = BonkLogsListener(
+                    wss_endpoint=wss_endpoint,
+                    rpc_endpoint=rpc_endpoint or "",
+                )
+                logger.info(
+                    f"Created specialized BonkLogsListener for lets_bonk platform"
+                )
+                return listener
 
         # Fallback listener - auto-switches between sources
         if listener_type == "fallback" or (enable_fallback and listener_type in ["pumpportal", "logs"]):
@@ -120,8 +162,8 @@ class ListenerFactory:
             )
 
             # Validate that requested platforms support PumpPortal
-            # Note: BAGS (bags.fm) is NOT supported by PumpPortal!
-            supported_pumpportal_platforms = [Platform.PUMP_FUN, Platform.LETS_BONK]
+            # Note: BAGS (bags.fm) and LETS_BONK (bonk.fun) are NOT supported by PumpPortal!
+            supported_pumpportal_platforms = [Platform.PUMP_FUN]
 
             if platforms:
                 unsupported = [
@@ -130,7 +172,7 @@ class ListenerFactory:
                 if unsupported:
                     logger.warning(
                         f"Platforms {[p.value for p in unsupported]} do not support PumpPortal. "
-                        f"Use 'logs' listener for bags.fm tokens."
+                        f"Use 'bonk_logs' for bonk.fun, 'logs' for bags.fm tokens."
                     )
 
                 # Filter to only supported platforms
@@ -156,7 +198,7 @@ class ListenerFactory:
         else:
             raise ValueError(
                 f"Invalid listener type '{listener_type}'. "
-                f"Must be one of: 'logs', 'blocks', 'geyser', 'pumpportal'"
+                f"Must be one of: 'logs', 'blocks', 'geyser', 'pumpportal', 'bonk_logs'"
             )
 
     @staticmethod
@@ -166,7 +208,7 @@ class ListenerFactory:
         Returns:
             List of supported listener type strings
         """
-        return ["logs", "blocks", "geyser", "pumpportal"]
+        return ["logs", "blocks", "geyser", "pumpportal", "bonk_logs"]
 
     @staticmethod
     def get_platform_compatible_listeners(platform: Platform) -> list[str]:
@@ -181,7 +223,9 @@ class ListenerFactory:
         if platform == Platform.PUMP_FUN:
             return ["logs", "blocks", "geyser", "pumpportal"]
         elif platform == Platform.LETS_BONK:
-            return ["logs", "blocks", "geyser", "pumpportal"]
+            # IMPORTANT: PumpPortal does NOT send bonk.fun tokens!
+            # Use bonk_logs for direct Raydium LaunchLab subscription
+            return ["bonk_logs", "logs", "blocks", "geyser"]
         elif platform == Platform.BAGS:
             # BAGS uses Meteora DBC - PumpPortal does NOT support bags.fm!
             # Use logs listener to subscribe to Meteora DBC program directly.
@@ -198,6 +242,7 @@ class ListenerFactory:
             
         Note:
             BAGS (bags.fm) is NOT supported by PumpPortal!
-            bags.fm uses Meteora DBC which requires logsSubscribe.
+            LETS_BONK (bonk.fun) is NOT supported by PumpPortal!
+            Both require direct program subscription via logsSubscribe.
         """
-        return [Platform.PUMP_FUN, Platform.LETS_BONK]  # BAGS removed - not supported
+        return [Platform.PUMP_FUN]  # Only pump.fun is supported by PumpPortal
