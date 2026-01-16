@@ -94,19 +94,21 @@ scoring:
   liquidity_weight: 15
 
 # ============================================
-# WHALE COPY - ЖЁСТКИЕ ФИЛЬТРЫ
+# WHALE COPY - ОТКЛЮЧЕНО (экономия API квоты)
+# Whale copy работает только на bot-whale-copy
 # ============================================
 whale_copy:
-  enabled: true
+  enabled: false
   wallets_file: "smart_money_wallets.json"
   min_buy_amount: 1.0
   helius_api_key: ${HELIUS_API_KEY}
 
 # ============================================
-# DEV CHECK - ЖЁСТКИЕ ФИЛЬТРЫ
+# DEV CHECK - ОТКЛЮЧЕНО (экономия API квоты)
+# Dev check работает только на bot-whale-copy
 # ============================================
 dev_check:
-  enabled: true
+  enabled: false
   max_tokens_created: 10
   min_account_age_days: 3
 

@@ -27,9 +27,9 @@ logger = get_logger(__name__)
 # Pump.fun program ID
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 
-# Rate limiting for multi-bot setup (4 bots sharing quota)
-# Each bot: 2 req/min = 120/hr = 2,880/day
-DEV_CHECK_RATE_LIMIT_SECONDS = 30.0
+# Rate limiting - OPTIMIZED: Only 1 bot uses dev_check now!
+# 1 bot: 30 req/min = 1 request per 2 seconds
+DEV_CHECK_RATE_LIMIT_SECONDS = 2.0
 
 
 class DevReputationChecker:
