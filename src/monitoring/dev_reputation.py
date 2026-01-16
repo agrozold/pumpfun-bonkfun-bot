@@ -8,9 +8,7 @@
 NOTE: This check is OPTIONAL. If Helius API is unavailable or rate limited,
 the check is skipped and trading continues (better to trade than miss gems).
 
-BUDGET: With 4 bots sharing 1M credits/14 days:
-- Each bot gets ~2 req/min for dev checks = 120/hr = 2,880/day
-- Rate limit: 30 seconds between requests per bot
+OPTIMIZED: Uses global RPC Manager for rate limiting and provider rotation.
 """
 
 import asyncio
@@ -24,16 +22,27 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Import RPC Manager for optimized requests
+try:
+    from src.core.rpc_manager import get_rpc_manager, RPCManager
+
+    RPC_MANAGER_AVAILABLE = True
+except ImportError:
+    RPC_MANAGER_AVAILABLE = False
+    logger.warning("[DEV] RPC Manager not available, using legacy mode")
+
 # Pump.fun program ID
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 
-# Rate limiting - OPTIMIZED: Only 1 bot uses dev_check now!
-# 1 bot: 30 req/min = 1 request per 2 seconds
+# Rate limiting - now handled by RPC Manager
 DEV_CHECK_RATE_LIMIT_SECONDS = 2.0
 
 
 class DevReputationChecker:
-    """Проверяет репутацию создателя токена."""
+    """Проверяет репутацию создателя токена.
+
+    OPTIMIZED: Uses global RPC Manager for rate limiting when available.
+    """
 
     def __init__(
         self,
@@ -57,10 +66,13 @@ class DevReputationChecker:
         self._cache: dict[str, dict] = {}  # Кэш результатов
         self._last_api_call = 0.0  # Rate limiting
         self._api_calls = 0  # Counter for stats
+        self._rpc_manager: RPCManager | None = None  # Lazy init
 
         if not self.api_key:
             logger.warning("HELIUS_API_KEY not set, dev reputation check disabled")
             self.enabled = False
+        elif RPC_MANAGER_AVAILABLE:
+            logger.info("[DEV] Using RPC Manager for optimized requests")
 
     async def check_dev(self, creator_address: str) -> dict:
         """Проверить репутацию создателя.
@@ -122,7 +134,7 @@ class DevReputationChecker:
             wait_time = DEV_CHECK_RATE_LIMIT_SECONDS - time_since_last
             logger.debug(f"Dev check rate limit - waiting {wait_time:.1f}s")
             await asyncio.sleep(wait_time)
-        
+
         self._last_api_call = time.time()
         self._api_calls += 1
 

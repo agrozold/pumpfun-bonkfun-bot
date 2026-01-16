@@ -11,6 +11,8 @@ Whale Tracker - отслеживает транзакции китов в РЕА
 - BAGS (HWPsB1A5biibMngZB8XXb7FnFT4ohm1DMY6y1JdLBAGS)
 - PumpSwap AMM (PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP) - migrated tokens
 - Raydium AMM (675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8) - migrated tokens
+
+OPTIMIZED: Uses global RPC Manager for rate limiting and provider rotation.
 """
 
 import asyncio
@@ -25,6 +27,15 @@ from pathlib import Path
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+# Import RPC Manager for optimized requests
+try:
+    from src.core.rpc_manager import get_rpc_manager, RPCManager
+
+    RPC_MANAGER_AVAILABLE = True
+except ImportError:
+    RPC_MANAGER_AVAILABLE = False
+    logger.warning("[WHALE] RPC Manager not available, using legacy mode")
 
 # Program IDs for all supported platforms
 PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
@@ -53,31 +64,18 @@ PROGRAM_TO_PLATFORM: dict[str, str] = {
     RAYDIUM_AMM_PROGRAM: "raydium",
 }
 
-# Public RPC endpoints for fallback (free, but rate limited)
-# Only use endpoints that work without API keys
-PUBLIC_RPC_FALLBACK = [
-    "https://api.mainnet-beta.solana.com",  # Official Solana - most reliable
-]
-
-# Helius API endpoints - loaded from HELIUS_API_KEY env var
 # ============================================
-# HELIUS FREE TIER LIMITS:
-# - RPC: 10 req/s = 600/min
-# - Enhanced API: 2 req/s = 120/min  <-- BOTTLENECK!
-# - Credits: 1M/month
-#
-# OPTIMIZED: Only 1 bot (bot-whale-copy) uses whale_tracker now!
-# Other bots have whale_copy: enabled: false
-#
-# ENHANCED API BUDGET (120 req/min total):
-# - whale_tracker: 60 req/min (1 bot only)
-# - dev_reputation: 30 req/min (1 bot only)
-# - buffer: 30 req/min for transactions
-#
-# 1 BOT: 60 req/min = 1 request per second
+# RATE LIMITING NOW HANDLED BY RPC MANAGER
 # ============================================
-HELIUS_RATE_LIMIT_SECONDS = 1.0  # 1 request per second (only 1 bot now)
-HELIUS_RATE_LIMIT_JITTER = 0.5   # Small jitter for safety
+# All RPC requests go through src/core/rpc_manager.py which:
+# - Rotates between Helius, Alchemy, and public Solana
+# - Applies per-provider rate limits
+# - Automatic fallback on 429 errors
+# - Request caching to reduce API calls
+#
+# Legacy constants kept for backwards compatibility
+HELIUS_RATE_LIMIT_SECONDS = 1.0
+HELIUS_RATE_LIMIT_JITTER = 0.5
 
 
 @dataclass
@@ -104,6 +102,8 @@ class WhaleTracker:
 
     ВАЖНО: Каждый бот должен создавать свой WhaleTracker с указанием platform,
     чтобы избежать конфликтов WebSocket подписок между процессами.
+
+    OPTIMIZED: Uses global RPC Manager for all HTTP requests to avoid 429 errors.
     """
 
     def __init__(
@@ -135,15 +135,17 @@ class WhaleTracker:
             set()
         )  # Tokens already emitted to prevent duplicates
 
+        # RPC Manager for optimized requests (initialized lazily)
+        self._rpc_manager: RPCManager | None = None
+
         # RPC optimization: TX cache with extended TTL for quota saving
         self._tx_cache: dict[str, tuple[dict, float]] = {}  # sig -> (result, timestamp)
         self._cache_ttl = 180.0  # 180 seconds TTL (3 min - extended for quota saving)
         self._cache_max_size = 1500  # Larger LRU cache to reduce API calls
 
-        # Helius rate limiting - optimized for 1M credits / 14 days
-        # Budget: 71k/day = 3k/hour, whale tracker gets ~60% = 1.8k/hour = 30/min
+        # Helius rate limiting - now handled by RPC Manager
         self._last_helius_call = 0.0
-        self._helius_rate_limit = HELIUS_RATE_LIMIT_SECONDS  # Use global constant
+        self._helius_rate_limit = HELIUS_RATE_LIMIT_SECONDS
 
         # TX queue for rate-limited processing
         self._pending_txs: list[tuple[str, str]] = []  # (signature, platform)
@@ -158,6 +160,7 @@ class WhaleTracker:
             "timeouts": 0,
             "requests_today": 0,
             "day_start": time.time(),
+            "rpc_manager_calls": 0,
         }
 
         self._load_wallets()
@@ -167,10 +170,11 @@ class WhaleTracker:
             f"WhaleTracker initialized: {len(self.whale_wallets)} wallets, "
             f"min_buy={min_buy_amount} SOL, time_window={time_window_minutes} min, {platform_info}"
         )
-        logger.info(
-            f"[WHALE] RPC: Helius Enhanced API (if key set), "
-            f"fallback: public RPCs, rate limit: {HELIUS_RATE_LIMIT_SECONDS}s"
-        )
+
+        if RPC_MANAGER_AVAILABLE:
+            logger.info("[WHALE] Using RPC Manager for optimized requests")
+        else:
+            logger.info("[WHALE] RPC Manager not available, using legacy mode")
 
     def _load_wallets(self):
         """Загрузить список кошельков китов."""
@@ -324,7 +328,11 @@ class WhaleTracker:
     def _log_quota_stats(self):
         """Log Helius quota usage statistics with daily budget tracking."""
         m = self._metrics
-        total_calls = m["helius_calls"] + m["public_fallback_calls"]
+        total_calls = (
+            m["helius_calls"]
+            + m["public_fallback_calls"]
+            + m.get("rpc_manager_calls", 0)
+        )
         cache_rate = (
             (m["cache_hits"] / (m["cache_hits"] + total_calls) * 100)
             if (m["cache_hits"] + total_calls) > 0
@@ -335,25 +343,29 @@ class WhaleTracker:
         now = time.time()
         hours_elapsed = (now - m["day_start"]) / 3600
         if hours_elapsed > 0:
-            hourly_rate = m["helius_calls"] / hours_elapsed
+            hourly_rate = total_calls / hours_elapsed
             daily_projection = hourly_rate * 24
         else:
             hourly_rate = 0
             daily_projection = 0
 
-        # Budget: Enhanced API = 120 req/min total
-        # whale_tracker gets 80 req/min (4 bots × 20)
-        # Per bot: 20 req/min = 1,200/hr = 28,800/day
-        daily_budget = 28800
-        budget_used_pct = (m["helius_calls"] / daily_budget * 100) if daily_budget > 0 else 0
+        # Log RPC Manager metrics if available
+        if self._rpc_manager:
+            rpc_metrics = self._rpc_manager.get_metrics()
+            logger.info(
+                f"[WHALE STATS] RPC Manager: {rpc_metrics['total_requests']} total, "
+                f"{rpc_metrics['successful_requests']} success, "
+                f"{rpc_metrics['rate_limited']} rate limited, "
+                f"{rpc_metrics['cache_hits']} cache hits"
+            )
 
         logger.info(
-            f"[WHALE STATS] Helius: {m['helius_calls']} calls ({m['helius_success']} success), "
+            f"[WHALE STATS] Local: Helius {m['helius_calls']} ({m['helius_success']} ok), "
             f"Fallback: {m['public_fallback_calls']}, Cache: {m['cache_hits']} ({cache_rate:.1f}%)"
         )
         logger.info(
             f"[WHALE QUOTA] Rate: {hourly_rate:.0f}/hr, Projection: {daily_projection:.0f}/day, "
-            f"Budget: {budget_used_pct:.1f}% of {daily_budget}/day, Queue: {len(self._pending_txs)}"
+            f"Queue: {len(self._pending_txs)}"
         )
 
     async def stop(self):
@@ -574,11 +586,8 @@ class WhaleTracker:
     async def _check_if_whale_tx(self, signature: str, platform: str = "pump_fun"):
         """Проверить, является ли транзакция покупкой кита.
 
-        Порядок попыток:
-        1. Helius Enhanced API (парсит TX автоматически - самый эффективный)
-        2. ALCHEMY_RPC_ENDPOINT (если установлен)
-        3. self.rpc_endpoint (основной RPC из конфига)
-        4. Публичные RPC endpoints как fallback
+        OPTIMIZED: Uses RPC Manager for automatic provider rotation and rate limiting.
+        Falls back to legacy mode if RPC Manager is not available.
 
         Args:
             signature: Сигнатура транзакции
@@ -592,32 +601,69 @@ class WhaleTracker:
             # Keep only last 500
             self._processed_txs = set(list(self._processed_txs)[-500:])
 
-        # Check cache first
+        # Check local cache first
         if signature in self._tx_cache:
             cached, ts = self._tx_cache[signature]
             if time.time() - ts < self._cache_ttl:
                 self._metrics["cache_hits"] += 1
                 if cached:
-                    # Check if it's Helius parsed format or RPC format
                     if "feePayer" in cached:
                         await self._process_helius_tx(cached, platform)
                     else:
                         await self._process_rpc_tx(cached, signature, platform)
                 return
 
-        # Rate limit check with jitter to avoid burst collisions between bots
+        # Use RPC Manager if available (OPTIMIZED PATH)
+        if RPC_MANAGER_AVAILABLE:
+            await self._check_whale_tx_with_manager(signature, platform)
+            return
+
+        # Legacy fallback (if RPC Manager not available)
+        await self._check_whale_tx_legacy(signature, platform)
+
+    async def _check_whale_tx_with_manager(self, signature: str, platform: str):
+        """Check whale TX using RPC Manager (optimized path)."""
+        # Initialize RPC Manager lazily
+        if self._rpc_manager is None:
+            self._rpc_manager = await get_rpc_manager()
+
+        self._metrics["rpc_manager_calls"] += 1
+
+        # Try Helius Enhanced API first (best for parsed transactions)
+        tx = await self._rpc_manager.get_transaction_helius_enhanced(signature)
+        if tx:
+            self._metrics["helius_success"] += 1
+            self._cache_tx(signature, tx)
+            await self._process_helius_tx(tx, platform)
+            return
+
+        # Fallback to regular RPC (RPC Manager handles provider rotation)
+        tx = await self._rpc_manager.get_transaction(signature)
+        if tx:
+            self._cache_tx(signature, tx)
+            await self._process_rpc_tx(tx, signature, platform)
+            return
+
+        # TX not confirmed yet - this is normal for very fresh TXs
+        logger.debug(f"[WHALE] TX {signature[:16]}... not confirmed yet")
+
+    async def _check_whale_tx_legacy(self, signature: str, platform: str):
+        """Legacy whale TX check (fallback when RPC Manager not available)."""
+        import os
         import random
+
+        # Rate limit check with jitter
         now = time.time()
-        # Add random jitter (0-1s) to spread requests across bots
-        effective_rate_limit = HELIUS_RATE_LIMIT_SECONDS + random.uniform(0, HELIUS_RATE_LIMIT_JITTER)
+        effective_rate_limit = HELIUS_RATE_LIMIT_SECONDS + random.uniform(
+            0, HELIUS_RATE_LIMIT_JITTER
+        )
         if now - self._last_helius_call < effective_rate_limit:
-            # Queue for later instead of dropping
             if len(self._pending_txs) < self._max_pending:
                 self._pending_txs.append((signature, platform))
             return
         self._last_helius_call = now
 
-        # 1. Try Helius Enhanced API first (parses TX automatically - most efficient!)
+        # Try Helius Enhanced API first
         helius_key = self.helius_api_key or os.getenv("HELIUS_API_KEY")
         if helius_key:
             tx = await self._get_tx_helius(signature)
@@ -628,7 +674,7 @@ class WhaleTracker:
                 await self._process_helius_tx(tx, platform)
                 return
 
-        # 2. Try Alchemy RPC (if configured)
+        # Try Alchemy RPC
         alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
         if alchemy_endpoint:
             tx = await self._get_tx_from_endpoint(
@@ -639,7 +685,7 @@ class WhaleTracker:
                 await self._process_rpc_tx(tx, signature, platform)
                 return
 
-        # 3. Try main RPC endpoint (from config)
+        # Try main RPC endpoint
         if self.rpc_endpoint:
             tx = await self._get_tx_from_endpoint(
                 signature, self.rpc_endpoint, timeout=5.0
@@ -649,18 +695,15 @@ class WhaleTracker:
                 await self._process_rpc_tx(tx, signature, platform)
                 return
 
-        # 4. Try public RPC endpoints as fallback (rotate through them)
-        for public_rpc in PUBLIC_RPC_FALLBACK:
-            tx = await self._get_tx_from_endpoint(signature, public_rpc, timeout=5.0)
-            if tx:
-                self._metrics["public_fallback_calls"] += 1
-                self._cache_tx(signature, tx)
-                await self._process_rpc_tx(tx, signature, platform)
-                return
-            # Small delay between fallback attempts
-            await asyncio.sleep(0.3)
+        # Try public RPC as last resort
+        public_rpc = "https://api.mainnet-beta.solana.com"
+        tx = await self._get_tx_from_endpoint(signature, public_rpc, timeout=5.0)
+        if tx:
+            self._metrics["public_fallback_calls"] += 1
+            self._cache_tx(signature, tx)
+            await self._process_rpc_tx(tx, signature, platform)
+            return
 
-        # TX not confirmed yet - this is normal for very fresh TXs
         logger.debug(f"[WHALE] TX {signature[:16]}... not confirmed yet on any RPC")
 
     def _cache_tx(self, signature: str, tx: dict):
