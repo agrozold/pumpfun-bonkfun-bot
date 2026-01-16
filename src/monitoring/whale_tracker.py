@@ -436,13 +436,14 @@ class WhaleTracker:
                                 try:
                                     data = json.loads(msg.data)
                                     # Process with timeout to prevent hanging
+                                    # INCREASED to 60s to allow RPC Manager rate limit waits
                                     await asyncio.wait_for(
                                         self._handle_log(data),
-                                        timeout=10,  # 10s max for processing single message
+                                        timeout=60,  # 60s max - allows rate limit waits
                                     )
                                 except TimeoutError:
                                     logger.warning(
-                                        "[WHALE] Message processing timeout (10s) - skipping message"
+                                        "[WHALE] Message processing timeout (60s) - skipping message"
                                     )
                                     continue
                                 except json.JSONDecodeError:

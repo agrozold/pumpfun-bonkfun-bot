@@ -167,15 +167,16 @@ class RPCManager:
 
         # Helius Enhanced API (50 credits per request!)
         # 33k daily / 50 = 666 enhanced requests/day max
+        # BUT we need faster response for whale tracking, so increase rate
         self.providers["helius_enhanced"] = ProviderConfig(
             name="Helius Enhanced",
             http_endpoint=self.HELIUS_ENHANCED,
             wss_endpoint=None,  # Helius НЕ имеет WSS!
-            rate_limit_per_second=0.1,  # 6 req/min - conservative for 50 credit cost
+            rate_limit_per_second=0.5,  # 30 req/min - faster for whale tracking
             priority=0,
             is_primary=True,
         )
-        logger.info("[RPC] ✓ Helius Enhanced configured (0.1 req/s = 6 req/min)")
+        logger.info("[RPC] ✓ Helius Enhanced configured (0.5 req/s = 30 req/min)")
 
         # =================================================================
         # ALCHEMY = FALLBACK #1
