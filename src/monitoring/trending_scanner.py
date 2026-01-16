@@ -635,7 +635,7 @@ class TrendingScanner:
         return tokens
 
     async def _fetch_jupiter_all_tokens(self) -> list[TrendingToken]:
-        """Fallback: fetch from all tokens and filter pump.fun."""
+        """Fallback: fetch from all tokens and filter pump.fun/bonk.fun/bags."""
         if not self._session:
             return []
 
@@ -652,13 +652,16 @@ class TrendingScanner:
 
                 mints = await resp.json()
 
-                # Filter pump.fun, bonk.fun tokens, and include all tradeable for migrated
-                pump_bonk_mints = [m for m in mints if m.endswith("pump") or m.endswith("bonk")][:25]
+                # Filter pump.fun, bonk.fun, bags tokens (all platforms)
+                platform_mints = [
+                    m for m in mints 
+                    if m.endswith("pump") or m.endswith("bonk") or m.endswith("bags")
+                ][:25]
 
-                if pump_bonk_mints:
-                    prices = await self._fetch_jupiter_prices(pump_bonk_mints)
+                if platform_mints:
+                    prices = await self._fetch_jupiter_prices(platform_mints)
 
-                    for mint in pump_bonk_mints:
+                    for mint in platform_mints:
                         price_info = prices.get(mint, {})
                         token = TrendingToken(
                             mint=mint,
@@ -770,11 +773,15 @@ class TrendingScanner:
 
                 for item in data.get("data", {}).get("items", [])[:30]:
                     token = self._parse_birdeye_token(item)
-                    # Support pump.fun, bonk.fun, and all Solana tokens (for migrated)
+                    # Support pump.fun, bonk.fun, bags, and all Solana tokens (for migrated)
                     if token:
-                        is_pump_bonk = token.mint.endswith("pump") or token.mint.endswith("bonk")
+                        is_platform_token = (
+                            token.mint.endswith("pump") or 
+                            token.mint.endswith("bonk") or 
+                            token.mint.endswith("bags")
+                        )
                         # Include all tokens from Birdeye trending (they filter for quality)
-                        if is_pump_bonk or token.volume_24h > 50000:
+                        if is_platform_token or token.volume_24h > 50000:
                             tokens.append(token)
 
         except Exception as e:

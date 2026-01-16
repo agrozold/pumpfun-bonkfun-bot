@@ -106,16 +106,16 @@ BAGS использует Meteora DBC (Dynamic Bonding Curve) программу
 
 | Файл | Статус | Описание |
 |------|--------|----------|
-| src/platforms/bags/address_provider.py | ✅ | Meteora DBC адреса, PDA derivation |
-| src/platforms/bags/instruction_builder.py | ✅ | Swap инструкция (buy/sell) |
-| src/platforms/bags/curve_manager.py | ✅ | VirtualPool парсинг |
-| src/platforms/bags/event_parser.py | ✅ | Token creation events |
-| src/platforms/bags/pumpportal_processor.py | ✅ | PumpPortal интеграция |
-| src/platforms/bags/__init__.py | ✅ | Экспорты |
-| src/monitoring/bags_migration_tracker.py | ✅ | Migration monitoring |
-| idl/bags.json | ✅ | Meteora DBC IDL |
-| bots/bags-example.yaml | ✅ | Пример конфигурации |
-| learning-examples/bags/*.py | ✅ | Примеры |
+| src/platforms/bags/address_provider.py | [OK] | Meteora DBC адреса, PDA derivation |
+| src/platforms/bags/instruction_builder.py | [OK] | Swap инструкция (buy/sell) |
+| src/platforms/bags/curve_manager.py | [OK] | VirtualPool парсинг |
+| src/platforms/bags/event_parser.py | [OK] | Token creation events |
+| src/platforms/bags/pumpportal_processor.py | [OK] | PumpPortal интеграция |
+| src/platforms/bags/__init__.py | [OK] | Экспорты |
+| src/monitoring/bags_migration_tracker.py | [OK] | Migration monitoring |
+| idl/bags.json | [OK] | Meteora DBC IDL |
+| bots/bags-example.yaml | [OK] | Пример конфигурации |
+| learning-examples/bags/*.py | [OK] | Примеры |
 
 ## Примечания
 

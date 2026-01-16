@@ -86,7 +86,7 @@ class IDLParser:
             instruction_name = self.instructions[discriminator]["name"]
             if self.verbose:
                 print(
-                    f"⚠️  Instruction data for '{instruction_name}' is shorter than the expected minimum "
+                    f"[WARN] Instruction data for '{instruction_name}' is shorter than the expected minimum "
                     f"({actual_size}/{expected_min_size} bytes)."
                 )
             return False
@@ -121,7 +121,7 @@ class IDLParser:
                 args[arg["name"]] = value
             except Exception as e:
                 if self.verbose:
-                    print(f"❌ Decode error in argument '{arg['name']}': {e}")
+                    print(f"[ERROR] Decode error in argument '{arg['name']}': {e}")
                 return None
 
         # Helper to safely retrieve account public keys
@@ -248,7 +248,7 @@ class IDLParser:
 
         except Exception as e:
             if self.verbose:
-                print(f"❌ Error decoding event {event_name_actual}: {e}")
+                print(f"[ERROR] Error decoding event {event_name_actual}: {e}")
             return None
 
     def find_event_in_logs(
@@ -369,7 +369,7 @@ class IDLParser:
                     print(f"📏 Initialize instruction min size: {min_size} bytes")
             except Exception as e:
                 if self.verbose:
-                    print(f"⚠️  Could not calculate size for {instruction['name']}: {e}")
+                    print(f"[WARN] Could not calculate size for {instruction['name']}: {e}")
                 self.instruction_min_sizes[discriminator] = DISCRIMINATOR_SIZE
 
     def _calculate_type_min_size(self, type_def: str | dict) -> int:

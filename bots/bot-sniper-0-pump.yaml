@@ -73,10 +73,10 @@ dev_check:
 # Trending Scanner - ищет РЕЗКИЕ ВСПЛЕСКИ покупок
 trending_scanner:
   enabled: true
-  min_volume_1h: 30000        # Минимум $30k объёма за 1 ЧАС (было 50k)
-  min_market_cap: 5000        # Минимум $5k маркеткап (было 10k)
+  min_volume_1h: 10000        # Минимум $10k объёма за 1 ЧАС (понижено с 30k)
+  min_market_cap: 5000        # Минимум $5k маркеткап
   max_market_cap: 0           # 0 = без лимита
-  min_price_change_5m: 3      # Минимум +3% за 5 МИНУТ (было 5%)
-  min_price_change_1h: 15     # Минимум +15% за час (было 20%)
-  min_buy_pressure: 0.55      # 55% покупок (было 65%)
+  min_price_change_5m: 3      # Минимум +3% за 5 МИНУТ
+  min_price_change_1h: 15     # Минимум +15% за час
+  min_buy_pressure: 0.55      # 55% покупок
   scan_interval: 30           # Сканировать каждые 30 сек
