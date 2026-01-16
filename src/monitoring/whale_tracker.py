@@ -662,7 +662,7 @@ class WhaleTracker:
             logger.info(f"[WHALE] TX {signature[:16]}... fee_payer: {fee_payer[:8]}...")
             
             if fee_payer not in self.whale_wallets:
-                logger.info(f"[WHALE] Fee payer {fee_payer[:8]}... NOT in whale list")
+                logger.info(f"[WHALE] Fee payer {fee_payer} NOT in whale list")
                 return
             
             # [WHALE] НАШЛИ КИТА!
