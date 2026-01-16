@@ -146,10 +146,10 @@ class UniversalTrader:
         # ========== CODE VERSION CHECK ==========
         # Use print() with flush to guarantee output
         print("=" * 60, flush=True)
-        print("[VERSION] UniversalTrader VERSION: 2026-01-15-v5", flush=True)
+        print("[VERSION] UniversalTrader VERSION: 2026-01-16-v6-ANTI-DUPLICATE", flush=True)
         print("=" * 60, flush=True)
         logger.warning("=" * 60)
-        logger.warning("[VERSION] UniversalTrader VERSION: 2026-01-15-v5")
+        logger.warning("[VERSION] UniversalTrader VERSION: 2026-01-16-v6-ANTI-DUPLICATE")
         logger.warning("=" * 60)
         
         # Store endpoints and API keys for later use
@@ -422,10 +422,13 @@ class UniversalTrader:
         self.pending_tokens: dict[str, TokenInfo] = {}  # mint -> TokenInfo for pattern-only mode
         self.active_positions: list[Position] = []  # Active positions for persistence
         
-        # Anti-duplicate protection for whale copy / trending
-        self._buy_lock = asyncio.Lock()  # Prevents race condition on concurrent buys
-        self._whale_bought_tokens: set[str] = set()  # Tokens bought via whale copy
-        self._trending_bought_tokens: set[str] = set()  # Tokens bought via trending
+        # ANTI-DUPLICATE PROTECTION (CRITICAL!)
+        # Single lock for ALL buy operations to prevent race conditions
+        self._buy_lock = asyncio.Lock()
+        # Unified set of tokens being bought or already bought
+        # This is checked INSIDE the lock to prevent duplicates
+        self._buying_tokens: set[str] = set()  # Tokens currently being bought (in progress)
+        self._bought_tokens: set[str] = set()  # Tokens successfully bought (completed)
 
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
@@ -526,51 +529,54 @@ class UniversalTrader:
         
         Whale copy trades bypass scoring and pattern checks.
         
-        ANTI-DUPLICATE: Uses lock to prevent race condition when multiple
-        whale signals arrive for the same token simultaneously.
+        ANTI-DUPLICATE: Uses unified _buy_lock and _buying_tokens/_bought_tokens
+        to prevent ANY duplicate purchases across ALL buy paths.
         """
         mint_str = whale_buy.token_mint
         
-        # FAST CHECK before lock (optimization)
-        if mint_str in self._whale_bought_tokens:
-            logger.info(f"[WHALE] Already bought {mint_str[:8]}... via whale copy, skipping")
+        # ============================================
+        # ANTI-DUPLICATE CHECK (CRITICAL!)
+        # ============================================
+        # FAST CHECK before lock (optimization - avoid lock contention)
+        if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
+            logger.info(f"[WHALE] Token {mint_str[:8]}... already bought/buying, skipping")
             return
         
-        # Use lock to prevent race condition
+        # Use lock to prevent race condition between ALL buy paths
         async with self._buy_lock:
-            # Re-check after acquiring lock (another task might have bought it)
-            if mint_str in self._whale_bought_tokens:
-                logger.info(f"[WHALE] Already bought {mint_str[:8]}... (after lock), skipping")
+            # Re-check after acquiring lock (another task might have started buying)
+            if mint_str in self._bought_tokens:
+                logger.info(f"[WHALE] Token {mint_str[:8]}... already bought (after lock), skipping")
                 return
             
-            if mint_str in self.processed_tokens:
-                logger.info(f"[WHALE] Already processed {mint_str[:8]}..., skipping duplicate")
+            if mint_str in self._buying_tokens:
+                logger.info(f"[WHALE] Token {mint_str[:8]}... already being bought (after lock), skipping")
                 return
             
             # Check if already have position in this token
             for pos in self.active_positions:
                 if str(pos.mint) == mint_str:
                     logger.info(f"[WHALE] Already have position in {mint_str[:8]}..., skipping")
+                    self._bought_tokens.add(mint_str)  # Mark as bought to prevent future attempts
                     return
             
-            # Mark as bought BEFORE releasing lock to prevent duplicates
-            self._whale_bought_tokens.add(mint_str)
-            self.processed_tokens.add(mint_str)
+            # Mark as BUYING (in progress) BEFORE releasing lock
+            self._buying_tokens.add(mint_str)
         
         # Now proceed with buy (outside lock to not block other operations)
-        # Clean readable log format without emoji
-        logger.warning("=" * 70)
-        logger.warning("[WHALE COPY] Starting copy trade")
-        logger.warning(f"  SYMBOL:    {whale_buy.token_symbol}")
-        logger.warning(f"  TOKEN:     {mint_str}")
-        logger.warning(f"  WHALE:     {whale_buy.whale_label}")
-        logger.warning(f"  WALLET:    {whale_buy.whale_wallet}")
-        logger.warning(f"  WHALE_SOL: {whale_buy.amount_sol:.4f} SOL")
-        logger.warning(f"  MY_BUY:    {self.buy_amount:.4f} SOL")
-        logger.warning(f"  PLATFORM:  {whale_buy.platform}")
-        logger.warning("=" * 70)
-        
         try:
+            # Clean readable log format
+            logger.warning("=" * 70)
+            logger.warning("[WHALE COPY] Starting copy trade")
+            logger.warning(f"  SYMBOL:    {whale_buy.token_symbol}")
+            logger.warning(f"  TOKEN:     {mint_str}")
+            logger.warning(f"  WHALE:     {whale_buy.whale_label}")
+            logger.warning(f"  WALLET:    {whale_buy.whale_wallet}")
+            logger.warning(f"  WHALE_SOL: {whale_buy.amount_sol:.4f} SOL")
+            logger.warning(f"  MY_BUY:    {self.buy_amount:.4f} SOL")
+            logger.warning(f"  PLATFORM:  {whale_buy.platform}")
+            logger.warning("=" * 70)
+            
             # Check wallet balance
             balance_ok = await self._check_balance_before_buy()
             if not balance_ok:
@@ -586,7 +592,6 @@ class UniversalTrader:
             dex_used = "none"
             token_amount = 0.0
             price = 0.0
-            last_error = ""
             
             for attempt in range(1, max_retries + 1):
                 logger.warning(
@@ -611,6 +616,9 @@ class UniversalTrader:
                     await asyncio.sleep(retry_delay)
             
             if success:
+                # Mark as BOUGHT (completed)
+                self._bought_tokens.add(mint_str)
+                
                 # Clean readable success log
                 logger.warning("=" * 70)
                 logger.warning("[WHALE COPY] SUCCESS")
@@ -657,6 +665,9 @@ class UniversalTrader:
             
         except Exception as e:
             logger.exception(f"[WHALE] WHALE COPY FAILED: {e}")
+        finally:
+            # Remove from "buying" set (either succeeded or failed)
+            self._buying_tokens.discard(mint_str)
 
     async def _buy_any_dex(
         self,
@@ -1135,52 +1146,53 @@ class UniversalTrader:
         Supports all platforms: pump_fun, lets_bonk, bags.
         For existing/migrated tokens, uses Jupiter/PumpSwap for trading.
         
-        ANTI-DUPLICATE: Uses lock to prevent race condition when multiple
-        trending signals arrive for the same token simultaneously.
+        ANTI-DUPLICATE: Uses unified _buy_lock and _buying_tokens/_bought_tokens
+        to prevent ANY duplicate purchases across ALL buy paths.
         """
         mint_str = token.mint
         
-        # FAST CHECK before lock (optimization)
-        if mint_str in self._trending_bought_tokens:
-            logger.info(f"[TRENDING] Already bought {token.symbol} via trending, skipping")
+        # ============================================
+        # ANTI-DUPLICATE CHECK (CRITICAL!)
+        # ============================================
+        # FAST CHECK before lock (optimization - avoid lock contention)
+        if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
+            logger.info(f"[TRENDING] Token {token.symbol} already bought/buying, skipping")
             return
         
-        # Use lock to prevent race condition
+        # Use lock to prevent race condition between ALL buy paths
         async with self._buy_lock:
-            # Re-check after acquiring lock
-            if mint_str in self._trending_bought_tokens:
-                logger.info(f"[TRENDING] Already bought {token.symbol} (after lock), skipping")
+            # Re-check after acquiring lock (another task might have started buying)
+            if mint_str in self._bought_tokens:
+                logger.info(f"[TRENDING] Token {token.symbol} already bought (after lock), skipping")
                 return
             
-            if mint_str in self.processed_tokens:
-                logger.info(f"[TRENDING] Already processed {token.symbol}, skipping")
+            if mint_str in self._buying_tokens:
+                logger.info(f"[TRENDING] Token {token.symbol} already being bought (after lock), skipping")
                 return
             
             # Check if already have position in this token
             for pos in self.active_positions:
                 if str(pos.mint) == mint_str:
                     logger.info(f"[TRENDING] Already have position in {token.symbol}, skipping")
+                    self._bought_tokens.add(mint_str)  # Mark as bought to prevent future attempts
                     return
             
-            # Mark as bought BEFORE releasing lock to prevent duplicates
-            self._trending_bought_tokens.add(mint_str)
-            self.processed_tokens.add(mint_str)
+            # Mark as BUYING (in progress) BEFORE releasing lock
+            self._buying_tokens.add(mint_str)
         
-        # NO AGE LIMIT - pattern detection works for ALL existing tokens
-        # Age check removed to allow trading any trending token
-        
-        logger.warning(
-            f"[TRENDING] TRENDING BUY: {token.symbol} - "
-            f"MC: ${token.market_cap:,.0f}, Vol: ${token.volume_24h:,.0f}, "
-            f"+{token.price_change_1h:.1f}% 1h"
-        )
-        
-        # Start pattern tracking for this token (works for ALL tokens, not just new)
-        if self.pattern_detector:
-            self.pattern_detector.start_tracking(mint_str, token.symbol)
-            logger.info(f"[TRENDING] Started pattern tracking for {token.symbol}")
-        
+        # Now proceed with buy (outside lock to not block other operations)
         try:
+            logger.warning(
+                f"[TRENDING] TRENDING BUY: {token.symbol} - "
+                f"MC: ${token.market_cap:,.0f}, Vol: ${token.volume_24h:,.0f}, "
+                f"+{token.price_change_1h:.1f}% 1h"
+            )
+            
+            # Start pattern tracking for this token (works for ALL tokens, not just new)
+            if self.pattern_detector:
+                self.pattern_detector.start_tracking(mint_str, token.symbol)
+                logger.info(f"[TRENDING] Started pattern tracking for {token.symbol}")
+            
             from interfaces.core import TokenInfo
             from core.pubkeys import SystemAddresses
             
@@ -1290,6 +1302,8 @@ class UniversalTrader:
                     )
                     self.active_positions.append(position)
                     save_positions(self.active_positions)
+                    # Mark as BOUGHT (completed)
+                    self._bought_tokens.add(mint_str)
                 else:
                     logger.error(f"[FAIL] TRENDING PumpSwap BUY failed: {token.symbol} - {error or 'Unknown error'}")
                 return
@@ -1342,9 +1356,14 @@ class UniversalTrader:
             
             # Покупаем! skip_checks=True - trending scanner уже проверил метрики
             await self._handle_token(token_info, skip_checks=True)
+            # Mark as BOUGHT after successful _handle_token
+            self._bought_tokens.add(mint_str)
             
         except Exception as e:
             logger.exception(f"Failed to buy trending token: {e}")
+        finally:
+            # Remove from "buying" set (either succeeded or failed)
+            self._buying_tokens.discard(mint_str)
 
     async def start(self) -> None:
         """Start the trading bot and listen for new tokens."""
@@ -1539,11 +1558,21 @@ class UniversalTrader:
         await self.solana_client.close()
 
     async def _queue_token(self, token_info: TokenInfo) -> None:
-        """Queue a token for processing if not already processed."""
+        """Queue a token for processing if not already processed.
+        
+        ANTI-DUPLICATE: Also checks _bought_tokens and _buying_tokens
+        to prevent queueing tokens that are already being bought via
+        whale copy or trending scanner.
+        """
         token_key = str(token_info.mint)
 
+        # Check all anti-duplicate sets
         if token_key in self.processed_tokens:
             logger.debug(f"Token {token_info.symbol} already processed. Skipping...")
+            return
+        
+        if token_key in self._bought_tokens or token_key in self._buying_tokens:
+            logger.debug(f"Token {token_info.symbol} already bought/buying. Skipping queue...")
             return
 
         # Record timestamp when token was discovered
@@ -1562,6 +1591,17 @@ class UniversalTrader:
                 token_info = await self.token_queue.get()
                 token_key = str(token_info.mint)
 
+                # ============================================
+                # ANTI-DUPLICATE CHECK (CRITICAL!)
+                # ============================================
+                # Check if already bought/buying via ANY path (whale, trending, listener)
+                if token_key in self._bought_tokens or token_key in self._buying_tokens:
+                    logger.info(
+                        f"Skipping token {token_info.symbol} - already bought/buying via another path"
+                    )
+                    self.token_queue.task_done()
+                    continue
+
                 # Check if token is still "fresh"
                 current_time = monotonic()
                 token_age = current_time - self.token_timestamps.get(
@@ -1576,12 +1616,33 @@ class UniversalTrader:
                     self.token_queue.task_done()
                     continue
 
+                # Use lock to mark as buying (prevents race with whale/trending)
+                async with self._buy_lock:
+                    # Re-check after lock
+                    if token_key in self._bought_tokens or token_key in self._buying_tokens:
+                        logger.info(
+                            f"Skipping token {token_info.symbol} - already bought/buying (after lock)"
+                        )
+                        self.token_queue.task_done()
+                        continue
+                    
+                    # Mark as BUYING before releasing lock
+                    self._buying_tokens.add(token_key)
+
                 self.processed_tokens.add(token_key)
 
                 logger.info(
                     f"Processing fresh token: {token_info.symbol} (age: {token_age:.1f}s)"
                 )
-                await self._handle_token(token_info)
+                
+                try:
+                    await self._handle_token(token_info)
+                    # Mark as BOUGHT after successful buy
+                    self._bought_tokens.add(token_key)
+                finally:
+                    # Remove from "buying" set (either succeeded or failed)
+                    self._buying_tokens.discard(token_key)
+                
                 self.token_queue.task_done()
 
             except asyncio.CancelledError:

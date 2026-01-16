@@ -766,7 +766,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "solana" },
     { name = "solders" },
-    { name = "uvloop" },
+    { name = "uvloop", marker = "sys_platform != 'win32'" },
     { name = "websockets" },
 ]
 
@@ -790,7 +790,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.10.0" },
     { name = "solana", specifier = "==0.36.6" },
     { name = "solders", specifier = ">=0.26.0" },
-    { name = "uvloop", specifier = ">=0.21.0" },
+    { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.21.0" },
     { name = "websockets", specifier = ">=15.0" },
 ]
 provides-extras = ["dev"]
