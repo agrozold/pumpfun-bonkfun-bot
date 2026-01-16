@@ -64,7 +64,7 @@ def format_time_ago(timestamp: int) -> str:
         return f"{delta.seconds // 3600}h {(delta.seconds % 3600) // 60}m ago"
 
 
-async def check_whale_activity():
+async def check_whale_activity(limit: int = 20, hours: int = 1):
     """Check all whales for recent pump.fun activity."""
     # Load whale wallets
     wallets_file = Path("smart_money_wallets.json")
@@ -76,10 +76,10 @@ async def check_whale_activity():
         data = json.load(f)
     
     whales = data.get("whales", [])
-    print(f"📊 Checking {len(whales)} whale wallets for activity...\n")
+    print(f"📊 Checking {len(whales)} whale wallets for activity (last {hours}h, limit {limit})...\n")
     
-    one_hour_ago = datetime.now() - timedelta(hours=1)
-    one_hour_ts = int(one_hour_ago.timestamp())
+    time_ago_limit = datetime.now() - timedelta(hours=hours)
+    time_ts = int(time_ago_limit.timestamp())
     
     active_whales = []
     total_buys = 0
@@ -94,18 +94,18 @@ async def check_whale_activity():
             
             print(f"[{i+1}/{len(whales)}] Checking {wallet[:8]}... ({label})")
             
-            txs = await get_wallet_transactions(session, wallet)
+            txs = await get_wallet_transactions(session, wallet, limit=limit)
             
             recent_buys = []
             for tx in txs:
                 ts = tx.get("timestamp", 0)
-                if ts < one_hour_ts:
+                if hours > 0 and ts < time_ts:
                     continue
                 
                 if is_pump_fun_buy(tx):
                     sig = tx.get("signature", "")[:16]
-                    time_ago = format_time_ago(ts)
-                    recent_buys.append((sig, time_ago, ts))
+                    time_ago_str = format_time_ago(ts)
+                    recent_buys.append((sig, time_ago_str, ts))
             
             if recent_buys:
                 active_whales.append({
@@ -114,9 +114,9 @@ async def check_whale_activity():
                     "buys": recent_buys
                 })
                 total_buys += len(recent_buys)
-                print(f"  ✅ {len(recent_buys)} pump.fun buys in last hour!")
+                print(f"  ✅ {len(recent_buys)} pump.fun buys found!")
             else:
-                print(f"  ⏸️  No recent activity")
+                print(f"  ⏸️  No pump.fun activity")
             
             await asyncio.sleep(0.5)  # Rate limit
     
@@ -125,19 +125,32 @@ async def check_whale_activity():
     print(f"📈 SUMMARY: {len(active_whales)} active whales, {total_buys} total buys\n")
     
     if active_whales:
-        print("🐋 ACTIVE WHALES (last hour):")
+        print("🐋 ACTIVE WHALES:")
         for whale in active_whales:
             print(f"\n  {whale['wallet'][:16]}... ({whale['label']})")
-            for sig, time_ago, _ in whale['buys'][:5]:
-                print(f"    • {sig}... - {time_ago}")
+            for sig, time_ago_str, _ in whale['buys'][:10]:
+                print(f"    • {sig}... - {time_ago_str}")
     else:
-        print("😴 No whale activity in the last hour")
+        print("😴 No whale activity found")
         print("   Consider adding more active wallets to smart_money_wallets.json")
 
 
 if __name__ == "__main__":
+    import sys
+    
     if not HELIUS_API_KEY:
         print("❌ HELIUS_API_KEY not set in .env")
         print("   Get free API key at https://helius.xyz")
     else:
-        asyncio.run(check_whale_activity())
+        # Parse args: --limit N --hours H (0 = no time filter)
+        limit = 20
+        hours = 1
+        
+        args = sys.argv[1:]
+        for i, arg in enumerate(args):
+            if arg == "--limit" and i + 1 < len(args):
+                limit = int(args[i + 1])
+            elif arg == "--hours" and i + 1 < len(args):
+                hours = int(args[i + 1])
+        
+        asyncio.run(check_whale_activity(limit=limit, hours=hours))

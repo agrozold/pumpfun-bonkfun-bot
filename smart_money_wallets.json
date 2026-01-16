@@ -639,6 +639,38 @@
       "label": "whale",
       "source": "manual",
       "added_date": "2026-01-16T14:00:00Z"
+    },
+    {
+      "wallet": "CjCiGqWoJXZquFANk3QvepdGtgCKaf7WCXsbxEAcVDkF",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-16T15:00:00Z"
+    },
+    {
+      "wallet": "DqUJZJ6e3sBiMtUbgveCJzqh3JhiLhpuBYmncg1ivwcc",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-16T15:00:00Z"
+    },
+    {
+      "wallet": "wNdEMuFn2FX398JayuxBb6JsGHwhs8vR3iCnjVtFbuK",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-16T15:00:00Z"
+    },
+    {
+      "wallet": "A8H8D8WegN7MgMdRAVYWU2uAcSTfZaC3c6pyLDF8CFXv",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "whale",
+      "source": "manual",
+      "added_date": "2026-01-16T15:00:00Z"
     }
   ],
   "min_buy_amount_sol": 0.5,
