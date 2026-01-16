@@ -385,20 +385,20 @@ class TrendingScanner:
                         seen_mints.add(token.mint)
                         all_tokens.append(token)
 
-                logger.debug(
-                    f"Fetched {len(tokens)} from {source.value} "
+                logger.info(
+                    f"📡 Fetched {len(tokens)} from {source.value} "
                     f"(daily: {limiter.daily_requests}/{limiter.daily_budget or '∞'})"
                 )
             except Exception as e:
-                logger.debug(f"Error fetching from {source.value}: {e}")
+                logger.warning(f"Error fetching from {source.value}: {e}")
 
             await asyncio.sleep(0.2)
 
         if not all_tokens:
-            logger.debug("No tokens fetched from any source")
+            logger.info("📡 No tokens fetched from any source")
             return
 
-        logger.info(f"🔍 Scanned {len(all_tokens)} tokens from {len(self._enabled_sources)} sources")
+        logger.info(f"🔍 Scanned {len(all_tokens)} tokens from {len(sources_to_use)} sources")
 
         # Filter and score
         candidates = []
@@ -504,7 +504,7 @@ class TrendingScanner:
                     tokens.append(token)
 
         except Exception as e:
-            logger.debug(f"DexScreener fetch error: {e}")
+            logger.warning(f"DexScreener fetch error: {e}")
 
         tokens.sort(key=lambda t: t.volume_ratio, reverse=True)
         return tokens[:40]
@@ -544,7 +544,7 @@ class TrendingScanner:
                         tokens.append(token)
 
         except Exception as e:
-            logger.debug(f"DexScreener search error: {e}")
+            logger.warning(f"DexScreener search error: {e}")
 
         return tokens
 
