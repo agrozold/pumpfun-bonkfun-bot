@@ -66,22 +66,18 @@ PUBLIC_RPC_FALLBACK = [
 # - Enhanced API: 2 req/s = 120/min  <-- BOTTLENECK!
 # - Credits: 1M/month
 #
-# 6 BOT PROCESSES SHARING HELIUS:
-# - blockhash_updater: 2 req/min × 6 = 12 req/min (RPC)
-# - whale_tracker: 4 bots with whale_copy enabled
-# - dev_reputation: 4 bots with dev_check enabled
-# - transactions: ~10 req/min (RPC)
+# OPTIMIZED: Only 1 bot (bot-whale-copy) uses whale_tracker now!
+# Other bots have whale_copy: enabled: false
 #
 # ENHANCED API BUDGET (120 req/min total):
-# - whale_tracker: 80 req/min (4 bots × 20 req/min)
-# - dev_reputation: 20 req/min (4 bots × 5 req/min)
-# - buffer: 20 req/min
+# - whale_tracker: 60 req/min (1 bot only)
+# - dev_reputation: 30 req/min (1 bot only)
+# - buffer: 30 req/min for transactions
 #
-# PER BOT: 20 req/min = 1 request per 3 seconds
-# With jitter to avoid burst collisions
+# 1 BOT: 60 req/min = 1 request per second
 # ============================================
-HELIUS_RATE_LIMIT_SECONDS = 3.0  # Base: 1 request per 3 seconds per bot
-HELIUS_RATE_LIMIT_JITTER = 2.0   # Add 0-2s random jitter to spread requests
+HELIUS_RATE_LIMIT_SECONDS = 1.0  # 1 request per second (only 1 bot now)
+HELIUS_RATE_LIMIT_JITTER = 0.5   # Small jitter for safety
 
 
 @dataclass
