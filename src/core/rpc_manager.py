@@ -1,16 +1,18 @@
 """
-Global RPC Manager - Helius PRIMARY, Alchemy/Public as FALLBACK.
+Global RPC Manager - Helius + Chainstack CO-PRIMARY, Alchemy/Public as FALLBACK.
 
-HELIUS FREE TIER LIMITS:
-- 1,000,000 credits/month = ~33,333 credits/day
-- Standard RPC: 1 credit per request
-- Enhanced API: 50 credits per request
-- With 6 bots running 24/7: ~1,388 credits/hour = ~231 credits/min
+COMBINED BUDGET FOR 2-3 WEEKS:
+- Helius: 800,000 credits/month (~26,666/day)
+- Chainstack: 1,000,000 requests/month (~33,333/day)
+- TOTAL: 1,800,000 requests/month (~60,000/day)
 
 STRATEGY:
-1. Helius = PRIMARY (best quality, use 80% of budget)
-2. Alchemy = FALLBACK #1 (when Helius rate limited)
-3. Public Solana = FALLBACK #2 (last resort)
+1. Helius = CO-PRIMARY (priority 0, 45% of load)
+2. Chainstack = CO-PRIMARY (priority 1, 55% of load)
+3. Alchemy = FALLBACK #1 (when primaries rate limited)
+4. Public Solana = FALLBACK #2 (last resort)
+
+With this combined budget, you can run for 2-3 weeks comfortably.
 
 Usage:
     from core.rpc_manager import get_rpc_manager
@@ -60,6 +62,7 @@ class RPCProvider(Enum):
     """Supported RPC providers."""
 
     HELIUS = "helius"
+    CHAINSTACK = "chainstack"
     ALCHEMY = "alchemy"
     PUBLIC_SOLANA = "public_solana"
 
@@ -182,7 +185,28 @@ class RPCManager:
         logger.info("[RPC] ✓ Helius Enhanced configured (0.02 req/s = 1.2 req/min)")
 
         # =================================================================
-        # ALCHEMY = FALLBACK #1 (take more load when Helius rate limited)
+        # CHAINSTACK = CO-PRIMARY (1M requests/month, share load with Helius)
+        # Combined budget: Helius 800k + Chainstack 1M = 1.8M/month
+        # For 2-3 weeks usage: distribute ~50/50 between providers
+        # =================================================================
+        chainstack_http = os.getenv("CHAINSTACK_RPC_ENDPOINT")
+        chainstack_wss = os.getenv("CHAINSTACK_WSS_ENDPOINT")
+        if chainstack_http:
+            self.providers["chainstack"] = ProviderConfig(
+                name="Chainstack",
+                http_endpoint=chainstack_http,
+                wss_endpoint=chainstack_wss,
+                rate_limit_per_second=0.12,  # ~7 req/min - slightly higher than Helius
+                priority=1,  # Same tier as Helius (round-robin)
+                is_primary=True,
+            )
+            logger.info("[RPC] ✓ CHAINSTACK CO-PRIMARY configured (0.12 req/s = 7 req/min)")
+            logger.info("[RPC]   Combined budget: Helius 800k + Chainstack 1M = 1.8M/month")
+        else:
+            logger.warning("[RPC] ⚠ CHAINSTACK_RPC_ENDPOINT not set")
+
+        # =================================================================
+        # ALCHEMY = FALLBACK #1 (take more load when primaries rate limited)
         # =================================================================
         alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
         if alchemy_endpoint:
@@ -190,7 +214,7 @@ class RPCManager:
                 name="Alchemy",
                 http_endpoint=alchemy_endpoint,
                 rate_limit_per_second=1.0,  # 60 req/min - higher for fallback
-                priority=5,  # Lower priority than Helius
+                priority=5,  # Lower priority than Helius/Chainstack
                 is_primary=False,
             )
             logger.info("[RPC] ✓ Alchemy FALLBACK #1 configured (1.0 req/s)")
@@ -212,7 +236,7 @@ class RPCManager:
 
         self._initialized = True
         logger.info(f"[RPC] Manager initialized: {len(self.providers)} providers")
-        logger.info("[RPC] Priority: Helius -> Alchemy -> Public Solana")
+        logger.info("[RPC] Priority: Helius -> Chainstack -> Alchemy -> Public Solana")
 
     def _get_available_provider(
         self, exclude: set[str] | None = None, prefer_primary: bool = True
