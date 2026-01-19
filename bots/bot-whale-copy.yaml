@@ -17,8 +17,8 @@ filters:
   yolo_mode: true  # ВАЖНО: Должен быть true для whale copy - иначе whale tracker не запустится!
 
 # RPC - HELIUS для HTTP, публичный Solana для WSS
-rpc_endpoint: https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
-wss_endpoint: wss://api.mainnet-beta.solana.com
+rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
+wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
 private_key: ${SOLANA_PRIVATE_KEY}
 
 # Priority fees

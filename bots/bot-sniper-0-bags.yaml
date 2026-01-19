@@ -1,30 +1,22 @@
 # BAGS Platform Sniper Bot - ЖЁСТКИЕ ФИЛЬТРЫ
-# Покупаем ТОЛЬКО токены с сильными паттернами и высоким скором
-# НЕ СМЯГЧАТЬ ЭТИ НАСТРОЙКИ!
-#
-# ВАЖНО: bags.fm токены НЕ поддерживаются PumpPortal!
-# Используем logs listener для подписки на Meteora DBC программу.
-
 enabled: true
 env_file: .env
 name: bot-sniper-bags
 platform: bags
 separate_process: true
 
-# Listener - ВАЖНО: для bags.fm используем bags_logs, НЕ pumpportal!
-# PumpPortal не поддерживает bags.fm токены.
-# bags_logs listener подписывается на Meteora DBC программу напрямую.
+# Connection - из .env
+rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
+wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
+private_key: ${SOLANA_PRIVATE_KEY}
+
+# Listener - bags_logs для Meteora DBC
 filters:
   bro_address: null
-  listener_type: bags_logs  # ИЗМЕНЕНО: bags_logs для прямой подписки на Meteora DBC
+  listener_type: bags_logs
   match_string: null
-  max_token_age: 315360000  # 10 лет в секундах
+  max_token_age: 315360000
   yolo_mode: true
-
-# RPC - HELIUS для HTTP, публичный Solana для WSS
-rpc_endpoint: https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
-wss_endpoint: wss://api.mainnet-beta.solana.com
-private_key: ${SOLANA_PRIVATE_KEY}
 
 # Priority fees
 priority_fees:
@@ -37,57 +29,37 @@ pumpportal:
   url: wss://pumpportal.fun/api/data
 
 # Trade settings
-# ============================================
-# ЖЁСТКИЙ STOP LOSS - КРИТИЧЕСКИ ВАЖНО!
-# В коде есть ДОПОЛНИТЕЛЬНАЯ защита:
-# - HARD_STOP_LOSS: 25% убыток = НЕМЕДЛЕННАЯ продажа
-# - EMERGENCY_STOP_LOSS: 40% убыток = ЭКСТРЕННАЯ продажа
-# - Агрессивный retry при неудачной продаже (5 попыток)
-# ============================================
 trade:
   buy_amount: 0.01
   buy_slippage: 0.3
   exit_strategy: tp_sl
   max_hold_time: 86400
   min_sol_balance: 0.03
-  moon_bag_percentage: 0           # НЕТ moon bag при SL! Продаём ВСЁ!
-  price_check_interval: 1          # КАЖДУЮ СЕКУНДУ проверяем цену!
-  sell_slippage: 0.35              # Увеличен slippage для быстрой продажи
-  stop_loss_percentage: 0.20       # 20% SL (в коде есть доп. защита на 25% и 40%)
+  moon_bag_percentage: 0
+  price_check_interval: 1
+  sell_slippage: 0.35
+  stop_loss_percentage: 0.20
   take_profit_percentage: 1.0
 
-# ============================================
-# PATTERN DETECTION - МАКСИМАЛЬНО ЖЁСТКИЕ ФИЛЬТРЫ
-# НЕ СМЯГЧАТЬ! Покупаем только при СИЛЬНЫХ сигналах!
-# ============================================
+# Pattern detection
 pattern_detection:
   enabled: true
   pattern_only_mode: true
-  
-  # ЖЁСТКИЕ ТРЕБОВАНИЯ
-  min_patterns_to_buy: 2           # Минимум 2 паттерна ОБЯЗАТЕЛЬНО
-  min_signal_strength: 0.8         # 80% сила сигнала
-  min_whale_buys: 2                # 2 whale покупки
-  
-  # Пороги паттернов - ЖЁСТКИЕ
-  buy_pressure_threshold: 0.80     # 80% покупок
-  trade_velocity_threshold: 500    # 500 сделок за 5 мин
-  price_momentum_threshold: 0.15   # 15% рост
-  volume_spike_threshold: 4.0      # 4x объём
-  
-  # High Volume Sideways - ЖЁСТКИЕ
+  min_patterns_to_buy: 2
+  min_signal_strength: 0.8
+  min_whale_buys: 2
+  buy_pressure_threshold: 0.80
+  trade_velocity_threshold: 500
+  price_momentum_threshold: 0.15
+  volume_spike_threshold: 4.0
   high_volume_buys_1h: 600
   high_volume_sells_1h: 350
   high_volume_alt_buys_1h: 250
   high_volume_alt_max_sells_1h: 100
-  
-  # EXTREME BUY PRESSURE 5min - ЖЁСТКИЕ
   extreme_buy_pressure_min_buys_5m: 1000
   extreme_buy_pressure_max_sells_5m: 100
 
-# ============================================
-# TOKEN SCORING - ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА
-# ============================================
+# Scoring
 scoring:
   enabled: true
   min_score: 75
@@ -96,28 +68,20 @@ scoring:
   momentum_weight: 20
   liquidity_weight: 15
 
-# ============================================
-# WHALE COPY - ОТКЛЮЧЕНО (экономия API квоты)
-# Whale copy работает только на bot-whale-copy
-# ============================================
+# Whale copy - OFF
 whale_copy:
   enabled: false
   wallets_file: "smart_money_wallets.json"
   min_buy_amount: 1.0
   helius_api_key: ${HELIUS_API_KEY}
 
-# ============================================
-# DEV CHECK - ОТКЛЮЧЕНО (экономия API квоты)
-# Dev check работает только на bot-whale-copy
-# ============================================
+# Dev check - оптимизирован!
 dev_check:
-  enabled: false
+  enabled: true
   max_tokens_created: 10
   min_account_age_days: 3
 
-# ============================================
-# TRENDING SCANNER - ЖЁСТКИЕ ФИЛЬТРЫ
-# ============================================
+# Trending scanner
 trending_scanner:
   enabled: true
   min_volume_1h: 100000

@@ -237,6 +237,15 @@ async def start_bot(config_path: str):
             trending_min_price_change_1h=cfg.get("trending_scanner", {}).get("min_price_change_1h", 20),
             trending_min_buy_pressure=cfg.get("trending_scanner", {}).get("min_buy_pressure", 0.65),
             trending_scan_interval=cfg.get("trending_scanner", {}).get("scan_interval", 30),
+            # Volume pattern analyzer configuration
+            enable_volume_pattern=cfg.get("volume_pattern", {}).get("enabled", False),
+            volume_pattern_min_volume_1h=cfg.get("volume_pattern", {}).get("min_volume_1h", 10000),
+            volume_pattern_spike_threshold=cfg.get("volume_pattern", {}).get("volume_spike_threshold", 3.0),
+            volume_pattern_min_trades_5m=cfg.get("volume_pattern", {}).get("min_trades_5m", 200),
+            volume_pattern_scan_interval=cfg.get("volume_pattern", {}).get("scan_interval", 100),
+            volume_pattern_max_tokens=cfg.get("volume_pattern", {}).get("max_tokens_per_scan", 50),
+            volume_pattern_min_health=cfg.get("volume_pattern", {}).get("min_health_score", 70),
+            volume_pattern_min_opportunity=cfg.get("volume_pattern", {}).get("min_opportunity_score", 70),
         )
 
         await trader.start()

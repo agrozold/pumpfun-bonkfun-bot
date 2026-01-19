@@ -1,0 +1,336 @@
+"""Dev Reputation Checker - проверка истории создателя токена.
+
+Использует Helius API для анализа истории кошелька дева:
+- Сколько токенов создал
+- Как давно активен
+- Паттерны скамера (много токенов, все мёртвые)
+
+NOTE: This check is OPTIONAL. If Helius API is unavailable or rate limited,
+the check is skipped and trading continues (better to trade than miss gems).
+
+OPTIMIZED: Uses global RPC Manager for rate limiting and provider rotation.
+"""
+
+import asyncio
+import os
+import time
+from datetime import datetime, timezone
+
+import aiohttp
+
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# Import RPC Manager for optimized requests
+try:
+    from core.rpc_manager import get_rpc_manager, RPCManager
+
+    RPC_MANAGER_AVAILABLE = True
+except ImportError:
+    RPC_MANAGER_AVAILABLE = False
+    logger.warning("[DEV] RPC Manager not available, using legacy mode")
+
+# Pump.fun program ID
+PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+
+# Rate limiting - CRITICAL: 60 seconds between requests to save Helius quota!
+# With 6 bots, each checking devs = massive API usage
+DEV_CHECK_RATE_LIMIT_SECONDS = 60.0  # 1 request per minute per bot
+
+
+class DevReputationChecker:
+    """Проверяет репутацию создателя токена.
+
+    OPTIMIZED: Uses global RPC Manager for rate limiting when available.
+    """
+
+    def __init__(
+        self,
+        helius_api_key: str | None = None,
+        max_tokens_created: int = 50,
+        min_account_age_days: int = 1,
+        enabled: bool = False,  # DISABLED by default - saves Helius quota!
+    ):
+        """Инициализация чекера.
+
+        Args:
+            helius_api_key: API ключ Helius
+            max_tokens_created: Максимум токенов от одного дева (больше = скамер)
+            min_account_age_days: Минимальный возраст аккаунта в днях
+            enabled: Включен ли чекер
+        """
+        self.api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
+        self.max_tokens_created = max_tokens_created
+        self.min_account_age_days = min_account_age_days
+        self.enabled = enabled
+        self._cache: dict[str, dict] = {}  # Кэш результатов
+        self._last_api_call = 0.0  # Rate limiting
+        self._api_calls = 0  # Counter for stats
+        self._rpc_manager: RPCManager | None = None  # Lazy init
+
+        if not self.api_key:
+            logger.warning("HELIUS_API_KEY not set, dev reputation check disabled")
+            self.enabled = False
+        elif RPC_MANAGER_AVAILABLE:
+            logger.info("[DEV] Using RPC Manager for optimized requests")
+
+    async def check_dev(self, creator_address: str) -> dict:
+        """Проверить репутацию создателя.
+
+        Args:
+            creator_address: Адрес кошелька создателя
+
+        Returns:
+            dict с полями:
+                - is_safe: bool - безопасно ли покупать
+                - reason: str - причина решения
+                - tokens_created: int - сколько токенов создал
+                - account_age_days: int - возраст аккаунта
+                - risk_score: int - оценка риска 0-100
+        """
+        if not self.enabled:
+            return {"is_safe": True, "reason": "Dev check disabled", "risk_score": 0}
+
+        # Проверяем кэш
+        if creator_address in self._cache:
+            logger.debug(f"Using cached result for {creator_address[:8]}...")
+            return self._cache[creator_address]
+
+        try:
+            result = await self._analyze_dev(creator_address)
+            self._cache[creator_address] = result
+            return result
+        except Exception as e:
+            logger.warning(
+                f"Helius API failed for {creator_address[:8]}: {e} - skipping dev check"
+            )
+            # При ошибке API пропускаем проверку но логируем
+            # Лучше купить с риском чем пропустить все токены
+            return {
+                "is_safe": True,
+                "reason": "API unavailable, skipping check",
+                "risk_score": 50,
+                "tokens_created": -1,  # Unknown
+            }
+
+    async def _analyze_dev(self, creator_address: str) -> dict:
+        """Анализ истории дева через Helius API.
+
+        NOTE: This is optional - if Helius API is unavailable or rate limited,
+        we skip the check and allow the trade (better to trade than miss gems).
+        """
+        if not self.api_key:
+            return {
+                "is_safe": True,
+                "reason": "Helius API key not configured - skipping dev check",
+                "tokens_created": -1,
+                "risk_score": 50,
+            }
+
+        # Rate limiting - wait if needed (30s between requests)
+        now = time.time()
+        time_since_last = now - self._last_api_call
+        if time_since_last < DEV_CHECK_RATE_LIMIT_SECONDS:
+            wait_time = DEV_CHECK_RATE_LIMIT_SECONDS - time_since_last
+            logger.debug(f"Dev check rate limit - waiting {wait_time:.1f}s")
+            await asyncio.sleep(wait_time)
+
+        self._last_api_call = time.time()
+        self._api_calls += 1
+
+        url = f"https://api.helius.xyz/v0/addresses/{creator_address}/transactions"
+        # Уменьшаем лимит до 10 для экономии запросов (было 20)
+        params = {"api-key": self.api_key, "limit": 10}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, params=params, timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 429:
+                        # Rate limited - skip check, don't block trading
+                        logger.debug(
+                            f"Helius API rate limited for {creator_address[:8]} - skipping"
+                        )
+                        return {
+                            "is_safe": True,
+                            "reason": "Helius rate limited - skipping check",
+                            "tokens_created": -1,
+                            "risk_score": 50,
+                        }
+                    if resp.status != 200:
+                        raise ValueError(f"Helius API error: {resp.status}")
+                    transactions = await resp.json()
+        except TimeoutError:
+            logger.debug(f"Helius API timeout for {creator_address[:8]} - skipping")
+            return {
+                "is_safe": True,
+                "reason": "Helius API timeout - skipping check",
+                "tokens_created": -1,
+                "risk_score": 50,
+            }
+        except Exception as e:
+            logger.debug(f"Helius API error for {creator_address[:8]}: {e} - skipping")
+            return {
+                "is_safe": True,
+                "reason": "API error - skipping check",
+                "tokens_created": -1,
+                "risk_score": 50,
+            }
+
+        if not transactions:
+            return {
+                "is_safe": True,
+                "reason": "New wallet, no history",
+                "tokens_created": 0,
+                "risk_score": 30,
+            }
+
+        # Считаем транзакции к pump.fun программе
+        # Каждая транзакция с pump.fun = потенциальное создание токена
+        pump_txs = 0
+        oldest_tx_time = None
+
+        for tx in transactions:
+            tx_time = tx.get("timestamp")
+            if tx_time:
+                if oldest_tx_time is None or tx_time < oldest_tx_time:
+                    oldest_tx_time = tx_time
+
+            # Проверяем accountData на наличие pump.fun программы
+            account_data = tx.get("accountData", [])
+            for acc in account_data:
+                if acc.get("account") == PUMP_PROGRAM:
+                    pump_txs += 1
+                    break
+
+            # Также проверяем instructions
+            instructions = tx.get("instructions", [])
+            for ix in instructions:
+                program_id = ix.get("programId", "")
+                if program_id == PUMP_PROGRAM:
+                    ix_type = ix.get("type", "").lower()
+                    # create, create_v2, или просто наличие pump программы
+                    if "create" in ix_type or not ix_type:
+                        pump_txs += 1
+                        break
+
+        # Примерная оценка токенов
+        # Если почти все транзакции связаны с pump.fun - это серийный скамер
+        # API возвращает только 20 транзакций, так что если много из них pump.fun - это красный флаг
+        total_txs = len(transactions)
+        pump_ratio = pump_txs / total_txs if total_txs > 0 else 0
+
+        # Агрессивная детекция скамеров (адаптировано для 20 транзакций)
+        if pump_txs >= 15:
+            # 15+ pump транзакций из 20 = серийный скамер
+            if pump_ratio > 0.7:
+                tokens_created = pump_txs * 50  # Очень высокая концентрация
+            elif pump_ratio > 0.5:
+                tokens_created = pump_txs * 30
+            else:
+                tokens_created = pump_txs * 15
+            logger.warning(
+                f"🚨 SCAMMER DETECTED: {creator_address[:8]}... has {pump_txs}/{total_txs} pump.fun txs "
+                f"({pump_ratio * 100:.0f}%) - estimated {tokens_created}+ tokens created"
+            )
+        elif pump_txs >= 8:
+            # 8+ pump транзакций из 20 = подозрительно
+            tokens_created = pump_txs * 10
+            logger.warning(
+                f"[WARN] Dev {creator_address[:8]}... has {pump_txs} pump.fun txs - suspicious"
+            )
+        else:
+            # Нормальный дев
+            tokens_created = max(pump_txs // 2, pump_txs - 2) if pump_txs > 0 else 0
+
+        if tokens_created == 0 and oldest_tx_time is None:
+            return {
+                "is_safe": True,
+                "reason": "New wallet, no history",
+                "tokens_created": 0,
+                "risk_score": 30,
+            }
+
+        # Вычисляем возраст аккаунта
+        account_age_days = 0
+        if oldest_tx_time:
+            oldest_dt = datetime.fromtimestamp(oldest_tx_time, tz=timezone.utc)
+            now = datetime.now(tz=timezone.utc)
+            account_age_days = (now - oldest_dt).days
+
+        # Вычисляем risk score
+        risk_score = self._calculate_risk_score(tokens_created, account_age_days)
+
+        # Определяем безопасность
+        # ВАЖНО: Новые аккаунты (0 дней, 0 токенов) = ХОРОШО, возможно гем!
+        # Много токенов создано = ПЛОХО, серийный скамер
+        is_safe = True
+        reason = "Dev looks OK"
+
+        if tokens_created > self.max_tokens_created:
+            is_safe = False
+            reason = f"Serial token creator: {tokens_created} tokens"
+        elif risk_score > 80:
+            # Только очень высокий риск (много токенов за короткое время)
+            is_safe = False
+            reason = f"High risk score: {risk_score}"
+        elif tokens_created == 0 and account_age_days < 1:
+            # Новый аккаунт с первым токеном = потенциальный гем!
+            is_safe = True
+            reason = "Fresh dev, first token - potential gem!"
+
+        result = {
+            "is_safe": is_safe,
+            "reason": reason,
+            "tokens_created": tokens_created,
+            "account_age_days": account_age_days,
+            "risk_score": risk_score,
+        }
+
+        logger.info(
+            f"Dev {creator_address[:8]}... - tokens: {tokens_created}, "
+            f"age: {account_age_days}d, risk: {risk_score}, safe: {is_safe}"
+        )
+
+        return result
+
+    def _calculate_risk_score(self, tokens_created: int, account_age_days: int) -> int:
+        """Вычислить оценку риска 0-100.
+
+        Новый аккаунт с первым токеном = низкий риск (потенциальный гем).
+        Много токенов = высокий риск (серийный скамер).
+        """
+        score = 0
+
+        # Много токенов = высокий риск (серийный скамер)
+        if tokens_created > 100:
+            score += 60
+        elif tokens_created > 50:
+            score += 50
+        elif tokens_created > 20:
+            score += 40
+        elif tokens_created > 10:
+            score += 30
+        elif tokens_created > 5:
+            score += 20
+        elif tokens_created > 2:
+            score += 10
+
+        # Новый аккаунт с первым токеном = НЕ штрафуем (потенциальный гем)
+        # Штрафуем только если много токенов за короткое время
+        if account_age_days > 0 and tokens_created > 0:
+            tokens_per_day = tokens_created / account_age_days
+            if tokens_per_day > 10:
+                score += 40  # Очень много токенов в день = скамер
+            elif tokens_per_day > 5:
+                score += 30
+            elif tokens_per_day > 2:
+                score += 20
+
+        return min(score, 100)
+
+    def clear_cache(self):
+        """Очистить кэш."""
+        self._cache.clear()

@@ -1342,52 +1342,6 @@ class UniversalTrader:
 
         return True
 
-    async def _on_volume_opportunity(self, analysis: TokenVolumeAnalysis):
-        """Callback when volume pattern analyzer finds an opportunity."""
-        mint_str = analysis.mint
-        
-        # Anti-duplicate check
-        if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
-            logger.info(f"[VOLUME] {analysis.symbol} already bought/buying, skipping")
-            return
-        
-        async with self._buy_lock:
-            if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
-                return
-            self._buying_tokens.add(mint_str)
-        
-        try:
-            logger.warning(
-                f"[VOLUME] OPPORTUNITY: {analysis.symbol} | "
-                f"Health:{analysis.health_score} Opp:{analysis.opportunity_score} | "
-                f"vol=${analysis.volume_5m:,.0f} ({analysis.volume_spike_ratio:.1f}x)"
-            )
-            
-            from interfaces.base import TokenInfo
-            from solders.pubkey import Pubkey
-            
-            token_info = TokenInfo(
-                mint=Pubkey.from_string(mint_str),
-                name=analysis.symbol,
-                symbol=analysis.symbol,
-                uri="",
-                bonding_curve=None,
-                associated_bonding_curve=None,
-                user=None,
-                creator=None,
-                platform=self.platform,
-                pool_address=None,
-                pool_state=None,
-                creator_vault=None,
-            )
-            
-            await self._handle_token(token_info, skip_checks=False)
-            
-        except Exception as e:
-            logger.error(f"[VOLUME] Error processing {analysis.symbol}: {e}")
-        finally:
-            self._buying_tokens.discard(mint_str)
-
     async def _on_trending_token(self, token: TrendingToken):
         """Callback when trending scanner finds a hot token.
         
