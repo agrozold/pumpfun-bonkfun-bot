@@ -10,3 +10,7 @@
 | 006 | 2026-01-19 | Purchase history + sniper enabled | Done |
 | 007 | 2026-01-19 | PumpPortal fallback for selling | Done |
 | 008 | 2026-01-19 | Volume history fix + whale_copy cleanup | Done |
+| 009 | 2026-01-19 | Whale multi-platform + stablecoin filter | Done |
+| 010 | 2026-01-19 | Global purchase history | Done |
+| 011 | 2026-01-19 | PumpPortal fallback for selling | Done |
+| 012 | 2026-01-19 | JITO integration | Done |

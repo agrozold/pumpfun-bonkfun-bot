@@ -2776,8 +2776,20 @@ class UniversalTrader:
             True if token appears to be migrated
         """
         # Quick check based on error message
-        migration_keywords = ["complete", "not found", "invalid", "migrated", "status"]
-        if any(kw in error_msg.lower() for kw in migration_keywords):
+        # NOTE: "invalid" removed - too broad, catches PumpSwap price errors
+        # Only check for definitive migration indicators
+        error_lower = error_msg.lower()
+        
+        # Definitive migration indicators
+        if "bonding curve complete" in error_lower:
+            return True
+        if "migrated" in error_lower:
+            return True
+        if "account not found" in error_lower and "bonding" in error_lower:
+            return True
+        
+        # "status" only matters if it says status changed/completed
+        if "status" in error_lower and ("complete" in error_lower or "migrat" in error_lower):
             return True
 
         # Platform-specific migration check

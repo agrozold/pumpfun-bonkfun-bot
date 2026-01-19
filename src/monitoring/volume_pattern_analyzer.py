@@ -563,8 +563,11 @@ class VolumePatternAnalyzer:
             f"    Recommendation: {a.recommendation}"
         )
         
-        if self.on_opportunity:
+        # Only call callback for actual buy recommendations
+        if self.on_opportunity and a.recommendation in ("BUY", "STRONG_BUY"):
             await self.on_opportunity(a)
+        elif a.recommendation not in ("BUY", "STRONG_BUY"):
+            logger.info(f"[VOLUME] {a.symbol} recommendation={a.recommendation}, not triggering buy")
 
     def _log_stats(self) -> None:
         """Log analyzer statistics."""

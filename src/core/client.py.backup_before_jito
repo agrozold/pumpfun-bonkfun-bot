@@ -20,7 +20,6 @@ from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 
 from utils.logger import get_logger
-from trading.jito_sender import get_jito_sender
 
 logger = get_logger(__name__)
 
@@ -272,15 +271,7 @@ class SolanaClient:
                     # Fallback to direct fetch if cache not ready
                     recent_blockhash = await self.get_latest_blockhash()
 
-                # Add JITO tip instruction if JITO is enabled
-                jito = get_jito_sender()
-                tx_instructions = list(instructions)  # copy
-                if jito.enabled:
-                    tip_ix = jito.create_tip_instruction(signer_keypair.pubkey())
-                    tx_instructions.append(tip_ix)
-                    logger.debug(f"[JITO] Added tip: {jito.tip_lamports} lamports")
-                
-                message = Message(tx_instructions, signer_keypair.pubkey())
+                message = Message(instructions, signer_keypair.pubkey())
                 transaction = Transaction([signer_keypair], message, recent_blockhash)
 
                 tx_opts = TxOpts(
@@ -288,19 +279,6 @@ class SolanaClient:
                 )
 
                 logger.info(f"Sending transaction attempt {attempt + 1}/{max_retries}...")
-                
-                # Try JITO first for faster landing
-                if jito.enabled:
-                    try:
-                        jito_sig = await jito.send_transaction(transaction)
-                        if jito_sig:
-                            logger.info(f"[JITO] Transaction sent: {jito_sig}")
-                            return jito_sig
-                        logger.warning("[JITO] Failed, falling back to regular RPC")
-                    except Exception as jito_err:
-                        logger.warning(f"[JITO] Error: {jito_err}, falling back to regular RPC")
-                
-                # Fallback to regular RPC
                 response = await client.send_transaction(transaction, tx_opts)
                 logger.info(f"Transaction sent successfully: {response.value}")
                 return response.value
