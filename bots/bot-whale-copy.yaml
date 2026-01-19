@@ -94,3 +94,21 @@ dev_check:
 # ============================================
 trending_scanner:
   enabled: false
+
+# ============================================
+# MULTI-PLATFORM WHALE TRACKING
+# ============================================
+# Слушать китов на ВСЕХ платформах (pump, bonk, bags, pumpswap, raydium)
+# Копирует сделки китов из smart_money_wallets.json с ЛЮБЫМИ токенами
+# Игнорирует platform: pump_fun выше - слушает ВСЁ
+whale_all_platforms: true
+
+# Стейблкоины которые НЕ покупаем (игнорируем сделки китов с ними)
+stablecoin_filter:
+  - "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
+  - "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"  # USDT
+  - "USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX"   # USDH
+  - "USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA"   # USDS
+  - "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"  # PYUSD
+  - "F3hW1kkYVXhMz9FRV8t3mEfwmLQygF7PtPSsofPCdmXR"  # USD1
+  - "So11111111111111111111111111111111111111112"    # WSOL (Wrapped SOL)

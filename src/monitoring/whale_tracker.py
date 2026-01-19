@@ -116,6 +116,7 @@ class WhaleTracker:
         wss_endpoint: str | None = None,
         time_window_minutes: float = 5.0,  # Копируем только покупки за последние N минут
         platform: str | None = None,  # Если указано - слушаем только эту платформу
+        stablecoin_filter: list | None = None,  # Список mint адресов стейблкоинов для игнорирования
     ):
         self.wallets_file = wallets_file
         self.min_buy_amount = min_buy_amount
@@ -125,6 +126,11 @@ class WhaleTracker:
         self.time_window_minutes = time_window_minutes
         self.time_window_seconds = time_window_minutes * 60
         self.target_platform = platform  # None = все платформы, иначе только указанная
+        
+        # Стейблкоины для игнорирования (не копируем сделки с ними)
+        self.stablecoin_filter = set(stablecoin_filter or [])
+        if self.stablecoin_filter:
+            logger.info(f"[WHALE] Stablecoin filter: {len(self.stablecoin_filter)} tokens will be ignored")
 
         self.whale_wallets: dict[str, dict] = {}  # wallet -> info
         self.on_whale_buy: Callable | None = None
@@ -974,6 +980,14 @@ class WhaleTracker:
             block_time: Unix timestamp транзакции
             platform: Платформа ("pump_fun" или "lets_bonk")
         """
+        # STABLECOIN FILTER: Skip stablecoins (USDC, USDT, etc.)
+        if token_mint in self.stablecoin_filter:
+            logger.info(
+                f"[WHALE] SKIP STABLECOIN: {whale_label} bought {token_mint[:8]}... "
+                f"but token is in stablecoin filter"
+            )
+            return
+
         # ANTI-DUPLICATE: Check if token already emitted
         if token_mint in self._emitted_tokens:
             logger.info(

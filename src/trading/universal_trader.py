@@ -124,6 +124,8 @@ class UniversalTrader:
         enable_whale_copy: bool = False,
         whale_wallets_file: str = "smart_money_wallets.json",
         whale_min_buy_amount: float = 0.5,
+        whale_all_platforms: bool = False,
+        stablecoin_filter: list = None,
         helius_api_key: str | None = None,
         birdeye_api_key: str | None = None,
         jupiter_api_key: str | None = None,
@@ -276,6 +278,11 @@ class UniversalTrader:
                 logger.warning("[WHALE] Creating WhaleTracker instance...")
                 # Каждый бот слушает whale только для СВОЕЙ платформы
                 # Это избегает конфликтов WebSocket подписок между процессами
+                # Определяем platform для whale tracker
+                # Если whale_all_platforms=True -> слушаем ВСЕ платформы (platform=None)
+                # Иначе слушаем только свою платформу
+                whale_platform = None if whale_all_platforms else self.platform.value
+                
                 self.whale_tracker = WhaleTracker(
                     wallets_file=whale_wallets_file,
                     min_buy_amount=whale_min_buy_amount,
@@ -283,7 +290,8 @@ class UniversalTrader:
                     rpc_endpoint=rpc_endpoint,
                     wss_endpoint=wss_endpoint,
                     time_window_minutes=5.0,  # Only copy buys from last 5 minutes
-                    platform=self.platform.value,  # Слушаем только свою платформу!
+                    platform=whale_platform,
+                    stablecoin_filter=stablecoin_filter or [],
                 )
                 self.whale_tracker.set_callback(self._on_whale_buy)
 
