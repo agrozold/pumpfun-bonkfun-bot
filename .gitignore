@@ -168,4 +168,4 @@ cython_debug/
 #.idea/
 trades/trades.log
 # Mac OS X
-.DS_Store
+.DS_Store.env.backup

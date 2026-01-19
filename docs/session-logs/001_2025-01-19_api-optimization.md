@@ -92,7 +92,7 @@ CREATOR_RISK_THRESHOLD=50       # Порог риска (0-100)
 Все файлы в bots/*.yaml теперь используют переменные окружения вместо хардкода:
 
 Copy# Было:
-rpc_endpoint: https://mainnet.helius-rpc.com/?api-key=9950b06d-...
+rpc_endpoint: https://mainnet.helius-rpc.com/?api-key=YOUR_KEY...
 wss_endpoint: wss://api.mainnet-beta.solana.com
 
 # Стало:

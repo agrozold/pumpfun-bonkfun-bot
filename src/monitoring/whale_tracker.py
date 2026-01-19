@@ -723,7 +723,7 @@ class WhaleTracker:
         # HARDCODED правильный ключ!
         helius_parse_url = (
             "https://api-mainnet.helius-rpc.com/v0/transactions/"
-            "?api-key=YOUR_HELIUS_API_KEY"
+            "?api-key={helius_key}"
         )
 
         try:

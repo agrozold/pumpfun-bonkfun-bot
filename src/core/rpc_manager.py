@@ -534,3 +534,4 @@ async def get_rpc_manager() -> RPCManager:
         
         # Fallback to regular getTransaction
         return await self.get_transaction(signature, use_cache)
+
