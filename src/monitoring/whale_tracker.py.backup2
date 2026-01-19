@@ -396,7 +396,7 @@ class WhaleTracker:
                     wss_url,
                     heartbeat=30,
                     timeout=aiohttp.ClientTimeout(total=60, sock_connect=30),
-                    receive_timeout=180,  # 3 min timeout for receiving messages
+                    receive_timeout=120,  # 2 min timeout for receiving messages
                 ) as ws:
                     self._ws = ws
                     consecutive_errors = 0  # Reset on successful connect
@@ -428,7 +428,7 @@ class WhaleTracker:
                             # Wait for message with timeout
                             msg = await asyncio.wait_for(
                                 ws.receive(),
-                                timeout=180,  # 3 min timeout - if no message, reconnect
+                                timeout=120,  # 2 min timeout - if no message, reconnect
                             )
                             last_message_time = time.time()
 
@@ -439,7 +439,7 @@ class WhaleTracker:
                                     # INCREASED to 60s to allow RPC Manager rate limit waits
                                     await asyncio.wait_for(
                                         self._handle_log(data),
-                                        timeout=90,  # 90s max - allows rate limit waits
+                                        timeout=60,  # 60s max - allows rate limit waits
                                     )
                                 except TimeoutError:
                                     logger.warning(

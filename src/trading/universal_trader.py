@@ -1376,7 +1376,7 @@ class UniversalTrader:
                 user=None,
                 creator=None,
                 platform=self.platform,
-                pool_address=None,
+                # pool_address removed
                 pool_state=None,
                 creator_vault=None,
             )
