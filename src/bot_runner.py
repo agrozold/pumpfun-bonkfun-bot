@@ -162,6 +162,7 @@ async def start_bot(config_path: str):
             bro_address=cfg["filters"].get("bro_address"),
             marry_mode=cfg["filters"].get("marry_mode", False),
             yolo_mode=cfg["filters"].get("yolo_mode", False),
+            sniper_enabled=cfg["filters"].get("sniper_enabled", True),  # Default True for snipers
             # Compute unit configuration
             compute_units=cfg.get("compute_units", {}),
             # Pattern detection configuration

@@ -16,6 +16,7 @@ filters:
   listener_type: fallback
   max_token_age: 315360000
   yolo_mode: true
+  sniper_enabled: false  # НЕ снайпит новые токены, только trending/volume
   match_string: null
   bro_address: null
 

@@ -14,7 +14,8 @@ filters:
   listener_type: fallback
   match_string: null
   max_token_age: 315360000  # 10 лет в секундах
-  yolo_mode: true  # ВАЖНО: Должен быть true для whale copy - иначе whale tracker не запустится!
+  yolo_mode: true
+  sniper_enabled: false  # НЕ снайпит новые токены, только копирует китов
 
 # RPC - HELIUS для HTTP, публичный Solana для WSS
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}

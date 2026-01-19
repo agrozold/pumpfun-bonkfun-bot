@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "mint": "6WjjGkp4sr81BfmDsJtWcHp7RQ9t4ftwfTAPvSoRpump",
+    "symbol": "DJIA",
+    "entry_price": 2.833280783149152e-08,
+    "quantity": 235839.385907,
+    "entry_time": "2026-01-19T13:04:48.655531",
+    "take_profit_price": 4.2499211747237286e-08,
+    "stop_loss_price": 2.266624626519322e-08,
+    "max_hold_time": 3600,
+    "is_active": true,
+    "platform": "pump_fun",
+    "bonding_curve": "4kMk3JQZS3iJBmfNwNJoPY7p2rVzhxpdyZNMWTnTgXtM"
+  },
+  {
+    "mint": "Hr7R8NzwVu5JyYMys4rJRMiknDJHdBotKJSMN9kipump",
+    "symbol": "24/7",
+    "entry_price": 2.8391377478354095e-08,
+    "quantity": 264230.29336,
+    "entry_time": "2026-01-19T13:07:14.424998",
+    "take_profit_price": 4.258706621753114e-08,
+    "stop_loss_price": 2.2713101982683277e-08,
+    "max_hold_time": 3600,
+    "is_active": true,
+    "platform": "pump_fun",
+    "bonding_curve": "7UPhvXKLY41DfydKwn943QPmYCx1zT7SKwjuq54VumoF"
+  }
+]

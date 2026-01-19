@@ -32,7 +32,13 @@ from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolum
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.position import Position, save_positions, load_positions, remove_position, ExitReason, is_token_in_positions
+from trading.position import Position, save_positions, load_positions, remove_position, ExitReason
+from trading.purchase_history import (
+    was_token_purchased,
+    add_to_purchase_history,
+    load_purchase_history,
+)
+from trading.position import is_token_in_positions
 from utils.logger import get_logger
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -95,6 +101,7 @@ class UniversalTrader:
         bro_address: str | None = None,
         marry_mode: bool = False,
         yolo_mode: bool = False,
+        sniper_enabled: bool = True,  # If False, don't snipe new tokens (for whale-copy, volume-sniper)
         # Compute unit configuration
         compute_units: dict | None = None,
         # Pattern detection settings
@@ -449,6 +456,8 @@ class UniversalTrader:
         self.bro_address = bro_address
         self.marry_mode = marry_mode
         self.yolo_mode = yolo_mode
+        self.sniper_enabled = sniper_enabled
+        logger.warning(f"[CONFIG] sniper_enabled = {sniper_enabled}")
 
         # State tracking
         self.traded_mints: set[Pubkey] = set()
@@ -469,7 +478,11 @@ class UniversalTrader:
         # Unified set of tokens being bought or already bought
         # This is checked INSIDE the lock to prevent duplicates
         self._buying_tokens: set[str] = set()  # Tokens currently being bought (in progress)
-        self._bought_tokens: set[str] = set()  # Tokens successfully bought (completed)
+        
+        # GLOBAL PURCHASE HISTORY - tokens NEVER bought again!
+        # Load from persistent file (shared across all bots)
+        self._bought_tokens: set[str] = load_purchase_history()
+        logger.warning(f"[HISTORY] Loaded {len(self._bought_tokens)} tokens from global purchase history")
 
         # CRITICAL BALANCE PROTECTION
         # When balance <= 0.02 SOL, bot stops completely
@@ -734,8 +747,16 @@ class UniversalTrader:
                     await asyncio.sleep(retry_delay)
 
             if success:
-                # Mark as BOUGHT (completed)
+                # Mark as BOUGHT (completed) - NEVER buy again!
                 self._bought_tokens.add(mint_str)
+                add_to_purchase_history(
+                    mint=mint_str,
+                    symbol=whale_buy.token_symbol,
+                    bot_name="whale_copy",
+                    platform=dex_used,
+                    price=price,
+                    amount=token_amount,
+                )
 
                 # Clean readable success log
                 logger.warning("=" * 70)
@@ -1604,8 +1625,16 @@ class UniversalTrader:
                     )
                     self.active_positions.append(position)
                     save_positions(self.active_positions)
-                    # Mark as BOUGHT (completed)
+                    # Mark as BOUGHT (completed) - NEVER buy again!
                     self._bought_tokens.add(mint_str)
+                    add_to_purchase_history(
+                        mint=mint_str,
+                        symbol=token.symbol,
+                        bot_name="trending_scanner",
+                        platform="pumpswap",
+                        price=price,
+                        amount=token_amount,
+                    )
                 else:
                     logger.error(f"[FAIL] TRENDING PumpSwap BUY failed: {token.symbol} - {error or 'Unknown error'}")
                 return
@@ -1659,8 +1688,16 @@ class UniversalTrader:
             # Покупаем! skip_checks=False - пусть проходит dev check и другие проверки
             # Scoring уже проверен выше, но _handle_token пропустит повторную проверку
             await self._handle_token(token_info, skip_checks=False)
-            # Mark as BOUGHT after successful _handle_token
+            # Mark as BOUGHT after successful _handle_token - NEVER buy again!
             self._bought_tokens.add(mint_str)
+            add_to_purchase_history(
+                mint=mint_str,
+                symbol=token.symbol,
+                bot_name="trending_scanner",
+                platform=token.dex_id or "unknown",
+                price=0,
+                amount=0,
+            )
 
         except Exception as e:
             logger.exception(f"Failed to buy trending token: {e}")
@@ -1771,11 +1808,20 @@ class UniversalTrader:
 
 
                 try:
-                    await self.token_listener.listen_for_tokens(
-                        self._queue_token,
-                        self.match_string,
-                        self.bro_address,
-                    )
+                    if self.sniper_enabled:
+                        # Normal sniper mode - listen for new tokens
+                        await self.token_listener.listen_for_tokens(
+                            self._queue_token,
+                            self.match_string,
+                            self.bro_address,
+                        )
+                    else:
+                        # Non-sniper mode (whale-copy, volume-sniper)
+                        # Don't listen for new tokens, just keep running for whale/trending/volume
+                        logger.warning("[MODE] Sniper DISABLED - running in whale/trending/volume only mode")
+                        # Keep running forever until interrupted
+                        while True:
+                            await asyncio.sleep(60)
                 except Exception:
                     logger.exception("Token listening stopped due to error")
                 finally:
@@ -1975,8 +2021,16 @@ class UniversalTrader:
 
                 try:
                     await self._handle_token(token_info)
-                    # Mark as BOUGHT after successful buy
+                    # Mark as BOUGHT after successful buy - NEVER buy again!
                     self._bought_tokens.add(token_key)
+                    add_to_purchase_history(
+                        mint=token_key,
+                        symbol=token_info.symbol,
+                        bot_name="sniper",
+                        platform=self.platform.value,
+                        price=0,
+                        amount=0,
+                    )
                 finally:
                     # Remove from "buying" set (either succeeded or failed)
                     self._buying_tokens.discard(token_key)
