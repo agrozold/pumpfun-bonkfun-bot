@@ -14,3 +14,4 @@
 | 010 | 2026-01-19 | Global purchase history | Done |
 | 011 | 2026-01-19 | PumpPortal fallback for selling | Done |
 | 012 | 2026-01-19 | JITO integration | Done |
+| 013 | 2026-01-19 | JITO tip + volume analyzer fixes | Done |
