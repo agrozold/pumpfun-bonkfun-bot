@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "mint": "AakmsJ4vebK1Uk3eWPRPx89WzEDq2knvN2sgGcXEpump",
+    "symbol": "OILTOWN",
+    "entry_price": 4.7552577828615045e-07,
+    "quantity": 21029.354152031778,
+    "entry_time": "2026-01-19T09:58:33.821250",
+    "take_profit_price": 7.132886674292257e-07,
+    "stop_loss_price": 3.8042062262892037e-07,
+    "max_hold_time": 3600,
+    "is_active": true,
+    "platform": "pump_fun",
+    "bonding_curve": null
+  },
+  {
+    "mint": "yvt1eifmkTRLtypcmMskStRxMagv87XfrH4MRCupump",
+    "symbol": "Clownping",
+    "entry_price": 5.0677052282379835e-08,
+    "quantity": 188439.867157,
+    "entry_time": "2026-01-19T10:41:33.742892",
+    "take_profit_price": 7.601557842356975e-08,
+    "stop_loss_price": 4.054164182590387e-08,
+    "max_hold_time": 3600,
+    "is_active": true,
+    "platform": "pump_fun",
+    "bonding_curve": "GatFuHqjBkUyNi1P5dDAsrScZwVFKSjUJr2msyuibB5v"
+  }
+]

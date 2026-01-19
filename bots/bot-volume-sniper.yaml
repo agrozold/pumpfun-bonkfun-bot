@@ -67,7 +67,7 @@ scoring:
 
 # Dev check - включено
 dev_check:
-  enabled: true
+  enabled: false
   max_tokens_created: 15
   min_account_age_days: 1
 

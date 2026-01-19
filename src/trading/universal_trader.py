@@ -32,7 +32,7 @@ from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolum
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.position import Position, save_positions, load_positions, remove_position, ExitReason
+from trading.position import Position, save_positions, load_positions, remove_position, ExitReason, is_token_in_positions
 from utils.logger import get_logger
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -896,6 +896,13 @@ class UniversalTrader:
         from trading.fallback_seller import FallbackSeller
 
         mint = Pubkey.from_string(mint_str)
+
+        # ============================================
+        # CROSS-BOT DUPLICATE CHECK (reads positions.json)
+        # ============================================
+        if is_token_in_positions(mint_str):
+            logger.info(f"[SKIP] {symbol} already in positions.json (another bot bought it)")
+            return False, None, "skip", 0.0, 0.0
 
         # ============================================
         # [1/4] TRY PLATFORM-SPECIFIC BONDING CURVE
@@ -2043,7 +2050,7 @@ class UniversalTrader:
             scoring_task = None
             if self.token_scorer and not skip_checks:
                 scoring_task = asyncio.create_task(
-                    self.token_scorer.should_buy(mint_str, token_info.symbol)
+                    self.token_scorer.should_buy(mint_str, token_info.symbol, is_sniper_mode=True)
                 )
 
             # Dev reputation check (runs in parallel) - skip if whale copy

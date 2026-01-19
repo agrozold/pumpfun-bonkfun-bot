@@ -87,12 +87,12 @@ class FallbackSeller:
         import os
         
         # Try alternative RPC first (Alchemy) to avoid rate limits on main RPC
-        alt_endpoint = self.alt_rpc_endpoint or os.getenv("ALCHEMY_RPC_ENDPOINT")
+        alt_endpoint = self.alt_rpc_endpoint or os.getenv("HELIUS_RPC_ENDPOINT")
         if alt_endpoint:
             if self._alt_client is None:
                 from solana.rpc.async_api import AsyncClient
                 self._alt_client = AsyncClient(alt_endpoint)
-                logger.info(f"[FALLBACK] Using Alchemy RPC: {alt_endpoint[:40]}...")
+                logger.info(f"[FALLBACK] Using Helius RPC (for get_program_accounts): {alt_endpoint[:40]}...")
             return self._alt_client
         
         # Fallback to public Solana RPC (official, reliable)

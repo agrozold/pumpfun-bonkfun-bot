@@ -278,3 +278,18 @@ def remove_position(mint: str, filepath: Path = POSITIONS_FILE) -> None:
     positions = load_positions(filepath)
     positions = [p for p in positions if str(p.mint) != mint]
     save_positions(positions, filepath)
+
+
+def is_token_in_positions(mint_str: str, filepath: Path = POSITIONS_FILE) -> bool:
+    """Check if token is already in positions file (for cross-bot sync)."""
+    try:
+        if not filepath.exists():
+            return False
+        with open(filepath) as f:
+            positions = json.load(f)
+        for pos in positions:
+            if pos.get("mint") == mint_str and pos.get("is_active", True):
+                return True
+        return False
+    except Exception:
+        return False

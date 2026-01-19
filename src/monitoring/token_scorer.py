@@ -69,7 +69,7 @@ class TokenScorer:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def score_token(self, mint: str, symbol: str = "UNKNOWN") -> TokenScore:
+    async def score_token(self, mint: str, symbol: str = "UNKNOWN", is_sniper_mode: bool = False) -> TokenScore:
         """Оценить токен по всем метрикам."""
         # Проверить кэш
         cache_key = mint
@@ -85,20 +85,38 @@ class TokenScorer:
         dex_data = await self._fetch_dexscreener(session, mint)
         
         if not dex_data:
-            # Нет данных - SKIP! Не покупаем токены без данных
-            logger.warning(f"[SKIP] {symbol} ({mint[:8]}...) - No Dexscreener data, refusing to buy")
-            return TokenScore(
-                mint=mint,
-                symbol=symbol,
-                total_score=0,  # ZERO score = SKIP
-                volume_score=0,
-                buy_pressure_score=0,
-                momentum_score=0,
-                liquidity_score=0,
-                details={"error": "No Dexscreener data - SKIP"},
-                timestamp=datetime.utcnow(),
-                recommendation="SKIP",
-            )
+            # Нет данных на Dexscreener
+            if is_sniper_mode:
+                # СНАЙПЕР: токен слишком свежий для Dexscreener - ЭТО НОРМАЛЬНО!
+                # Покупаем на основе того что токен новый и есть bonding curve
+                logger.info(f"[SNIPER] {symbol} - No Dexscreener (too fresh), BUYING with sniper defaults")
+                return TokenScore(
+                    mint=mint,
+                    symbol=symbol,
+                    total_score=70,  # Достаточно для покупки
+                    volume_score=50,
+                    buy_pressure_score=70,
+                    momentum_score=80,
+                    liquidity_score=60,
+                    details={"sniper_mode": True, "reason": "Fresh token, no DEX data yet"},
+                    timestamp=datetime.utcnow(),
+                    recommendation="BUY",
+                )
+            else:
+                # Volume Analyzer: требуем данные
+                logger.warning(f"[SKIP] {symbol} ({mint[:8]}...) - No Dexscreener data, refusing to buy")
+                return TokenScore(
+                    mint=mint,
+                    symbol=symbol,
+                    total_score=0,  # ZERO score = SKIP
+                    volume_score=0,
+                    buy_pressure_score=0,
+                    momentum_score=0,
+                    liquidity_score=0,
+                    details={"error": "No Dexscreener data - SKIP"},
+                    timestamp=datetime.utcnow(),
+                    recommendation="SKIP",
+                )
         
         # ============================================
         # МИНИМАЛЬНЫЕ ТРЕБОВАНИЯ - ЖЁСТКИЙ ФИЛЬТР!
@@ -115,9 +133,16 @@ class TokenScorer:
         total_trades_5m = buys_5m + sells_5m
         total_trades_1h = buys_1h + sells_1h
         
-        # МИНИМУМ: 50 трейдов за 5 мин И 200 трейдов за час
-        # УЖЕСТОЧЕНО: Теперь требуем ОБА условия, не ИЛИ!
-        min_trades_5m_ok = total_trades_5m >= 50
+        # МИНИМУМ трейдов - РАЗНЫЙ для снайпера и Volume Analyzer
+        # Снайпер (свежие токены на bonding curve): 15 trades
+        # Volume Analyzer (мигрированные): 50 trades
+        if is_sniper_mode:
+            min_trades_threshold = 15
+            logger.info(f"[SNIPER] {symbol} - using relaxed min_trades=15")
+        else:
+            min_trades_threshold = 50
+        
+        min_trades_5m_ok = total_trades_5m >= min_trades_threshold
         min_trades_1h_ok = total_trades_1h >= 200
         min_trades_ok = min_trades_5m_ok or min_trades_1h_ok
         
@@ -458,9 +483,9 @@ class TokenScorer:
         else:
             return 30  # Слишком мало - рискованно
 
-    async def should_buy(self, mint: str, symbol: str = "UNKNOWN") -> tuple[bool, TokenScore]:
+    async def should_buy(self, mint: str, symbol: str = "UNKNOWN", is_sniper_mode: bool = False) -> tuple[bool, TokenScore]:
         """Проверить стоит ли покупать токен."""
-        score = await self.score_token(mint, symbol)
+        score = await self.score_token(mint, symbol, is_sniper_mode)
         should = score.total_score >= self.min_score
         return should, score
 

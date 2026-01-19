@@ -362,7 +362,7 @@ class VolumePatternAnalyzer:
             patterns = self._detect_patterns(spike, bp5, bp1, t5, pc5m, pc1h)
             health = self._calc_health(bp5, conc, t5, liquidity)
             opp = self._calc_opportunity(spike, bp5, patterns, health, pc5m)
-            rec = self._get_recommendation(health, opp, risk)
+            rec = self._get_recommendation(health, opp, risk, fdv)
             
             self._stats["tokens_analyzed"] += 1
             
@@ -527,10 +527,14 @@ class VolumePatternAnalyzer:
         
         return max(0, min(100, score))
 
-    def _get_recommendation(self, health: int, opp: int, risk: RiskLevel) -> str:
+    def _get_recommendation(self, health: int, opp: int, risk: RiskLevel, market_cap: float = 0) -> str:
         if risk == RiskLevel.EXTREME:
             return "DANGER"
         if health < 60:
+            return "SKIP"
+        # Skip tokens with market cap > 100k (too late to enter)
+        if market_cap > 100_000:
+            logger.info(f"[VOLUME] SKIP - market cap ${market_cap:,.0f} > $100k (too late)")
             return "SKIP"
         if opp >= 85 and health >= 80:
             return "STRONG_BUY"

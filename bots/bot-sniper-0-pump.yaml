@@ -77,7 +77,7 @@ whale_copy:
 
 # Dev check - теперь оптимизирован с кэшем!
 dev_check:
-  enabled: true
+  enabled: false
   max_tokens_created: 10
   min_account_age_days: 3
 
