@@ -190,7 +190,7 @@ class RPCManager:
                 name="Alchemy",
                 http_endpoint=alchemy_http,
                 wss_endpoint=None,
-                rate_limit_per_second=0.5,  # 30 req/min
+                rate_limit_per_second=0.08,  # 30 req/min
                 priority=0,
                 is_primary=False,
             )
