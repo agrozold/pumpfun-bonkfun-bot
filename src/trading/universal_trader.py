@@ -641,6 +641,12 @@ class UniversalTrader:
             logger.info(f"[WHALE] Token {mint_str[:8]}... already bought/buying, skipping")
             return
 
+        # Double-check fresh file (other bots may have bought)
+        if was_token_purchased(mint_str):
+            logger.info(f"[VOLUME] {analysis.symbol} found in purchase history file, skipping")
+            self._bought_tokens.add(mint_str)  # Sync memory
+            return
+
         # ============================================
         # SCORING CHECK - ФИЛЬТР МУСОРА!
         # ============================================
@@ -1385,6 +1391,12 @@ class UniversalTrader:
         # Anti-duplicate check
         if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
             logger.info(f"[VOLUME] {analysis.symbol} already bought/buying, skipping")
+            return
+
+        # Double-check fresh file (other bots may have bought)
+        if was_token_purchased(mint_str):
+            logger.info(f"[VOLUME] {analysis.symbol} found in purchase history file, skipping")
+            self._bought_tokens.add(mint_str)  # Sync memory
             return
         
         async with self._buy_lock:

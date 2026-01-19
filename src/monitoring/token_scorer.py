@@ -79,6 +79,25 @@ class TokenScorer:
             if age < self._cache_ttl:
                 return cached
         
+        # SNIPER MODE: Покупаем СРАЗУ без Dexscreener!
+        # PumpPortal уже детектировал токен - не теряем время на API
+        if is_sniper_mode:
+            logger.info(f"[SNIPER] {symbol} - BUYING immediately (no Dexscreener)")
+            score = TokenScore(
+                mint=mint,
+                symbol=symbol,
+                total_score=70,
+                volume_score=50,
+                buy_pressure_score=70,
+                momentum_score=80,
+                liquidity_score=60,
+                details={"sniper_mode": True, "reason": "Fresh token from PumpPortal"},
+                timestamp=datetime.utcnow(),
+                recommendation="BUY",
+            )
+            self._cache[mint] = score
+            return score
+        
         session = await self._get_session()
         
         # Получить данные с Dexscreener
