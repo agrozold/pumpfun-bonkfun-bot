@@ -1,4 +1,6 @@
-# Volume Pattern Sniper Bot
+# Volume Pattern Sniper Bot v2
+# Ловит токены с резкими всплесками объёмов
+
 name: "bot-volume-sniper"
 platform: "pump_fun"
 enabled: true
@@ -9,7 +11,7 @@ rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-# Listener
+# Listener - fallback для надёжности
 filters:
   listener_type: fallback
   max_token_age: 315360000
@@ -17,29 +19,31 @@ filters:
   match_string: null
   bro_address: null
 
-# Volume Pattern Analyzer - ключевая настройка!
+# ============================================
+# VOLUME PATTERN ANALYZER - ОСНОВНАЯ ЛОГИКА
+# ============================================
 volume_pattern:
   enabled: true
-  min_volume_1h: 10000
-  volume_spike_threshold: 3.0
-  min_trades_5m: 200
-  min_buy_pressure: 0.55
-  scan_interval: 100
-  max_tokens_per_scan: 50
-  min_health_score: 70
-  min_opportunity_score: 70
+  min_volume_1h: 5000           # Минимум $5k объёма за час
+  volume_spike_threshold: 2.5    # 2.5x спайк относительно среднего
+  min_trades_5m: 30              # Минимум 30 сделок за 5 мин
+  min_buy_pressure: 0.55         # Минимум 55% покупок
+  scan_interval: 45              # Сканировать каждые 45 сек
+  max_tokens_per_scan: 80        # Анализировать до 80 токенов
+  min_health_score: 65           # Минимум 65 health
+  min_opportunity_score: 65      # Минимум 65 opportunity
 
-# Trading
+# Trading - консервативные настройки
 trade:
   buy_amount: 0.01
   buy_slippage: 0.25
   sell_slippage: 0.30
   exit_strategy: tp_sl
-  take_profit_percentage: 0.50
-  stop_loss_percentage: 0.20
-  max_hold_time: 3600
+  take_profit_percentage: 0.50   # 50% TP
+  stop_loss_percentage: 0.20     # 20% SL
+  max_hold_time: 3600            # Макс 1 час
   min_sol_balance: 0.05
-  price_check_interval: 2
+  price_check_interval: 3
   moon_bag_percentage: 0
 
 # Priority fees
@@ -48,25 +52,29 @@ priority_fees:
   enable_fixed: true
   fixed_amount: 500000
 
-# Pattern detection - отключаем, используем volume_pattern вместо
+# Pattern detection - ВЫКЛЮЧЕНО (используем volume_pattern)
 pattern_detection:
   enabled: false
 
-# Scoring
+# Scoring - включено для дополнительной проверки
 scoring:
   enabled: true
-  min_score: 60
+  min_score: 55                  # Снижен порог для volume sniper
+  volume_weight: 35              # Больше веса на объём
+  buy_pressure_weight: 30
+  momentum_weight: 25
+  liquidity_weight: 10
 
-# Dev check
+# Dev check - включено
 dev_check:
   enabled: true
-  max_tokens_created: 10
+  max_tokens_created: 15
   min_account_age_days: 1
 
-# Trending scanner - отключаем, volume_pattern сам сканирует
+# Trending scanner - ВЫКЛЮЧЕНО (volume_pattern заменяет)
 trending_scanner:
   enabled: false
 
-# Whale copy - отключено
+# Whale copy - ВЫКЛЮЧЕНО
 whale_copy:
   enabled: false

@@ -1363,7 +1363,7 @@ class UniversalTrader:
                 f"vol=${analysis.volume_5m:,.0f} ({analysis.volume_spike_ratio:.1f}x)"
             )
             
-            from interfaces.base import TokenInfo
+            from interfaces.core import TokenInfo
             from solders.pubkey import Pubkey
             
             token_info = TokenInfo(

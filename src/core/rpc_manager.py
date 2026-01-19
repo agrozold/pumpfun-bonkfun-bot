@@ -1,24 +1,17 @@
 """
-Global RPC Manager - Helius + Chainstack CO-PRIMARY, Alchemy/Public as FALLBACK.
+Global RPC Manager - Optimized for 6 bots with smart caching.
 
-COMBINED BUDGET FOR 2-3 WEEKS:
-- Helius: 800,000 credits/month (~26,666/day)
-- Chainstack: 1,000,000 requests/month (~33,333/day)
-- TOTAL: 1,800,000 requests/month (~60,000/day)
+ENDPOINTS (from .env):
+- Helius: PRIMARY for HTTP (1M credits/month)
+- Chainstack: PRIMARY for WSS + HTTP fallback (1M req/month)
+- Alchemy: FALLBACK #1
+- Public Solana: FALLBACK #2 (last resort)
 
-STRATEGY:
-1. Helius = CO-PRIMARY (priority 0, 45% of load)
-2. Chainstack = CO-PRIMARY (priority 1, 55% of load)
-3. Alchemy = FALLBACK #1 (when primaries rate limited)
-4. Public Solana = FALLBACK #2 (last resort)
-
-With this combined budget, you can run for 2-3 weeks comfortably.
-
-Usage:
-    from core.rpc_manager import get_rpc_manager
-
-    rpc = get_rpc_manager()
-    result = await rpc.get_transaction(signature)
+OPTIMIZATION:
+- Smart caching with TTL by request type
+- Rate limiting per provider
+- Daily budget tracking
+- Automatic fallback on 429
 """
 
 import asyncio
@@ -34,51 +27,48 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 # =============================================================================
-# HELIUS BUDGET CALCULATION (1,000,000 credits/month)
+# BUDGET CALCULATION (6 bots sharing resources)
 # =============================================================================
-# Daily budget: 1,000,000 / 30 = 33,333 credits/day
-# Hourly budget: 33,333 / 24 = 1,388 credits/hour
-# Per-minute budget: 1,388 / 60 = 23 credits/minute
-# With 6 bots: 23 / 6 = ~3.8 credits/minute per bot
-# Standard RPC = 1 credit, so ~3.8 req/min = 0.063 req/s per bot
-# BUT we want to use 80% Helius, 20% fallback, so: 0.05 req/s per bot
+# Helius: 1,000,000 credits/month = 33,333/day = 1,388/hour
+# Chainstack: 1,000,000 req/month = 33,333/day = 1,388/hour
+# Combined: ~2,776/hour for all 6 bots = ~462/hour per bot = 7.7/min per bot
+# 
+# SAFE LIMITS (70% of budget):
+# - Helius: 0.08 req/s per bot (4.8 req/min)
+# - Chainstack: 0.10 req/s per bot (6 req/min)
 # =============================================================================
 
-HELIUS_MONTHLY_CREDITS = 1_000_000
-HELIUS_DAILY_CREDITS = HELIUS_MONTHLY_CREDITS // 30  # 33,333
-HELIUS_HOURLY_CREDITS = HELIUS_DAILY_CREDITS // 24  # 1,388
 NUM_BOTS = 6
+HELIUS_MONTHLY_CREDITS = 1_000_000
+CHAINSTACK_MONTHLY_REQUESTS = 1_000_000
 
-# Conservative rate: use 70% of budget to leave room for spikes
-HELIUS_SAFE_HOURLY = int(HELIUS_HOURLY_CREDITS * 0.7)  # 971 credits/hour
-HELIUS_REQ_PER_SEC = HELIUS_SAFE_HOURLY / 3600 / NUM_BOTS  # ~0.045 req/s per bot
-
-# Enhanced API costs 50 credits, so much more limited
-HELIUS_ENHANCED_REQ_PER_SEC = HELIUS_REQ_PER_SEC / 50  # ~0.0009 req/s
+HELIUS_DAILY = HELIUS_MONTHLY_CREDITS // 30
+CHAINSTACK_DAILY = CHAINSTACK_MONTHLY_REQUESTS // 30
 
 
-class RPCProvider(Enum):
-    """Supported RPC providers."""
-
-    HELIUS = "helius"
-    CHAINSTACK = "chainstack"
-    ALCHEMY = "alchemy"
-    PUBLIC_SOLANA = "public_solana"
+class CacheType(Enum):
+    """Cache TTL by request type."""
+    TRANSACTION = 300      # 5 min - transactions don't change
+    ACCOUNT_INFO = 30      # 30 sec - account state changes
+    HEALTH = 60            # 1 min - health checks
+    SIGNATURE = 120        # 2 min - signature status
+    BALANCE = 10           # 10 sec - balance changes often
+    TOKEN_ACCOUNTS = 30    # 30 sec
 
 
 @dataclass
 class ProviderConfig:
-    """Configuration for an RPC provider."""
-
+    """RPC provider configuration."""
     name: str
     http_endpoint: str
     wss_endpoint: str | None = None
-    rate_limit_per_second: float = 10.0  # requests per second
-    priority: int = 1  # lower = higher priority
+    rate_limit_per_second: float = 0.1
+    priority: int = 1
     enabled: bool = True
-    is_primary: bool = False  # Primary provider flag
-
+    is_primary: bool = False
+    
     # Runtime state
     last_request_time: float = field(default=0.0, repr=False)
     consecutive_errors: int = field(default=0, repr=False)
@@ -90,33 +80,23 @@ class ProviderConfig:
 
 
 class RPCManager:
-    """Global RPC manager - Helius PRIMARY, others FALLBACK.
-
-    Features:
-    - Helius as primary RPC (best quality)
-    - Alchemy as fallback #1
-    - Public Solana as fallback #2
-    - Daily budget tracking for Helius
-    - Automatic fallback on rate limits
-    """
-
+    """Optimized RPC manager with caching and rate limiting."""
+    
     _instance: "RPCManager | None" = None
     _lock = asyncio.Lock()
-
+    
     HTTP_OK = 200
     HTTP_RATE_LIMITED = 429
-
-    # HARDCODED HELIUS RPC - правильный ключ! (только HTTP, НЕТ WSS у Helius!)
-    HELIUS_RPC = (
-        "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY"
-    )
-    HELIUS_ENHANCED = "https://api-mainnet.helius-rpc.com/v0/transactions/?api-key=YOUR_HELIUS_API_KEY"
 
     def __init__(self) -> None:
         self.providers: dict[str, ProviderConfig] = {}
         self._session: aiohttp.ClientSession | None = None
         self._initialized = False
-
+        
+        # Smart cache with TTL
+        self._cache: dict[str, tuple[Any, float, float]] = {}  # key -> (value, timestamp, ttl)
+        self._cache_max_size = 2000
+        
         # Metrics
         self._metrics = {
             "total_requests": 0,
@@ -124,17 +104,18 @@ class RPCManager:
             "rate_limited": 0,
             "fallback_used": 0,
             "cache_hits": 0,
+            "cache_misses": 0,
             "helius_credits_used": 0,
+            "chainstack_requests": 0,
         }
-
-        # Response cache
-        self._cache: dict[str, tuple[Any, float]] = {}
-        self._cache_ttl = 60.0
-        self._cache_max_size = 1000
+        
+        # Request log for debugging
+        self._request_log: list[dict] = []
+        self._max_log_entries = 100
 
     @classmethod
     async def get_instance(cls) -> "RPCManager":
-        """Get or create singleton instance."""
+        """Get singleton instance."""
         if cls._instance is None:
             async with cls._lock:
                 if cls._instance is None:
@@ -143,51 +124,47 @@ class RPCManager:
         return cls._instance
 
     async def _initialize(self) -> None:
-        """Initialize providers - Helius PRIMARY, others FALLBACK."""
+        """Initialize providers from .env."""
         if self._initialized:
             return
-
+            
         self._session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=10),
-            connector=aiohttp.TCPConnector(limit=50, limit_per_host=10),
+            timeout=aiohttp.ClientTimeout(total=15),
+            connector=aiohttp.TCPConnector(limit=100, limit_per_host=20),
         )
+        
+        # =================================================================
+        # HELIUS = PRIMARY HTTP (use key from .env!)
+        # =================================================================
+        helius_key = os.getenv("HELIUS_API_KEY")
+        if helius_key:
+            helius_http = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+            self.providers["helius"] = ProviderConfig(
+                name="Helius",
+                http_endpoint=helius_http,
+                wss_endpoint=None,  # Helius doesn't have WSS
+                rate_limit_per_second=0.08,  # 4.8 req/min per bot
+                priority=0,
+                is_primary=True,
+            )
+            logger.info(f"[RPC] ✓ HELIUS PRIMARY: 0.08 req/s ({helius_key[:8]}...)")
+            
+            # Helius Enhanced API (50 credits per request)
+            helius_enhanced = f"https://api.helius.xyz/v0/transactions/?api-key={helius_key}"
+            self.providers["helius_enhanced"] = ProviderConfig(
+                name="Helius Enhanced",
+                http_endpoint=helius_enhanced,
+                wss_endpoint=None,
+                rate_limit_per_second=0.015,  # ~1 req/min - very expensive!
+                priority=0,
+                is_primary=True,
+            )
+            logger.info("[RPC] ✓ Helius Enhanced: 0.015 req/s (50 credits each)")
+        else:
+            logger.error("[RPC] ✗ HELIUS_API_KEY not found in .env!")
 
         # =================================================================
-        # HELIUS = PRIMARY (hardcoded correct key!) - ТОЛЬКО HTTP!
-        # 1M credits/month = 33k/day = 1388/hour = 23/min
-        # With 6 bots: ~4 req/min per bot for standard RPC
-        # But they run independently, so use 0.1 req/s (6 req/min) to be safe
-        # =================================================================
-        self.providers["helius"] = ProviderConfig(
-            name="Helius",
-            http_endpoint=self.HELIUS_RPC,
-            wss_endpoint=None,  # Helius НЕ имеет WSS!
-            rate_limit_per_second=0.1,  # 6 req/min - conservative for 6 bots
-            priority=0,  # HIGHEST priority
-            is_primary=True,
-        )
-        logger.info("[RPC] ✓ HELIUS PRIMARY configured (0.1 req/s = 6 req/min)")
-        logger.info(f"[RPC]   Daily budget: {HELIUS_DAILY_CREDITS} credits")
-
-        # Helius Enhanced API (50 credits per request!)
-        # 33k daily / 50 = 666 enhanced requests/day max
-        # With 6 bots running independently, each gets ~110 requests/day
-        # That's ~4.5 req/hour = 0.00125 req/s per bot
-        # Use 0.02 req/s (1.2 req/min) to be safe
-        self.providers["helius_enhanced"] = ProviderConfig(
-            name="Helius Enhanced",
-            http_endpoint=self.HELIUS_ENHANCED,
-            wss_endpoint=None,  # Helius НЕ имеет WSS!
-            rate_limit_per_second=0.02,  # 1.2 req/min - very conservative for 6 bots
-            priority=0,
-            is_primary=True,
-        )
-        logger.info("[RPC] ✓ Helius Enhanced configured (0.02 req/s = 1.2 req/min)")
-
-        # =================================================================
-        # CHAINSTACK = CO-PRIMARY (1M requests/month, share load with Helius)
-        # Combined budget: Helius 800k + Chainstack 1M = 1.8M/month
-        # For 2-3 weeks usage: distribute ~50/50 between providers
+        # CHAINSTACK = CO-PRIMARY (HTTP + WSS)
         # =================================================================
         chainstack_http = os.getenv("CHAINSTACK_RPC_ENDPOINT")
         chainstack_wss = os.getenv("CHAINSTACK_WSS_ENDPOINT")
@@ -196,110 +173,121 @@ class RPCManager:
                 name="Chainstack",
                 http_endpoint=chainstack_http,
                 wss_endpoint=chainstack_wss,
-                rate_limit_per_second=0.12,  # ~7 req/min - slightly higher than Helius
-                priority=1,  # Same tier as Helius (round-robin)
+                rate_limit_per_second=0.10,  # 6 req/min per bot
+                priority=1,
                 is_primary=True,
             )
-            logger.info("[RPC] ✓ CHAINSTACK CO-PRIMARY configured (0.12 req/s = 7 req/min)")
-            logger.info("[RPC]   Combined budget: Helius 800k + Chainstack 1M = 1.8M/month")
+            logger.info("[RPC] ✓ CHAINSTACK CO-PRIMARY: 0.10 req/s + WSS")
         else:
             logger.warning("[RPC] ⚠ CHAINSTACK_RPC_ENDPOINT not set")
 
         # =================================================================
-        # ALCHEMY = FALLBACK #1 (take more load when primaries rate limited)
+        # ALCHEMY = FALLBACK #1
         # =================================================================
-        alchemy_endpoint = os.getenv("ALCHEMY_RPC_ENDPOINT")
-        if alchemy_endpoint:
+        alchemy_http = os.getenv("ALCHEMY_RPC_ENDPOINT")
+        if alchemy_http:
             self.providers["alchemy"] = ProviderConfig(
                 name="Alchemy",
-                http_endpoint=alchemy_endpoint,
-                rate_limit_per_second=1.0,  # 60 req/min - higher for fallback
-                priority=5,  # Lower priority than Helius/Chainstack
+                http_endpoint=alchemy_http,
+                wss_endpoint=None,
+                rate_limit_per_second=0.5,  # 30 req/min
+                priority=5,
                 is_primary=False,
             )
-            logger.info("[RPC] ✓ Alchemy FALLBACK #1 configured (1.0 req/s)")
-        else:
-            logger.warning("[RPC] ⚠ ALCHEMY_RPC_ENDPOINT not set - no fallback #1")
+            logger.info("[RPC] ✓ Alchemy FALLBACK #1: 0.5 req/s")
 
         # =================================================================
-        # PUBLIC SOLANA = FALLBACK #2 (last resort, heavily rate limited)
+        # PUBLIC SOLANA = FALLBACK #2 (last resort)
         # =================================================================
         self.providers["public_solana"] = ProviderConfig(
             name="Public Solana",
             http_endpoint="https://api.mainnet-beta.solana.com",
             wss_endpoint="wss://api.mainnet-beta.solana.com",
-            rate_limit_per_second=0.5,  # 30 req/min - public is limited
-            priority=10,  # LOWEST priority
+            rate_limit_per_second=0.3,
+            priority=10,
             is_primary=False,
         )
-        logger.info("[RPC] ✓ Public Solana FALLBACK #2 configured (0.5 req/s)")
-
+        logger.info("[RPC] ✓ Public Solana FALLBACK #2: 0.3 req/s")
+        
         self._initialized = True
-        logger.info(f"[RPC] Manager initialized: {len(self.providers)} providers")
-        logger.info("[RPC] Priority: Helius -> Chainstack -> Alchemy -> Public Solana")
+        logger.info(f"[RPC] Initialized {len(self.providers)} providers")
+        logger.info(f"[RPC] Daily budget: Helius {HELIUS_DAILY} + Chainstack {CHAINSTACK_DAILY}")
 
-    def _get_available_provider(
-        self, exclude: set[str] | None = None, prefer_primary: bool = True
-    ) -> ProviderConfig | None:
-        """Get best available provider - Helius first, then fallbacks."""
+    def _get_cache(self, key: str) -> Any | None:
+        """Get from cache if not expired."""
+        if key in self._cache:
+            value, timestamp, ttl = self._cache[key]
+            if time.time() - timestamp < ttl:
+                self._metrics["cache_hits"] += 1
+                return value
+            else:
+                del self._cache[key]
+        self._metrics["cache_misses"] += 1
+        return None
+
+    def _set_cache(self, key: str, value: Any, ttl: float) -> None:
+        """Set cache with TTL."""
+        self._cache[key] = (value, time.time(), ttl)
+        
+        # LRU eviction
+        if len(self._cache) > self._cache_max_size:
+            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])
+            del self._cache[oldest_key]
+
+    def _get_available_provider(self, exclude: set[str] | None = None) -> ProviderConfig | None:
+        """Get best available provider."""
         exclude = exclude or set()
         now = time.time()
-
+        
         available = []
         for name, provider in self.providers.items():
             if name in exclude or not provider.enabled:
                 continue
-
-            # Skip if in backoff
+            if "enhanced" in name.lower():  # Skip enhanced for regular requests
+                continue
             if now < provider.backoff_until:
                 continue
-
+                
             # Check rate limit
             time_since_last = now - provider.last_request_time
             min_interval = 1.0 / provider.rate_limit_per_second
             if time_since_last < min_interval:
                 continue
-
-            # Reset daily counter if new day
+                
+            # Reset daily counter
             if now - provider.daily_reset_time > 86400:
                 provider.daily_requests = 0
                 provider.daily_reset_time = now
-
+                
             available.append((provider.priority, name, provider))
-
+            
         if not available:
             return None
-
-        # Sort by priority (lower = better) - Helius first!
+            
         available.sort(key=lambda x: x[0])
         return available[0][2]
 
     async def _wait_for_rate_limit(self, provider: ProviderConfig) -> None:
-        """Wait for rate limit if needed."""
+        """Wait for rate limit."""
         now = time.time()
         min_interval = 1.0 / provider.rate_limit_per_second
         time_since_last = now - provider.last_request_time
-
+        
         if time_since_last < min_interval:
-            wait_time = min_interval - time_since_last
-            await asyncio.sleep(wait_time)
-
+            await asyncio.sleep(min_interval - time_since_last)
+            
         provider.last_request_time = time.time()
 
     def _handle_rate_limit(self, provider: ProviderConfig) -> None:
-        """Handle 429 rate limit error."""
+        """Handle 429 rate limit."""
         provider.consecutive_errors += 1
         provider.total_errors += 1
         self._metrics["rate_limited"] += 1
-
-        # Exponential backoff: 2s, 4s, 8s, 16s, max 60s
-        backoff = min(2**provider.consecutive_errors, 60)
+        
+        backoff = min(2 ** provider.consecutive_errors, 60)
         provider.backoff_until = time.time() + backoff
-
-        logger.warning(
-            f"[RPC] {provider.name} rate limited (429), backoff {backoff}s "
-            f"(errors: {provider.consecutive_errors})"
-        )
+        
+        logger.warning(f"[RPC] {provider.name} rate limited (429), backoff {backoff}s")
 
     def _handle_success(self, provider: ProviderConfig) -> None:
         """Handle successful request."""
@@ -308,123 +296,198 @@ class RPCManager:
         provider.daily_requests += 1
         self._metrics["total_requests"] += 1
         self._metrics["successful_requests"] += 1
+        
+        if "helius" in provider.name.lower():
+            credits = 50 if "enhanced" in provider.name.lower() else 1
+            self._metrics["helius_credits_used"] += credits
+        elif "chainstack" in provider.name.lower():
+            self._metrics["chainstack_requests"] += 1
 
-        # Track Helius credits
-        if provider.is_primary:
-            if "enhanced" in provider.name.lower():
-                self._metrics["helius_credits_used"] += 50  # Enhanced = 50 credits
-            else:
-                self._metrics["helius_credits_used"] += 1  # Standard = 1 credit
+    def _log_request(self, method: str, provider: str, cached: bool, duration: float) -> None:
+        """Log request for debugging."""
+        entry = {
+            "time": time.strftime("%H:%M:%S"),
+            "method": method,
+            "provider": provider,
+            "cached": cached,
+            "duration_ms": int(duration * 1000),
+        }
+        self._request_log.append(entry)
+        if len(self._request_log) > self._max_log_entries:
+            self._request_log.pop(0)
 
     async def post_rpc(
         self,
         body: dict[str, Any],
-        provider_name: str | None = None,
-        timeout: float = 10.0,
+        cache_type: CacheType | None = None,
+        cache_key: str | None = None,
     ) -> dict[str, Any] | None:
-        """Send RPC request with automatic provider selection and fallback.
-
-        Args:
-            body: JSON-RPC request body
-            provider_name: Specific provider to use (optional)
-            timeout: Request timeout in seconds
-
-        Returns:
-            RPC response or None on failure
-        """
+        """Send RPC request with caching and fallback."""
         if not self._session:
             await self._initialize()
-
+            
+        start_time = time.time()
+        method = body.get("method", "unknown")
+        
+        # Check cache
+        if cache_key and cache_type:
+            cached = self._get_cache(cache_key)
+            if cached is not None:
+                self._log_request(method, "CACHE", True, time.time() - start_time)
+                return {"result": cached}
+                
         tried_providers: set[str] = set()
-
+        
         while True:
-            # Get provider
-            if provider_name and provider_name in self.providers:
-                provider = self.providers[provider_name]
-                tried_providers.add(provider_name)
-            else:
-                provider = self._get_available_provider(exclude=tried_providers)
-
+            provider = self._get_available_provider(exclude=tried_providers)
             if not provider:
-                logger.warning("[RPC] No available providers, all rate limited")
+                logger.warning(f"[RPC] No available providers for {method}")
                 return None
-
+                
             tried_providers.add(provider.name.lower().replace(" ", "_"))
-
-            # Wait for rate limit
             await self._wait_for_rate_limit(provider)
-
+            
             try:
                 async with self._session.post(
                     provider.http_endpoint,
                     json=body,
-                    timeout=aiohttp.ClientTimeout(total=timeout),
                     headers={"Content-Type": "application/json"},
                 ) as resp:
                     if resp.status == self.HTTP_OK:
                         data = await resp.json()
                         self._handle_success(provider)
+                        
+                        # Cache result
+                        if cache_key and cache_type and "result" in data:
+                            self._set_cache(cache_key, data["result"], cache_type.value)
+                            
+                        self._log_request(method, provider.name, False, time.time() - start_time)
                         return data
+                        
                     elif resp.status == self.HTTP_RATE_LIMITED:
                         self._handle_rate_limit(provider)
                         self._metrics["fallback_used"] += 1
-                        # Try next provider
                         continue
                     else:
-                        logger.warning(f"[RPC] {provider.name} HTTP {resp.status}")
+                        logger.debug(f"[RPC] {provider.name} HTTP {resp.status}")
                         provider.consecutive_errors += 1
                         continue
-
-            except TimeoutError:
-                logger.warning(f"[RPC] {provider.name} timeout ({timeout}s)")
+                        
+            except asyncio.TimeoutError:
+                logger.debug(f"[RPC] {provider.name} timeout")
                 provider.consecutive_errors += 1
                 continue
-            except aiohttp.ClientError as e:
-                logger.warning(f"[RPC] {provider.name} client error: {e}")
+            except Exception as e:
+                logger.debug(f"[RPC] {provider.name} error: {e}")
                 provider.consecutive_errors += 1
                 continue
 
-    async def get_transaction(
-        self,
-        signature: str,
-        use_cache: bool = True,
-    ) -> dict[str, Any] | None:
-        """Get transaction with caching and automatic fallback.
-
-        Args:
-            signature: Transaction signature
-            use_cache: Whether to use cache
-
-        Returns:
-            Transaction data or None
-        """
-        cache_key = f"tx:{signature}"
-
-        # Check cache
-        if use_cache and cache_key in self._cache:
-            cached, ts = self._cache[cache_key]
-            if time.time() - ts < self._cache_ttl:
-                self._metrics["cache_hits"] += 1
-                return cached
-
+    async def get_transaction(self, signature: str, use_cache: bool = True) -> dict | None:
+        """Get transaction with caching."""
+        cache_key = f"tx:{signature}" if use_cache else None
+        cache_type = CacheType.TRANSACTION if use_cache else None
+        
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getTransaction",
-            "params": [
-                signature,
-                {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
-            ],
+            "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+        }
+        
+        result = await self.post_rpc(body, cache_type, cache_key)
+        return result.get("result") if result else None
+
+    async def get_account_info(self, pubkey: str, use_cache: bool = True) -> dict | None:
+        """Get account info with caching."""
+        cache_key = f"acc:{pubkey}" if use_cache else None
+        cache_type = CacheType.ACCOUNT_INFO if use_cache else None
+        
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [pubkey, {"encoding": "base64"}],
+        }
+        
+        result = await self.post_rpc(body, cache_type, cache_key)
+        return result.get("result") if result else None
+
+    async def get_balance(self, pubkey: str) -> int | None:
+        """Get SOL balance (short cache)."""
+        cache_key = f"bal:{pubkey}"
+        
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBalance",
+            "params": [pubkey],
+        }
+        
+        result = await self.post_rpc(body, CacheType.BALANCE, cache_key)
+        if result and "result" in result:
+            return result["result"].get("value")
+        return None
+
+    async def get_health(self) -> str | None:
+        """Get node health."""
+        body = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
+        result = await self.post_rpc(body, CacheType.HEALTH, "health")
+        return result.get("result") if result else None
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Get current metrics."""
+        helius_used = self._metrics["helius_credits_used"]
+        chainstack_used = self._metrics["chainstack_requests"]
+        
+        cache_total = self._metrics["cache_hits"] + self._metrics["cache_misses"]
+        cache_rate = (self._metrics["cache_hits"] / cache_total * 100) if cache_total > 0 else 0
+        
+        return {
+            **self._metrics,
+            "helius_daily_remaining": HELIUS_DAILY - helius_used,
+            "chainstack_daily_remaining": CHAINSTACK_DAILY - chainstack_used,
+            "cache_hit_rate": f"{cache_rate:.1f}%",
+            "cache_size": len(self._cache),
+            "providers": {
+                name: {
+                    "requests": p.total_requests,
+                    "errors": p.total_errors,
+                    "daily": p.daily_requests,
+                    "in_backoff": time.time() < p.backoff_until,
+                }
+                for name, p in self.providers.items()
+            },
         }
 
-        result = await self.post_rpc(body)
+    def log_metrics(self) -> None:
+        """Log current metrics."""
+        m = self._metrics
+        helius_pct = (m["helius_credits_used"] / HELIUS_DAILY * 100) if HELIUS_DAILY > 0 else 0
+        chainstack_pct = (m["chainstack_requests"] / CHAINSTACK_DAILY * 100) if CHAINSTACK_DAILY > 0 else 0
+        
+        cache_total = m["cache_hits"] + m["cache_misses"]
+        cache_rate = (m["cache_hits"] / cache_total * 100) if cache_total > 0 else 0
+        
+        logger.info(
+            f"[RPC STATS] Requests: {m['total_requests']}, "
+            f"Rate limited: {m['rate_limited']}, Fallbacks: {m['fallback_used']}"
+        )
+        logger.info(
+            f"[RPC BUDGET] Helius: {m['helius_credits_used']}/{HELIUS_DAILY} ({helius_pct:.1f}%), "
+            f"Chainstack: {m['chainstack_requests']}/{CHAINSTACK_DAILY} ({chainstack_pct:.1f}%)"
+        )
+        logger.info(f"[RPC CACHE] Hits: {m['cache_hits']}, Rate: {cache_rate:.1f}%, Size: {len(self._cache)}")
 
-        if result and "result" in result and result["result"]:
-            # Cache successful result
-            self._cache_result(cache_key, result["result"])
-            return result["result"]
+    async def close(self) -> None:
+        """Close session."""
+        if self._session:
+            await self._session.close()
+            self._session = None
 
-        return None
+
+async def get_rpc_manager() -> RPCManager:
+    """Get global RPC manager."""
+    return await RPCManager.get_instance()
 
     async def get_transaction_helius_enhanced(
         self,
@@ -432,169 +495,42 @@ class RPCManager:
         use_cache: bool = True,
     ) -> dict[str, Any] | None:
         """Get parsed transaction from Helius Enhanced API.
-
-        This is the most efficient way to get transaction details
-        as Helius parses the transaction automatically.
-
-        Args:
-            signature: Transaction signature
-            use_cache: Whether to use cache
-
-        Returns:
-            Parsed transaction data or None
+        
+        This uses more credits (50 per request) but returns parsed data.
         """
         cache_key = f"tx_enhanced:{signature}"
-
+        
         # Check cache
-        if use_cache and cache_key in self._cache:
-            cached, ts = self._cache[cache_key]
-            if time.time() - ts < self._cache_ttl:
-                self._metrics["cache_hits"] += 1
+        if use_cache:
+            cached = self._get_cache(cache_key)
+            if cached is not None:
                 return cached
-
+        
         provider = self.providers.get("helius_enhanced")
         if not provider:
-            return None
-
+            # Fallback to regular getTransaction
+            return await self.get_transaction(signature, use_cache)
+        
         await self._wait_for_rate_limit(provider)
-
+        
         try:
             async with self._session.post(
                 provider.http_endpoint,
                 json={"transactions": [signature]},
-                timeout=aiohttp.ClientTimeout(total=5),
                 headers={"Content-Type": "application/json"},
             ) as resp:
                 if resp.status == self.HTTP_OK:
                     data = await resp.json()
                     self._handle_success(provider)
                     if data and len(data) > 0:
-                        self._cache_result(cache_key, data[0])
+                        self._set_cache(cache_key, data[0], 300)  # 5 min cache
                         return data[0]
                 elif resp.status == self.HTTP_RATE_LIMITED:
                     self._handle_rate_limit(provider)
-                else:
-                    logger.debug(f"[RPC] Helius Enhanced HTTP {resp.status}")
-
-        except aiohttp.ClientError as e:
+                    # Fallback to regular getTransaction
+                    return await self.get_transaction(signature, use_cache)
+        except Exception as e:
             logger.debug(f"[RPC] Helius Enhanced error: {e}")
-
-        return None
-
-    async def get_account_info(
-        self,
-        pubkey: str,
-        use_cache: bool = True,
-    ) -> dict[str, Any] | None:
-        """Get account info with caching."""
-        cache_key = f"acc:{pubkey}"
-
-        if use_cache and cache_key in self._cache:
-            cached, ts = self._cache[cache_key]
-            if time.time() - ts < self._cache_ttl:
-                self._metrics["cache_hits"] += 1
-                return cached
-
-        body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getAccountInfo",
-            "params": [pubkey, {"encoding": "base64"}],
-        }
-
-        result = await self.post_rpc(body)
-
-        if result and "result" in result and result["result"]:
-            self._cache_result(cache_key, result["result"])
-            return result["result"]
-
-        return None
-
-    def _cache_result(self, key: str, value: dict) -> None:
-        """Cache a result with LRU eviction."""
-        self._cache[key] = (value, time.time())
-
-        # LRU eviction
-        if len(self._cache) > self._cache_max_size:
-            oldest = min(self._cache.keys(), key=lambda k: self._cache[k][1])
-            del self._cache[oldest]
-
-    def get_metrics(self) -> dict[str, Any]:
-        """Get current metrics including Helius budget usage."""
-        provider_stats = {}
-        for name, provider in self.providers.items():
-            provider_stats[name] = {
-                "total_requests": provider.total_requests,
-                "daily_requests": provider.daily_requests,
-                "total_errors": provider.total_errors,
-                "consecutive_errors": provider.consecutive_errors,
-                "enabled": provider.enabled,
-                "is_primary": provider.is_primary,
-                "in_backoff": time.time() < provider.backoff_until,
-            }
-
-        helius_daily_used = self._metrics.get("helius_credits_used", 0)
-        helius_daily_remaining = HELIUS_DAILY_CREDITS - helius_daily_used
-        helius_usage_percent = (helius_daily_used / HELIUS_DAILY_CREDITS) * 100
-
-        return {
-            **self._metrics,
-            "helius_daily_budget": HELIUS_DAILY_CREDITS,
-            "helius_daily_remaining": helius_daily_remaining,
-            "helius_usage_percent": f"{helius_usage_percent:.1f}%",
-            "cache_size": len(self._cache),
-            "providers": provider_stats,
-        }
-
-    def log_metrics(self) -> None:
-        """Log current metrics with Helius budget info."""
-        m = self._metrics
-        success_rate = (
-            m["successful_requests"] / m["total_requests"] * 100
-            if m["total_requests"] > 0
-            else 0
-        )
-
-        helius_used = m.get("helius_credits_used", 0)
-        helius_pct = (helius_used / HELIUS_DAILY_CREDITS) * 100
-
-        logger.info(
-            f"[RPC STATS] Total: {m['total_requests']}, Success: {success_rate:.1f}%, "
-            f"Rate limited: {m['rate_limited']}, Fallbacks: {m['fallback_used']}"
-        )
-        logger.info(
-            f"[RPC HELIUS] Credits used today: {helius_used}/{HELIUS_DAILY_CREDITS} "
-            f"({helius_pct:.1f}%), Cache hits: {m['cache_hits']}"
-        )
-
-        for name, provider in self.providers.items():
-            if provider.total_requests > 0:
-                role = "PRIMARY" if provider.is_primary else "FALLBACK"
-                logger.info(
-                    f"[RPC] {provider.name} ({role}): {provider.total_requests} req, "
-                    f"{provider.total_errors} errors"
-                )
-
-    async def close(self) -> None:
-        """Close the session."""
-        if self._session:
-            await self._session.close()
-            self._session = None
-
-
-# Global instance getter
-async def get_rpc_manager() -> RPCManager:
-    """Get the global RPC manager instance."""
-    return await RPCManager.get_instance()
-
-
-# Synchronous helper for initialization
-_rpc_manager: RPCManager | None = None
-
-
-def init_rpc_manager() -> RPCManager:
-    """Initialize RPC manager (call from async context)."""
-    global _rpc_manager  # noqa: PLW0603
-    if _rpc_manager is None:
-        _rpc_manager = RPCManager()
-    return _rpc_manager
+        
+        # Fallback to regular getTransaction
+        return await self.get_transaction(signature, use_cache)
