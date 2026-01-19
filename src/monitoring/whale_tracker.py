@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import time
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -722,8 +723,8 @@ class WhaleTracker:
         """
         # HARDCODED правильный ключ!
         helius_parse_url = (
-            "https://api-mainnet.helius-rpc.com/v0/transactions/"
-            "?api-key={helius_key}"
+            f"https://api.helius.xyz/v0/transactions"
+            f"?api-key={os.getenv('HELIUS_API_KEY')}"
         )
 
         try:

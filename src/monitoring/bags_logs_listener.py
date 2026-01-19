@@ -252,7 +252,7 @@ class BagsLogsListener(BaseTokenListener):
             # Check if this looks like a token creation
             # Look for "initialize" in logs or specific patterns for Meteora DBC
             is_initialize = any(
-                "initialize" in log.lower()
+                False  # disabled: too broad
                 or "Program log: Instruction: InitializeVirtualPoolWithSplToken" in log
                 or "InitializeVirtualPool" in log
                 for log in logs
@@ -271,6 +271,7 @@ class BagsLogsListener(BaseTokenListener):
                 return token_info
 
             # If logs parsing failed, fetch full transaction
+            await asyncio.sleep(0.5)  # Rate limit: max 2 req/sec
             token_info = await self._fetch_and_parse_transaction(signature)
             return token_info
 

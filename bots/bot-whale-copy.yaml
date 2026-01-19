@@ -45,7 +45,7 @@ trade:
   exit_strategy: tp_sl
   max_hold_time: 86400
   min_sol_balance: 0.03
-  moon_bag_percentage: 0           # НЕТ moon bag при SL! Продаём ВСЁ!
+  moon_bag_percentage: 50           # НЕТ moon bag при SL! Продаём ВСЁ!
   price_check_interval: 1          # КАЖДУЮ СЕКУНДУ проверяем цену!
   sell_slippage: 0.35              # Увеличен slippage для быстрой продажи
   stop_loss_percentage: 0.20       # 20% SL (в коде есть доп. защита на 25% и 40%)

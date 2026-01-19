@@ -44,7 +44,7 @@ trade:
   max_hold_time: 3600            # Макс 1 час
   min_sol_balance: 0.05
   price_check_interval: 3
-  moon_bag_percentage: 0
+  moon_bag_percentage: 50
 
 # Priority fees
 priority_fees:

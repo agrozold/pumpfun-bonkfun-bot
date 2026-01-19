@@ -35,7 +35,7 @@ trade:
   exit_strategy: tp_sl
   max_hold_time: 86400
   min_sol_balance: 0.03
-  moon_bag_percentage: 0
+  moon_bag_percentage: 50
   price_check_interval: 1
   sell_slippage: 0.35
   stop_loss_percentage: 0.20
