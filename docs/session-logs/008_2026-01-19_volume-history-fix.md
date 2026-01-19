@@ -1,4 +1,4 @@
-# Session 012 - 2026-01-19
+# Session 008 - 2026-01-19
 
 ## Проблема
 - Volume-sniper покупал WhiteBull повторно (3+ раза)
@@ -21,10 +21,7 @@
 | bot-volume-sniper | ❌ disabled | ❌ disabled |
 
 ## Файлы изменены
-- src/trading/universal_trader.py (add_to_purchase_history в _on_volume_opportunity)
-- bots/bot-sniper-0-bags.yaml (whale_copy закомментирован)
-- bots/bot-sniper-0-bonkfun.yaml (whale_copy закомментирован)
-- bots/bot-sniper-0-pump.yaml (whale_copy закомментирован)
-
-## Commit
-pending
+- src/trading/universal_trader.py
+- bots/bot-sniper-0-bags.yaml
+- bots/bot-sniper-0-bonkfun.yaml
+- bots/bot-sniper-0-pump.yaml

@@ -69,11 +69,11 @@ scoring:
   liquidity_weight: 15
 
 # Whale copy - OFF
-whale_copy:
-  enabled: false
-  wallets_file: "smart_money_wallets.json"
-  min_buy_amount: 1.0
-  helius_api_key: ${HELIUS_API_KEY}
+# REMOVED: whale_copy:
+#  enabled: false
+#  wallets_file: "smart_money_wallets.json"
+#  min_buy_amount: 1.0
+#  helius_api_key: ${HELIUS_API_KEY}
 
 # Dev check - оптимизирован!
 dev_check:

@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "mint": "HYFDo8SMhjyPJHq9bou3nbQsMfrJeMviRzfEQ2Jxpump",
+    "symbol": "WhiteBull",
+    "entry_price": 2.0994417792423114e-06,
+    "quantity": 4763.170905176995,
+    "entry_time": "2026-01-19T15:00:49.860151",
+    "take_profit_price": 3.149162668863467e-06,
+    "stop_loss_price": 1.6795534233938493e-06,
+    "max_hold_time": 3600,
+    "is_active": true,
+    "platform": "pump_fun",
+    "bonding_curve": null
+  }
+]

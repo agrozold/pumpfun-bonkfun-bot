@@ -1418,6 +1418,17 @@ class UniversalTrader:
             )
             
             await self._handle_token(token_info, skip_checks=False)
+
+            # Mark as BOUGHT - NEVER buy again!
+            self._bought_tokens.add(mint_str)
+            add_to_purchase_history(
+                mint=mint_str,
+                symbol=analysis.symbol,
+                bot_name="volume_analyzer",
+                platform=self.platform.value,
+                price=0,
+                amount=0,
+            )
             
         except Exception as e:
             logger.error(f"[VOLUME] Error processing {analysis.symbol}: {e}")

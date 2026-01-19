@@ -9,3 +9,4 @@
 | 005 | 2026-01-19 | BAGS filter + moon bag config | Done |
 | 006 | 2026-01-19 | Purchase history + sniper enabled | Done |
 | 007 | 2026-01-19 | PumpPortal fallback for selling | Done |
+| 008 | 2026-01-19 | Volume history fix + whale_copy cleanup | Done |

@@ -2903,6 +2903,982 @@
       "price": 0,
       "amount": 0,
       "timestamp": "2026-01-19T14:22:09.996666"
+    },
+    "7SPqJBFbEnbyTXwMGbcguqy2p3L827UEs8GfoxNVpump": {
+      "symbol": "Jerry",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:00:41.733887"
+    },
+    "EdDENTDHpy3MpDPajXGyePBirJUgM3nr7eCtdeHphfRA": {
+      "symbol": "GUY",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:00:43.698126"
+    },
+    "AMkr6GmcHraQquAeWZPDT6nRgT16LdFst2drc6bzpump": {
+      "symbol": "Investoor",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:00:56.741335"
+    },
+    "5iTrvtXv1qCbyTMfWBUgAsJL4mavMM9f3QjUfGuvbonk": {
+      "symbol": "USD",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:00:58.704738"
+    },
+    "HYFDo8SMhjyPJHq9bou3nbQsMfrJeMviRzfEQ2Jxpump": {
+      "symbol": "WhiteBull",
+      "bot_name": "manual_fix",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:11:53.386534"
+    },
+    "9rh1NLRDQApf58PsVjhjUXXUyy6kXXa39FQeWP7Qpump": {
+      "symbol": "Asscoin",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:10:53.682676"
+    },
+    "52MQPMb18sX2ShFD95fdrs7zxxmBspRQZtLhaFFypump": {
+      "symbol": "MrTomato",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:11:08.689942"
+    },
+    "5DFydrLpWt9xuUJSJXEdnM5Ya2Jzyfuv37ow5Gwpump": {
+      "symbol": "Nastia",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:14:06.936219"
+    },
+    "5BFdCQdoB2X2ZswSF27qhM2VsuaBc1HYnvd4wh5ipump": {
+      "symbol": "HOW",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:14:21.943148"
+    },
+    "46eZT5LZzm6LddAqrndmDkbdtXmq25aR6EKCbYgXpump": {
+      "symbol": "Nastia",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:14:36.953699"
+    },
+    "4BbcBgmMxtoSWRR2ytVBQ1cbp2ekU2ieyjFiKQYzpump": {
+      "symbol": "Lettuce",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:14:51.961985"
+    },
+    "CrSgBc6nuvvxddTbsCq1HtPHEZ8fsttm7poeJdJFpump": {
+      "symbol": "SSE2300",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:15:06.976603"
+    },
+    "5KG47KLWfwKGFAdks24xF1nXos1PpZXSh2KnYGnUpump": {
+      "symbol": "SCY",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:15:21.984842"
+    },
+    "AsDSLyteAfo4GkUqd813X6xFN28B2y8z2nGoDWndpump": {
+      "symbol": "MEGASOL",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:15:36.994596"
+    },
+    "539LSxe9M5NmkQ9KTzz96zWFfJmG24WUFn42EF4BQVVF": {
+      "symbol": "GFC",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:15:48.493640"
+    },
+    "Bn6UadwNNHGFuwJ8Xgbg8X34dVzbaHtqYjWwrJ3Ppump": {
+      "symbol": "POLARBEARS",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:15:52.002652"
+    },
+    "DKLgXkhTLrj1qKw891Q9RWC3WNxiW4s9C2euHdAypump": {
+      "symbol": "\u0442\u0440\u043e\u043b\u043b",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:16:07.009391"
+    },
+    "ZchYreLRiA5GfwL8tN7QuWdfgn2J7XbYA6QSyAqpump": {
+      "symbol": "GPT Coin",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:16:22.016660"
+    },
+    "HBzQaSijTxas89m4m9MdUdBRnNCbMbVM6ECjYsu5pump": {
+      "symbol": "$INMU",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:16:37.023523"
+    },
+    "5DhcFrKy2QR6mtuwNN9bQWiPNsMQTPM1er2J4qXkpump": {
+      "symbol": "XBT",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:16:52.030630"
+    },
+    "BKVhLuDYWaxdGF2tbuZa2wu2wVzkoKGrKsSDC1sWbonk": {
+      "symbol": "Erik",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:17:06.820440"
+    },
+    "A9QMKVgGV2CqQkztQbXx1Y1nBmqQnHaJBT24EHfNpump": {
+      "symbol": "POLARBEARS",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:17:07.039020"
+    },
+    "D9bYkFPAFjLmsCbTXfq64hP3iHdRztQfWXNnErtVpump": {
+      "symbol": "POLAR",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:17:22.045632"
+    },
+    "NjHT4vQogvRJg2q6ifAdTrcq7wxsRrh23d3DERdtik7": {
+      "symbol": "Erik",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:17:27.727467"
+    },
+    "E77QCrvQ9c77gn9qqtDk5ZB5jt8Rxos8hFW2FmH84Fk8": {
+      "symbol": "XBT",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:17:37.056236"
+    },
+    "81yfZk4khbb7KUus9i5fbJgDVEADnZpCnVbNMKcopump": {
+      "symbol": "POLARBEAR",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:17:52.062294"
+    },
+    "9z6aVMnDUrjukAWEKbeFwrSDBFrnupzLnvRM1bGfpump": {
+      "symbol": "POLARBEARS",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:18:07.068885"
+    },
+    "9Wc1SRJcMANZHCidUkYUuVzNXg6X7K7Q9rzj9coBpump": {
+      "symbol": "CIB",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:18:22.074688"
+    },
+    "8sd1ef7bRi2kPywAjo3iwT3A6Fvchbx4LJQkq7x6pump": {
+      "symbol": "Ojik art",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:18:37.084760"
+    },
+    "ACpCQj543FEb3VqbSr4eo3JKPSKwYoSZD72KJaSZpump": {
+      "symbol": "Anthony",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:18:52.091431"
+    },
+    "mKjbyUZHvysoCewdo3keioKcZjhcehYy8b1ea9ppump": {
+      "symbol": "VCASH",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:19:07.100849"
+    },
+    "BJXYV3Cswus6jVLxbRj3VKJMMy6xxfDrtWp2Rzgn7bCh": {
+      "symbol": "LIVERAI",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:19:22.107125"
+    },
+    "iq9iin1MbyQrjFt5HDii8PEtx1QbbwbY6LLnLCVpump": {
+      "symbol": "TIKTOKUS",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:19:37.114591"
+    },
+    "wqtYnCCQLLqUipbhGBBXUDwizHJryFN4tPrmWeGpump": {
+      "symbol": "Nastia",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:20:32.837514"
+    },
+    "5LP46LKepPCgGDRGFVjrDnbfKzyARmJCCsg4gr5kpump": {
+      "symbol": "PRIME",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:20:47.843754"
+    },
+    "GmGrtXT4xxjRz6QfMPjwtNCLkMnyjCUS9cQsB7yhbonk": {
+      "symbol": "ZEC",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:20:57.424776"
+    },
+    "AdpebetxHifj7a6eFysP4j6a8yDDzP6jAS4VPoqTpump": {
+      "symbol": "PRIME",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:21:02.850640"
+    },
+    "8JxTUK2KUiHaALk98qATD8ifz2xGBi5xciG4RK1Bpump": {
+      "symbol": "PRIME",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:21:17.857615"
+    },
+    "CEgHbE1XvkEoHBkHRq21Y2W6kEG8XDGsgKaJF92Wpump": {
+      "symbol": "PRIME",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:21:32.865190"
+    },
+    "82rQro1pW7WBHajt1M1EYcdf32tucwVg6xAHnNEApump": {
+      "symbol": "NYSE ",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:21:47.874046"
+    },
+    "HMdpiH3N8Lht3xk23itd1qix2RjWnEGd9kftNcXvpump": {
+      "symbol": "DND",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:22:02.880601"
+    },
+    "AxnMzRyMzDodcPWdaSNgo6UwDpDJMpxsVYWtR8kcpump": {
+      "symbol": "VCOIN",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:22:17.890906"
+    },
+    "2cgsYmR1n4UFkCtXV8TxQx7EqfDqb17i1ZyDdtvqXJ4M": {
+      "symbol": "DOTM",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:22:18.241343"
+    },
+    "CsQ8b7tHQq4oDpTDSUWpNqm1u3QhMw63JcTSbe8qpump": {
+      "symbol": "PLONK",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:22:32.902918"
+    },
+    "Y64xpGDmU117jsXyBayBnQAZdPE3h6og5MvDfodpump": {
+      "symbol": "IME",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:22:47.915929"
+    },
+    "GJsVJoo7WEmenYRE5xtmbRAUxqh1cERdgZusL3jJbonk": {
+      "symbol": "MOONDOGE",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:22:53.448838"
+    },
+    "3ku8z1EHiekdWrJDye9iC2uy9nq8Q6XtwZRCJgqRpump": {
+      "symbol": "MoonWhale",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:23:02.924495"
+    },
+    "6Sfr7GkzEFMTQ8G62tdP1rSasioBiALzczbxWnuPbonk": {
+      "symbol": "MOONDOGE",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:23:08.456219"
+    },
+    "EHFfCCP4KMYGhEyB54XJ9RbtmC79osrXpm7SCNwpump": {
+      "symbol": "based",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:23:17.932849"
+    },
+    "4wx6WJXdM3JkU8D3Q9ZKR16B5w9Crih26oqrCDjLpump": {
+      "symbol": "Claude",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:23:32.942426"
+    },
+    "AWrRt2YP8wQUXbhsB4eGbuKDHqRkkqUSpm4o7QJmpump": {
+      "symbol": "PUMPS",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:23:47.949895"
+    },
+    "ErpdMSgWn3m6q8B6XugMGTTgkJ3CLwHCEqkDWiZtYrgU": {
+      "symbol": "disaster",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:23:58.449570"
+    },
+    "HDXSS7UyKfVQ4ghtYhgAb1EW133Rr9EvqBA2XpoXpump": {
+      "symbol": "JARVIS",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:24:02.958208"
+    },
+    "4fM1UMxJKje7we35cWcEmRFxTwLgmr8NjzSH4bphbonk": {
+      "symbol": "SNP500",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:24:15.397045"
+    },
+    "24QwJZtPbVBTisUADSPBuQQnj7xYvv2rBuztLRbBpump": {
+      "symbol": "SSE2300",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:24:17.966722"
+    },
+    "9epgsVApQQ1QU2sUrrq75hJ4zySY8o2Spvj6aY9Kpump": {
+      "symbol": "TXT",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:24:32.974017"
+    },
+    "9753zW2GFfB54VQiPGgxxbgN3hMtttKw6JfrZYcJpump": {
+      "symbol": "SNW500",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:24:47.983133"
+    },
+    "AzqjfyVDC9TRHiEmrdzRAQsZCiiw6VekAxSBEWj5pump": {
+      "symbol": "NyanNyan",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:25:02.990639"
+    },
+    "HFXTzNDW46AenT5zVLANiegdvTLGsMf7mUeprenWpump": {
+      "symbol": "NyanNyan",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:25:17.999407"
+    },
+    "2DaQ1BGdU3QMuAJYp1ApFjiqLSD3PqFWap9qJQ8Bpump": {
+      "symbol": "SNT500",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:25:33.007719"
+    },
+    "2yLjWw7hfG6Es7gBJ4nhNGMyneE2vxaBbQG5czFJpump": {
+      "symbol": "$WTIT",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:25:48.020637"
+    },
+    "F7PTcVgU44gR3XFjhxkfY7JGHuhCh5E3Lb4tLndjpump": {
+      "symbol": "Clio ",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:26:03.029609"
+    },
+    "5GEMtnkkSEFqsVu3BLjrmi81mwb2X6o7pwvmXyGqpump": {
+      "symbol": "IME",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:26:18.035167"
+    },
+    "4bENnvLUh54fPt8fDDp19wM8fweT89Av4n3TsPn3pump": {
+      "symbol": "NyanNyan",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:26:33.042481"
+    },
+    "6cuxz2VfA7YHNDaJazCZM9LDGoeVwpcpWwBhY2ackBzr": {
+      "symbol": "NyanNyan",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:26:48.048660"
+    },
+    "DPwceSFNTuo5YDkSMEfNKL1RNMV3VaA1SEK8t2QLbonk": {
+      "symbol": "Bonk",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:27:00.689940"
+    },
+    "4PCJABEoA4LRR5C8Pd8u4fAQEyjzASYMMqLuwaFFmqZv": {
+      "symbol": "IME",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:27:03.054634"
+    },
+    "UdF4ZbW2BfXyaQp4tHokYkRZCCoyf11XVU7BpsJpump": {
+      "symbol": "BGS",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:27:18.061385"
+    },
+    "7yDNPCPuUnyCJSUWg9TdCc37GYpbapTc3fdZCPLFpump": {
+      "symbol": "pill",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:27:33.067041"
+    },
+    "137T96V2es8gD3RriSA9jKrQXps8eHxbrtZXpDmqpump": {
+      "symbol": "NiangNiang",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:27:48.073106"
+    },
+    "7uoLgtbaHQptvU3RvhWxANLRsuqPihhKDyb5sc5ppump": {
+      "symbol": "moonwhale",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:03.080219"
+    },
+    "9vTkJgh2CPP3QHQvMbLjkVaG6VEM3UoQSA7iXJiFFCig": {
+      "symbol": "GTA",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:04.547761"
+    },
+    "26FK1zCNLjUmyDhRwmFAM1Ef8LGVhQYoRDDqkXBapump": {
+      "symbol": "SKELEPUMP",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:18.086676"
+    },
+    "GQbYeyEkXfUJ7E7bvQdTwQNvPZ3Ffa3e3xo8SCaobonk": {
+      "symbol": "OIL",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:19.555739"
+    },
+    "97Dma9VrfZ5dsXg4HjZExKFgnxtZHdtT6zxfNZXHpump": {
+      "symbol": "Pill",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:33.095336"
+    },
+    "H3aFT3wqbCwU6717FWtXRvPm3h2acsQRsBorverNbonk": {
+      "symbol": "Oil",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:36.708099"
+    },
+    "9Eva2CjH58Fg6EG2aHoEaHJxA38yQNAbHeN6Weybpump": {
+      "symbol": "MYHM",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:48.103758"
+    },
+    "8wGaNUcdjsLVh36jB1yKEJnaZk3wrJpfQjjdftSqbonk": {
+      "symbol": "OAG6900",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:28:51.715690"
+    },
+    "C6H3gixh9Jzu9nnVJMp2qud9kqgsLaGsi3LWENsXp9gU": {
+      "symbol": "moonwhale",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:03.110053"
+    },
+    "AAVNoZTaf3ZHXx2jEw8Ee98mA96nWd1LKMCeWZdkbonk": {
+      "symbol": "OAG6900",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:06.721366"
+    },
+    "7P3VACepdRXN213EyZpdWVzQzujFmYWaad9d5A2n6Kh": {
+      "symbol": "SOL",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:18.118228"
+    },
+    "9eB4VwR9uVzaRw3mvdeGBzhqNDkuLM6MbJ4fR5vLbonk": {
+      "symbol": "Elephant",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:21.728849"
+    },
+    "Cf1othgMNhB1M519YroPrQrmRwrwrBwxfp2n3h76UwsU": {
+      "symbol": "Erik",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:33.127497"
+    },
+    "Ef8QPZAzf8WaLMUTgJCTsVvQUaW6G8iUEiEskrCjS6CH": {
+      "symbol": "OIL",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:36.736448"
+    },
+    "34pKYJuGdKeZY7SjddyG2BXcQsdFDGvSjxvomg6i1Dv5": {
+      "symbol": "TRUTH",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:48.133867"
+    },
+    "H4XQShfaieA3wikcyxFHowgMh2Fz4cG2rd9w2Tjpbonk": {
+      "symbol": "Bonkger",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:29:51.744721"
+    },
+    "7gpG9QBvYP5etqrx7WHQcJB5wF3y5siZTMkp5ap5pump": {
+      "symbol": "ok",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:30:03.139764"
+    },
+    "5XS8UPTQ7p4JAHYdF2ioj8aEFkH4YhpCKsL2c3fkbonk": {
+      "symbol": "ObamaBiden",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:30:06.752799"
+    },
+    "AhGi6771YW4SVx7thnFsp7kRLLobx88VtnKVq1nLpump": {
+      "symbol": "SLM",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:30:18.147266"
+    },
+    "EezoHMrE3mHCGLdwbLdaXZpM4DxQDEbPhAoeS6Vxbonk": {
+      "symbol": "OBUMU",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:30:21.758125"
+    },
+    "EHELQD6fMgwrtzM72WkwkRksufKFznAAR3syS294pump": {
+      "symbol": "Erik",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:30:33.154365"
+    },
+    "4gkrrSAtmENWcF7Xoi1r65tZrKP1yvTTqRvG4Jq4bonk": {
+      "symbol": "ObamaBiden",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:30:36.766654"
+    },
+    "2brv8F5WgLRKFmp88G7ewdhWSbChg9f2qirji9tDpump": {
+      "symbol": "MurderGPT",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:30:48.164660"
+    },
+    "EdeMGcjM1Kk6eevbGvmuNYoR4p39kR83s6HeK6iNtt25": {
+      "symbol": "Erik",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:31:03.171017"
+    },
+    "HvP2NQT6RLATUN6gaJbE5DfreENfbDuTRLrNjCfs5GUA": {
+      "symbol": "NIang",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:31:18.178130"
+    },
+    "Tj8k2vQja3UJ5qH9HskKTbiSASBy2ZFy288rqQcKysm": {
+      "symbol": "SEEK",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:31:33.185438"
+    },
+    "FJHBWxsKEtwk2peDpuZho2ALaUMeEzfCrf41Jzgkpump": {
+      "symbol": "NyanNyan",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:31:48.191654"
+    },
+    "9w51jAGuQR8Fy7ecBmur8cCypYBbn67bWCrKCbzZVf1r": {
+      "symbol": "Retail",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:32:05.630863"
+    },
+    "3w4iYQXiU77MGDtZyVDiBmZJZLVzenhkmDqoNngRpump": {
+      "symbol": "SReal",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:32:20.639712"
+    },
+    "CFvMrgvJfypLeWpDgS4fzk2C9nJJeztgZ98TmYN53Y3C": {
+      "symbol": "SReal",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:32:35.647245"
+    },
+    "5sgPpiRA4GnQoeyDexomJ3eq56tiDrZACoERFBCEpump": {
+      "symbol": "Valuestock",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:32:50.653815"
+    },
+    "5jqmE1gnYwKxsH1xj5fQfcU3fgnw3Rc8E4ZQ9AqTCse8": {
+      "symbol": "JEB",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:33:05.662065"
+    },
+    "5HEG4vhZMW1gbiSf74caErjU9cx6muEW7ue8CZTnpump": {
+      "symbol": "ORE",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:33:20.670410"
+    },
+    "2bhmvmGjcyruR8eYNjU2RndpmmdzRMrJFNimoYHPpump": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:33:35.680296"
+    },
+    "2VKmTXAHrMs9Cb2oghKXK5igFHVh6XpFSjNrJ7bWpump": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:33:50.689783"
+    },
+    "DprnWXuxjQ5fMV4MCRe3HSKScMN8Axh7qr4gVMpnpump": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:34:05.696746"
+    },
+    "pPkTMPNfM67giRCYqSxcgEhfypmqvrKjvtiytgXpump": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:34:20.703854"
+    },
+    "Egti8VREdLs7V9nDSD5CbFmjAargNwoXtiJeqBXXpump": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:34:35.711178"
+    },
+    "2ShDZNNKjuG7bDBtmZEWVASECeGcBwVXG147BSigMtCM": {
+      "symbol": "WIDOWGATE",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:34:39.463081"
+    },
+    "AmJHHRyqXBSXYxy9HLEQPFquUVNaUTqmAXZ15SVnpump": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:34:50.717937"
+    },
+    "F5ed1tAKDgH37SAiU8hCUXkARBRuZTTkufZ8MfwFpump": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:35:05.725757"
+    },
+    "5T7wyeu2EXjjQeEvuGzYeJqdHpJxH6FN3om2Bohtbonk": {
+      "symbol": "OAG6900",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:35:17.469541"
+    },
+    "DSNTwLJpoXQLUSEaLVNxYEPHPXxSDLji2jTtQkdqpump": {
+      "symbol": "test",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:35:20.732493"
+    },
+    "EFDdwtrZpMM5UgK6XfX2PkvAy5n9PWgT6oy49Kxy4Q35": {
+      "symbol": "SOCIO",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:35:35.739414"
+    },
+    "7mbvUp7g8iUvhPjKjySNxJtR3ZewJ8GHrQiL54xdpump": {
+      "symbol": "Jerry",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:35:50.747856"
+    },
+    "EtZqWBQ4eqHYziZPhc4aHa11dGWRkGt7SvD5nxpCpump": {
+      "symbol": "NYSE",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:36:05.755297"
+    },
+    "6boJAe7Ryzs7GzFe1JHJi1rzzboN748EpF4UnYRhpump": {
+      "symbol": "Bobby",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:36:20.765244"
+    },
+    "7uCx8ZH8NKbWnUQkqz9MwXWeCq9DrYd39LqZWQzf2p76": {
+      "symbol": "Dogeman",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:36:35.776332"
+    },
+    "ESF27Af94SNxmMpxGgzcS62GSgAtBEzV8hwhs1Gdpump": {
+      "symbol": "ZURICH",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:36:50.783599"
+    },
+    "NibgYsnpsC9Cmkvpxp9KcvWyMroDbUenisBVEeibonk": {
+      "symbol": "GSCI",
+      "bot_name": "sniper",
+      "platform": "lets_bonk",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:36:59.521369"
+    },
+    "3scUfeRbLcRXFoKFiumHCYyEnsv3TuDvYRbhoKqdpump": {
+      "symbol": "ORE",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:37:05.790451"
+    },
+    "FEFB3d6wjZcu5ukPd7USF4HDnyR6XQULhHrafg2TT6B6": {
+      "symbol": "ORE",
+      "bot_name": "sniper",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-19T15:37:20.797675"
     }
   }
 }
