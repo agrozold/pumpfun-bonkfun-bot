@@ -73,7 +73,7 @@ dev_check:
 
 # Trending scanner - ВЫКЛЮЧЕНО (volume_pattern заменяет)
 trending_scanner:
-  enabled: false
+  enabled: true
 
 # Whale copy - ВЫКЛЮЧЕНО
 whale_copy:

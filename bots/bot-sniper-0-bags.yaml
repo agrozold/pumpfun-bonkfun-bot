@@ -44,7 +44,7 @@ trade:
 # Pattern detection
 pattern_detection:
   enabled: true
-  pattern_only_mode: true
+  pattern_only_mode: false
   min_patterns_to_buy: 2
   min_signal_strength: 0.8
   min_whale_buys: 2
@@ -83,7 +83,7 @@ dev_check:
 
 # Trending scanner
 trending_scanner:
-  enabled: true
+  enabled: false
   min_volume_1h: 100000
   min_market_cap: 25000
   max_market_cap: 0

@@ -213,82 +213,9 @@ class PlatformAwareBuyer(Trader):
                 )
 
         except Exception as e:
-            error_str = str(e)
-            # Check if bonding curve is unavailable (migrated token)
-            if "Invalid bonding curve state" in error_str or "virtual_token_reserves: 0" in error_str:
-                logger.warning(f"[MIGRATE] Bonding curve unavailable for {token_info.symbol}, trying fallback...")
-                return await self._fallback_buy(token_info, self.amount)
-            
             logger.exception("Buy operation failed")
             return TradeResult(
                 success=False, platform=token_info.platform, error_message=str(e)
-            )
-
-
-    async def _fallback_buy(
-        self,
-        token_info: TokenInfo,
-        sol_amount: float,
-    ) -> TradeResult:
-        """Try to buy via PumpSwap or Jupiter when bonding curve unavailable."""
-        try:
-            fallback_buyer = FallbackSeller(
-                client=self.client,
-                wallet=self.wallet,
-                slippage=self.slippage,
-                priority_fee=100_000,
-                max_retries=self.max_retries,
-            )
-            
-            # Try PumpSwap first
-            logger.info(f"[FALLBACK] Trying PumpSwap BUY for {token_info.symbol}...")
-            success, sig, error, token_amount, price = await fallback_buyer.buy_via_pumpswap(
-                mint=token_info.mint,
-                sol_amount=sol_amount,
-                symbol=token_info.symbol,
-            )
-            
-            if success:
-                logger.info(f"[OK] PumpSwap BUY successful: {sig}")
-                return TradeResult(
-                    success=True,
-                    platform=token_info.platform,
-                    tx_signature=sig,
-                    amount=token_amount,
-                    price=price,
-                )
-            
-            # Fallback to Jupiter
-            logger.info(f"[FALLBACK] PumpSwap failed: {error}, trying Jupiter...")
-            success, sig, error = await fallback_buyer.buy_via_jupiter(
-                mint=token_info.mint,
-                sol_amount=sol_amount,
-                symbol=token_info.symbol,
-            )
-            
-            if success:
-                logger.info(f"[OK] Jupiter BUY successful: {sig}")
-                return TradeResult(
-                    success=True,
-                    platform=token_info.platform,
-                    tx_signature=sig,
-                    amount=0,
-                    price=0,
-                )
-            
-            logger.error(f"[FAIL] All fallback buy methods failed: {error}")
-            return TradeResult(
-                success=False,
-                platform=token_info.platform,
-                error_message=f"Fallback buy failed: {error}",
-            )
-                
-        except Exception as e:
-            logger.exception("Fallback buy operation failed")
-            return TradeResult(
-                success=False,
-                platform=token_info.platform,
-                error_message=f"Fallback buy error: {e}",
             )
 
     def _get_pool_address(
@@ -534,7 +461,6 @@ class PlatformAwareSeller(Trader):
             return TradeResult(
                 success=False, platform=token_info.platform, error_message=str(e)
             )
-
 
     def _get_pool_address(
         self, token_info: TokenInfo, address_provider: AddressProvider

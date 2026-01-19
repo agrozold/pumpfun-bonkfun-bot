@@ -113,7 +113,7 @@ dev_check:
 # TRENDING SCANNER - ЖЁСТКИЕ ФИЛЬТРЫ
 # ============================================
 trending_scanner:
-  enabled: true
+  enabled: false
   min_volume_1h: 100000
   min_market_cap: 25000
   max_market_cap: 0
