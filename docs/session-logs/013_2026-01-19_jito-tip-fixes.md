@@ -1,39 +1,43 @@
 # Session 013 - 2026-01-19
 
-## Тема: JITO Tip Instruction + Volume Analyzer Fixes
+## Тема: JITO Tip + Sniper/Volume Analyzer Fixes
 
 ## Что сделано
 
-### 1. JITO Tip Instruction добавлен в транзакцию
+### 1. JITO Tip Instruction
 **Файл:** `src/core/client.py`
+- Tip instruction добавляется перед созданием Message
+- Работает когда `JITO_ENABLED=true`
 
-- Tip instruction теперь добавляется перед созданием Message
-- Работает автоматически когда `JITO_ENABLED=true`
-- Логируется: `[JITO] Added tip: 10000 lamports`
-
-### 2. Исправлен Emergency Sell для мигрированных токенов
+### 2. Fix Emergency Sell для мигрированных токенов
 **Файл:** `src/trading/universal_trader.py`
+- Убрано "invalid" из migration_keywords (слишком широкое)
+- Теперь только точные индикаторы миграции
 
-**Проблема:** Слово "invalid" в ошибке `Invalid virtual_token_reserves: 0` триггерило ложную миграцию.
-
-**Решение:** Убрано "invalid" из migration_keywords. Теперь проверяются только точные индикаторы:
-- "bonding curve complete"
-- "migrated"  
-- "account not found" + "bonding"
-
-### 3. Volume Analyzer — теперь учитывает recommendation
+### 3. Volume Analyzer — recommendation check
 **Файл:** `src/monitoring/volume_pattern_analyzer.py`
+- Callback только для BUY/STRONG_BUY
+- SKIP токены больше не триггерят покупку
 
-**Проблема:** Callback `on_opportunity` вызывался для всех opportunities, включая SKIP.
+### 4. Sniper — bypass Dexscreener
+**Файл:** `src/monitoring/token_scorer.py`
+- `is_sniper_mode=True` → сразу return score 70
+- Без API запроса к Dexscreener
+- Экономия времени для свежих токенов
 
-**Решение:** Callback вызывается только для `BUY` или `STRONG_BUY`. Токены с `recommendation=SKIP` больше не покупаются автоматически.
+### 5. Volume Analyzer — duplicate check from FILE
+**Файл:** `src/trading/universal_trader.py`
+- Добавлена проверка `was_token_purchased(mint)` перед покупкой
+- Читает актуальный файл, не только память
+- Синхронизирует `_bought_tokens` с файлом
 
-## TODO (не сделано)
-- [ ] WSOL unwrap после продажи через PumpSwap
-- [ ] Тест JITO на реальной покупке
-- [ ] Возможно увеличить FDV лимит ($100k → $500k?)
+## Проблемы которые решены
+- Снайпер терял время на Dexscreener API для свежих токенов
+- Volume analyzer покупал токены которые уже были куплены другим ботом
+- Emergency sell срабатывал на "invalid" ошибках (не миграция)
 
 ## Файлы изменены
-- `src/core/client.py` — JITO tip instruction
-- `src/trading/universal_trader.py` — fix migration check
-- `src/monitoring/volume_pattern_analyzer.py` — fix recommendation check
+- `src/core/client.py`
+- `src/trading/universal_trader.py`
+- `src/monitoring/volume_pattern_analyzer.py`
+- `src/monitoring/token_scorer.py`
