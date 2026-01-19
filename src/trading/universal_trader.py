@@ -839,8 +839,8 @@ class UniversalTrader:
         )
         logger.warning(
             f"[WHALE MONITOR] Entry: {position.entry_price:.10f} SOL, "
-            f"TP: {position.take_profit_price:.10f if position.take_profit_price else 'None'} SOL, "
-            f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'None'} SOL"
+            f"TP: {(position.take_profit_price or 0):.10f} SOL, "
+            f"SL: {(position.stop_loss_price or 0):.10f} SOL"
         )
 
         try:
@@ -1916,7 +1916,15 @@ class UniversalTrader:
                 # ============================================
                 # ANTI-DUPLICATE CHECK (CRITICAL!)
                 # ============================================
-                # Check if already bought/buying via ANY path (whale, trending, listener)
+                # FIRST: Check positions.json (CROSS-BOT duplicate prevention!)
+                if is_token_in_positions(token_key):
+                    logger.info(
+                        f"[SKIP] {token_info.symbol} - already in positions.json (another bot bought)"
+                    )
+                    self.token_queue.task_done()
+                    continue
+                
+                # SECOND: Check in-memory sets (same-bot duplicate prevention)
                 if token_key in self._bought_tokens or token_key in self._buying_tokens:
                     logger.info(
                         f"Skipping token {token_info.symbol} - already bought/buying via another path"
@@ -1983,6 +1991,14 @@ class UniversalTrader:
             skip_checks: If True, skip scoring and dev checks (used for whale copy trades)
         """
         try:
+            # ============================================
+            # CROSS-BOT DUPLICATE CHECK - EARLIEST POSSIBLE!
+            # ============================================
+            mint_str = str(token_info.mint)
+            if is_token_in_positions(mint_str):
+                logger.info(f"[SKIP] {token_info.symbol} - already in positions.json (cross-bot check)")
+                return
+
             # Validate that token is for our platform
             if token_info.platform != self.platform:
                 logger.warning(
@@ -2366,10 +2382,12 @@ class UniversalTrader:
         logger.warning(
             f"[MONITOR] Starting position monitoring for {token_info.symbol} on {self.platform.value}"
         )
+        tp_str = f"{position.take_profit_price:.10f}" if position.take_profit_price else "None"
+        sl_str = f"{position.stop_loss_price:.10f}" if position.stop_loss_price else "None"
         logger.warning(
             f"[MONITOR] Entry: {position.entry_price:.10f} SOL, "
-            f"TP: {position.take_profit_price:.10f if position.take_profit_price else 'None'} SOL, "
-            f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'None'} SOL"
+            f"TP: {tp_str} SOL, "
+            f"SL: {sl_str} SOL"
         )
         logger.warning(f"[MONITOR] Check interval: {self.price_check_interval}s")
 
@@ -2484,8 +2502,8 @@ class UniversalTrader:
                     log_level = logger.error if pnl_pct < -20 else (logger.warning if pnl_pct < 0 else logger.info)
                     log_level(
                         f"[MONITOR] {token_info.symbol}: {current_price:.10f} SOL "
-                        f"({pnl_pct:+.2f}%) | TP: {position.take_profit_price:.10f if position.take_profit_price else 'N/A'} | "
-                        f"SL: {position.stop_loss_price:.10f if position.stop_loss_price else 'N/A'} | "
+                        f"({pnl_pct:+.2f}%) | TP: {(position.take_profit_price or 0):.10f} | "
+                        f"SL: {(position.stop_loss_price or 0):.10f} | "
                         f"HARD_SL: -{HARD_STOP_LOSS_PCT:.0f}%"
                     )
 

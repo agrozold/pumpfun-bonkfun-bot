@@ -130,13 +130,23 @@ class ListenerFactory:
                 logger.info("Created specialized BagsLogsListener for bags platform")
                 return listener
 
-        # Check if ONLY lets_bonk platform is requested - use specialized listener
+        # Check if ONLY lets_bonk platform is requested
+        # PumpPortal NOW supports bonk.fun! Use it for pumpportal/fallback
         if platforms and len(platforms) == 1 and platforms[0] == Platform.LETS_BONK:
-            if listener_type in ["logs", "fallback", "pumpportal"]:
+            if listener_type in ["pumpportal", "fallback"]:
+                # Use PumpPortal for bonk.fun (supported since mid-2025)
+                from monitoring.universal_pumpportal_listener import UniversalPumpPortalListener
+                logger.info("Creating PumpPortal listener for bonk.fun")
+                return UniversalPumpPortalListener(
+                    pumpportal_url=pumpportal_url,
+                    platforms=platforms,
+                    api_key=pumpportal_api_key,
+                )
+            elif listener_type == "logs":
                 if not wss_endpoint:
                     raise ValueError("WebSocket endpoint required for bonk listener")
 
-                # Use specialized BonkLogsListener for better detection
+                # Fallback to BonkLogsListener for logs type
                 from monitoring.bonk_logs_listener import BonkLogsListener
 
                 # Try to get RPC endpoint from WSS endpoint
@@ -292,9 +302,8 @@ class ListenerFactory:
         if platform == Platform.PUMP_FUN:
             return ["logs", "blocks", "geyser", "pumpportal"]
         elif platform == Platform.LETS_BONK:
-            # IMPORTANT: PumpPortal does NOT send bonk.fun tokens!
-            # Use bonk_logs for direct Raydium LaunchLab subscription
-            return ["bonk_logs", "logs", "blocks", "geyser"]
+            # PumpPortal NOW supports bonk.fun! (since mid-2025)
+            return ["pumpportal", "bonk_logs", "logs", "blocks", "geyser"]
         elif platform == Platform.BAGS:
             # BAGS uses Meteora DBC - PumpPortal does NOT support bags.fm!
             # Use bags_logs for direct Meteora DBC subscription.

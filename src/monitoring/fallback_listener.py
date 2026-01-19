@@ -125,21 +125,12 @@ class FallbackListener(BaseTokenListener):
                     UniversalPumpPortalListener,
                 )
 
-                # Filter out LETS_BONK from pumpportal - it doesn't support bonk.fun!
-                pumpportal_platforms = self.platforms
-                if pumpportal_platforms and Platform.LETS_BONK in pumpportal_platforms:
-                    pumpportal_platforms = [
-                        p for p in pumpportal_platforms if p != Platform.LETS_BONK
-                    ]
-                    if not pumpportal_platforms:
-                        logger.warning(
-                            "PumpPortal doesn't support bonk.fun, skipping..."
-                        )
-                        return None
+                # PumpPortal now supports both pump.fun AND bonk.fun!
+                # (Updated Jan 2026 - bonk.fun support added to PumpPortal)
 
                 return UniversalPumpPortalListener(
                     pumpportal_url=self.pumpportal_url,
-                    platforms=pumpportal_platforms,
+                    platforms=self.platforms,
                     api_key=self.pumpportal_api_key,
                     raise_on_max_errors=True,  # Allow FallbackListener to switch
                     max_consecutive_errors=3,  # Switch faster

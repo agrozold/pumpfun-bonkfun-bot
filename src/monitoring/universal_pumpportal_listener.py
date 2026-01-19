@@ -47,13 +47,15 @@ class UniversalPumpPortalListener(BaseTokenListener):
         self.max_consecutive_errors = max_consecutive_errors
 
         # Get platform-specific processors
-        # NOTE: PumpPortal only supports pump.fun tokens!
-        # bonk.fun and bags.fm tokens are NOT sent by PumpPortal
+        # PumpPortal supports pump.fun AND bonk.fun tokens!
+        # (bags.fm support TBD - needs verification)
         from platforms.pumpfun.pumpportal_processor import PumpFunPumpPortalProcessor
+        from platforms.letsbonk.pumpportal_processor import LetsBonkPumpPortalProcessor
 
-        # Create processor instances - only PumpFun is supported
+        # Create processor instances - PumpFun and LetsBonk supported
         all_processors = [
             PumpFunPumpPortalProcessor(),
+            LetsBonkPumpPortalProcessor(),
         ]
 
         # Filter processors based on requested platforms

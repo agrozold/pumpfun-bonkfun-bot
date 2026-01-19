@@ -2,7 +2,7 @@
 # Покупаем ТОЛЬКО токены с сильными паттернами и высоким скором
 # НЕ СМЯГЧАТЬ ЭТИ НАСТРОЙКИ!
 
-enabled: true
+enabled: false
 env_file: .env
 name: bot-sniper-bags
 platform: bags

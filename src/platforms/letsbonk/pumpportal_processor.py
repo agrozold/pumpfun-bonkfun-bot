@@ -69,9 +69,18 @@ class LetsBonkPumpPortalProcessor:
 
             if not all([name, symbol, mint_str, creator_str]):
                 logger.warning(
-                    "Missing required fields in PumpPortal LetsBonk token data"
+                    f"Missing required fields in PumpPortal LetsBonk token data: "
+                    f"name={name}, symbol={symbol}, mint={mint_str}, creator={creator_str}"
                 )
-                return None
+                logger.warning(f"Full token_data keys: {list(token_data.keys())}")
+                # Try alternative field names
+                if not creator_str:
+                    creator_str = token_data.get("creator") or token_data.get("user") or token_data.get("deployer")
+                    if creator_str:
+                        logger.info(f"Found creator in alternative field: {creator_str}")
+                
+                if not all([name, symbol, mint_str, creator_str]):
+                    return None
 
             # Convert string addresses to Pubkey objects
             mint = Pubkey.from_string(mint_str)

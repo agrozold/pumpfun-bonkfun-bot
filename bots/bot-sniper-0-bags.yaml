@@ -70,7 +70,7 @@ scoring:
 
 # Whale copy - OFF
 whale_copy:
-  enabled: false
+  enabled: true
   wallets_file: "smart_money_wallets.json"
   min_buy_amount: 1.0
   helius_api_key: ${HELIUS_API_KEY}
