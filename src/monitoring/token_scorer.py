@@ -119,7 +119,7 @@ class TokenScorer:
         # УЖЕСТОЧЕНО: Теперь требуем ОБА условия, не ИЛИ!
         min_trades_5m_ok = total_trades_5m >= 50
         min_trades_1h_ok = total_trades_1h >= 200
-        min_trades_ok = min_trades_5m_ok and min_trades_1h_ok
+        min_trades_ok = min_trades_5m_ok or min_trades_1h_ok
         
         # МИНИМУМ: $500 объём за 5 мин И $5000 за час
         # УЖЕСТОЧЕНО: Теперь требуем ОБА условия!
@@ -145,7 +145,7 @@ class TokenScorer:
         if not min_trades_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO FEW TRADES: "
-                f"5m={total_trades_5m} (need 50), 1h={total_trades_1h} (need 200) - BOTH required!"
+                f"5m={total_trades_5m} (need 50), 1h={total_trades_1h} (need 200) - Either 5m OR 1h enough"
             )
             return TokenScore(
                 mint=mint,
@@ -167,7 +167,7 @@ class TokenScorer:
         if not min_volume_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO LOW VOLUME: "
-                f"5m=${volume_5m:.2f} (need $500), 1h=${volume_1h:.2f} (need $5000) - BOTH required!"
+                f"5m=${volume_5m:.2f} (need $500), 1h=${volume_1h:.2f} (need $5000) - Either 5m OR 1h enough"
             )
             return TokenScore(
                 mint=mint,
