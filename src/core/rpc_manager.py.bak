@@ -144,7 +144,7 @@ class RPCManager:
                 http_endpoint=helius_http,
                 wss_endpoint=None,  # Helius doesn't have WSS
                 rate_limit_per_second=0.08,  # 4.8 req/min per bot
-                priority=5,
+                priority=0,
                 is_primary=True,
             )
             logger.info(f"[RPC] ✓ HELIUS PRIMARY: 0.08 req/s ({helius_key[:8]}...)")
@@ -156,7 +156,7 @@ class RPCManager:
                 http_endpoint=helius_enhanced,
                 wss_endpoint=None,
                 rate_limit_per_second=0.015,  # ~1 req/min - very expensive!
-                priority=5,
+                priority=0,
                 is_primary=True,
             )
             logger.info("[RPC] ✓ Helius Enhanced: 0.015 req/s (50 credits each)")
@@ -191,7 +191,7 @@ class RPCManager:
                 http_endpoint=alchemy_http,
                 wss_endpoint=None,
                 rate_limit_per_second=0.5,  # 30 req/min
-                priority=0,
+                priority=5,
                 is_primary=False,
             )
             logger.info("[RPC] ✓ Alchemy FALLBACK #1: 0.5 req/s")
