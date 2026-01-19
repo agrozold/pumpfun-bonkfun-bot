@@ -86,7 +86,7 @@ class TokenScorer:
             score = TokenScore(
                 mint=mint,
                 symbol=symbol,
-                total_score=70,
+                total_score=75,
                 volume_score=50,
                 buy_pressure_score=70,
                 momentum_score=80,
@@ -112,7 +112,7 @@ class TokenScorer:
                 return TokenScore(
                     mint=mint,
                     symbol=symbol,
-                    total_score=70,  # Достаточно для покупки
+                    total_score=75,  # Достаточно для покупки
                     volume_score=50,
                     buy_pressure_score=70,
                     momentum_score=80,

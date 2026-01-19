@@ -142,6 +142,10 @@ class WhaleTracker:
             set()
         )  # Tokens already emitted to prevent duplicates
 
+        # WSS fallback tracking
+        self._fast_closes = 0
+        self._use_fallback_wss = False
+        self._connect_time = 0.0
         # RPC Manager for optimized requests (initialized lazily)
         self._rpc_manager: RPCManager | None = None
 
@@ -233,23 +237,27 @@ class WhaleTracker:
     def _get_wss_endpoint(self) -> str | None:
         """Получить WSS endpoint для logsSubscribe.
 
-        ВАЖНО: Helius WSS даёт 429 rate limit на logsSubscribe!
-        Используем публичный Solana WSS для подписок.
-        Helius оставляем только для HTTP запросов (getTransaction и т.д.)
+        FALLBACK LOGIC:
+        1. Сначала пробуем Chainstack (если указан в wss_endpoint)
+        2. Если слишком много быстрых закрытий (< 90 сек) - переключаемся на публичный Solana
+        3. Helius WSS не используем - даёт 429 rate limit
         """
-        # Публичный Solana WSS - стабильный для logsSubscribe
-        # НЕ используем Helius WSS - даёт 429!
         public_wss = "wss://api.mainnet-beta.solana.com"
+        
+        # Если уже переключились на fallback - используем публичный Solana
+        if self._use_fallback_wss:
+            logger.warning("[WHALE] WSS ENDPOINT: Using PUBLIC SOLANA (fallback mode)")
+            return public_wss
 
-        # Если передан wss_endpoint - используем его (может быть приватный RPC)
+        # Если передан wss_endpoint (не Helius) - пробуем его
         if self.wss_endpoint and "helius" not in self.wss_endpoint.lower():
             logger.warning(
                 f"[WHALE] WSS ENDPOINT: Using provided: {self.wss_endpoint[:50]}..."
             )
             return self.wss_endpoint
 
-        # Fallback на публичный Solana WSS
-        logger.warning("[WHALE] WSS ENDPOINT: Using public Solana (Helius gives 429)")
+        # По умолчанию публичный Solana WSS
+        logger.warning("[WHALE] WSS ENDPOINT: Using public Solana (default)")
         return public_wss
 
     async def start(self):
@@ -407,6 +415,7 @@ class WhaleTracker:
                 ) as ws:
                     self._ws = ws
                     consecutive_errors = 0  # Reset on successful connect
+                    self._connect_time = time.time()  # Track connection time for fast-close detection
 
                     # Подписываемся на каждую программу
                     for i, program in enumerate(programs):
@@ -464,9 +473,25 @@ class WhaleTracker:
                                 aiohttp.WSMsgType.CLOSED,
                                 aiohttp.WSMsgType.CLOSE,
                             ):
-                                logger.warning(
-                                    f"[WHALE] WebSocket closed (type={msg.type}), reconnecting..."
-                                )
+                                # Check if this was a fast close (< 90 seconds)
+                                connection_duration = time.time() - self._connect_time
+                                if connection_duration < 90:
+                                    self._fast_closes += 1
+                                    logger.warning(
+                                        f"[WHALE] FAST CLOSE #{self._fast_closes} after {connection_duration:.0f}s (type={msg.type})"
+                                    )
+                                    # After 3 fast closes, switch to public Solana WSS
+                                    if self._fast_closes >= 3 and not self._use_fallback_wss:
+                                        self._use_fallback_wss = True
+                                        logger.warning(
+                                            "[WHALE] TOO MANY FAST CLOSES - SWITCHING TO PUBLIC SOLANA WSS!"
+                                        )
+                                else:
+                                    # Reset fast close counter on stable connection
+                                    self._fast_closes = 0
+                                    logger.warning(
+                                        f"[WHALE] WebSocket closed after {connection_duration:.0f}s (type={msg.type}), reconnecting..."
+                                    )
                                 break
 
                         except TimeoutError:
