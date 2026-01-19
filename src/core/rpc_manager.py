@@ -485,53 +485,46 @@ class RPCManager:
             self._session = None
 
 
-async def get_rpc_manager() -> RPCManager:
-    """Get global RPC manager."""
-    return await RPCManager.get_instance()
-
     async def get_transaction_helius_enhanced(
         self,
         signature: str,
         use_cache: bool = True,
-    ) -> dict[str, Any] | None:
-        """Get parsed transaction from Helius Enhanced API.
-        
-        This uses more credits (50 per request) but returns parsed data.
-        """
+    ) -> dict | None:
+        """Get parsed transaction from Helius Enhanced API."""
         cache_key = f"tx_enhanced:{signature}"
-        
-        # Check cache
+
         if use_cache:
             cached = self._get_cache(cache_key)
             if cached is not None:
                 return cached
-        
+
         provider = self.providers.get("helius_enhanced")
         if not provider:
-            # Fallback to regular getTransaction
             return await self.get_transaction(signature, use_cache)
-        
+
         await self._wait_for_rate_limit(provider)
-        
+
         try:
             async with self._session.post(
                 provider.http_endpoint,
                 json={"transactions": [signature]},
                 headers={"Content-Type": "application/json"},
             ) as resp:
-                if resp.status == self.HTTP_OK:
+                if resp.status == 200:
                     data = await resp.json()
                     self._handle_success(provider)
                     if data and len(data) > 0:
-                        self._set_cache(cache_key, data[0], 300)  # 5 min cache
+                        self._set_cache(cache_key, data[0], 300)
                         return data[0]
-                elif resp.status == self.HTTP_RATE_LIMITED:
+                elif resp.status == 429:
                     self._handle_rate_limit(provider)
-                    # Fallback to regular getTransaction
                     return await self.get_transaction(signature, use_cache)
         except Exception as e:
             logger.debug(f"[RPC] Helius Enhanced error: {e}")
-        
-        # Fallback to regular getTransaction
+
         return await self.get_transaction(signature, use_cache)
 
+
+async def get_rpc_manager() -> RPCManager:
+    """Get global RPC manager."""
+    return await RPCManager.get_instance()
