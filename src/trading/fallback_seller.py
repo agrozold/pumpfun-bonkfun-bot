@@ -622,23 +622,27 @@ class FallbackSeller:
         token_amount: float,
         symbol: str = "TOKEN",
     ) -> tuple[bool, str | None, str | None]:
-        """Try to sell via PumpSwap, fallback to Jupiter.
-        
-        Returns:
-            Tuple of (success, tx_signature, error_message)
-        """
+        """Try to sell via PumpSwap, fallback to PumpPortal, then Jupiter."""
         logger.info(f"[FALLBACK] Attempting fallback sell for {symbol} ({mint})")
-        
+
         # Try PumpSwap first
         success, sig, error = await self._sell_via_pumpswap(mint, token_amount, symbol)
         if success:
             return success, sig, None
-        
-        logger.info(f"PumpSwap failed: {error}, trying Jupiter...")
-        
+
+        logger.info(f"PumpSwap failed: {error}, trying PumpPortal...")
+
+        # Try PumpPortal (works for Token-2022 pump.fun tokens)
+        success, sig, error = await self._sell_via_pumpportal(mint, token_amount, symbol)
+        if success:
+            return success, sig, None
+
+        logger.info(f"PumpPortal failed: {error}, trying Jupiter...")
+
         # Fallback to Jupiter
         success, sig, error = await self._sell_via_jupiter(mint, token_amount, symbol)
         return success, sig, error
+
 
     async def _get_token_program_id(self, mint: Pubkey) -> Pubkey:
         """Determine if mint uses TokenProgram or Token2022Program."""
@@ -1038,6 +1042,73 @@ class FallbackSeller:
                                 return False, None, error_msg
                     
                     return False, None, "All Jupiter attempts failed"
+                
+        except Exception as e:
+            return False, None, str(e)
+
+    async def _sell_via_pumpportal(
+        self,
+        mint: Pubkey,
+        token_amount: float,
+        symbol: str = "TOKEN",
+    ) -> tuple[bool, str | None, str | None]:
+        """Sell via PumpPortal trade-local API (works for Token-2022 pump.fun tokens)."""
+        import requests
+        from solders.keypair import Keypair
+        from solders.commitment_config import CommitmentLevel
+        from solders.rpc.requests import SendVersionedTransaction
+        from solders.rpc.config import RpcSendTransactionConfig
+        
+        logger.info(f"[PUMPPORTAL] Attempting PumpPortal sell for {symbol} ({mint})")
+        
+        try:
+            # Get unsigned TX from PumpPortal
+            response = requests.post(
+                url="https://pumpportal.fun/api/trade-local",
+                data={
+                    "publicKey": str(self.wallet.pubkey),
+                    "action": "sell",
+                    "mint": str(mint),
+                    "amount": "100%",
+                    "denominatedInSol": "false",
+                    "slippage": 25,
+                    "priorityFee": 0.0005,
+                    "pool": "auto"
+                },
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                return False, None, f"PumpPortal error: {response.text}"
+            
+            # Sign TX
+            tx = VersionedTransaction(
+                VersionedTransaction.from_bytes(response.content).message,
+                [self.wallet.keypair]
+            )
+            
+            # Send via RPC
+            rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
+            commitment = CommitmentLevel.Confirmed
+            config = RpcSendTransactionConfig(preflight_commitment=commitment)
+            
+            send_response = requests.post(
+                url=rpc_endpoint,
+                headers={"Content-Type": "application/json"},
+                data=SendVersionedTransaction(tx, config).to_json(),
+                timeout=30
+            )
+            
+            result = send_response.json()
+            
+            if "result" in result:
+                sig = result["result"]
+                logger.info(f"[PUMPPORTAL] Sell TX: {sig}")
+                return True, sig, None
+            elif "error" in result:
+                return False, None, str(result["error"])
+            else:
+                return False, None, str(result)
                 
         except Exception as e:
             return False, None, str(e)
