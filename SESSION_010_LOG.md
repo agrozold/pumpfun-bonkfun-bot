@@ -30,3 +30,39 @@
 #### 4. Убрали дублирование:
 - Удалён bags-example.yaml
 - Отключен whale_copy во всех снайперах
+
+---
+
+## Дополнение: Global Purchase History + Sniper Enabled
+
+### Проблема
+- Несколько ботов покупали один и тот же токен одновременно
+- whale-copy и volume-sniper снайпили новые токены (не должны)
+
+### Решение
+
+#### 1. Global Purchase History
+Файл `/data/purchased_tokens_history.json` — общий для всех ботов:
+- При старте каждый бот загружает историю
+- При покупке — записывает в файл
+- Токен купленный один раз — НИКОГДА не покупается снова
+
+#### 2. sniper_enabled флаг
+- `sniper_enabled: true` (default) — бот снайпит новые токены
+- `sniper_enabled: false` — бот НЕ снайпит, только whale/trending/volume
+
+#### Текущая архитектура (5 конфигов, 6 процессов):
+
+| Бот | sniper_enabled | Что делает |
+|-----|----------------|------------|
+| bot-sniper-0-pump | true | Снайпит pump_fun |
+| bot-sniper-0-bonk | true | Снайпит lets_bonk |
+| bot-sniper-0-bags | true | Снайпит bags |
+| bot-whale-copy | false | Только копирует китов |
+| bot-volume-sniper | false | Только trending/volume |
+
+### Файлы:
+- `src/trading/purchase_history.py` — модуль истории покупок
+- `data/purchased_tokens_history.json` — файл истории
+- `bots/bot-whale-copy.yaml` — sniper_enabled: false
+- `bots/bot-volume-sniper.yaml` — sniper_enabled: false
