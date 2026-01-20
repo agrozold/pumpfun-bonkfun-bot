@@ -643,7 +643,7 @@ class UniversalTrader:
 
         # Double-check fresh file (other bots may have bought)
         if was_token_purchased(mint_str):
-            logger.info(f"[VOLUME] {analysis.symbol} found in purchase history file, skipping")
+            logger.info(f"[WHALE] {whale_buy.token_symbol} found in purchase history file, skipping")
             self._bought_tokens.add(mint_str)  # Sync memory
             return
 
@@ -1429,18 +1429,19 @@ class UniversalTrader:
                 creator_vault=None,
             )
             
-            await self._handle_token(token_info, skip_checks=False)
+            buy_success = await self._handle_token(token_info, skip_checks=False)
 
-            # Mark as BOUGHT - NEVER buy again!
-            self._bought_tokens.add(mint_str)
-            add_to_purchase_history(
-                mint=mint_str,
-                symbol=analysis.symbol,
-                bot_name="volume_analyzer",
-                platform=self.platform.value,
-                price=0,
-                amount=0,
-            )
+            # Mark as BOUGHT only if purchase was successful
+            if buy_success:
+                self._bought_tokens.add(mint_str)
+                add_to_purchase_history(
+                    mint=mint_str,
+                    symbol=analysis.symbol,
+                    bot_name="volume_analyzer",
+                    platform=self.platform.value,
+                    price=0,
+                    amount=0,
+                )
             
         except Exception as e:
             logger.error(f"[VOLUME] Error processing {analysis.symbol}: {e}")
@@ -1710,17 +1711,17 @@ class UniversalTrader:
 
             # Покупаем! skip_checks=False - пусть проходит dev check и другие проверки
             # Scoring уже проверен выше, но _handle_token пропустит повторную проверку
-            await self._handle_token(token_info, skip_checks=False)
-            # Mark as BOUGHT after successful _handle_token - NEVER buy again!
-            self._bought_tokens.add(mint_str)
-            add_to_purchase_history(
-                mint=mint_str,
-                symbol=token.symbol,
-                bot_name="trending_scanner",
-                platform=token.dex_id or "unknown",
-                price=0,
-                amount=0,
-            )
+            buy_success = await self._handle_token(token_info, skip_checks=False)
+            if buy_success:
+                self._bought_tokens.add(mint_str)
+                add_to_purchase_history(
+                    mint=mint_str,
+                    symbol=token.symbol,
+                    bot_name="trending_scanner",
+                    platform=token.dex_id or "unknown",
+                    price=0,
+                    amount=0,
+                )
 
         except Exception as e:
             logger.exception(f"Failed to buy trending token: {e}")
@@ -1800,7 +1801,7 @@ class UniversalTrader:
                 )
                 token_info = await self._wait_for_token()
                 if token_info:
-                    await self._handle_token(token_info)
+                    buy_success = await self._handle_token(token_info)
                     logger.info("Finished processing single token. Exiting...")
                 else:
                     logger.info(
@@ -2043,17 +2044,17 @@ class UniversalTrader:
                 )
 
                 try:
-                    await self._handle_token(token_info)
-                    # Mark as BOUGHT after successful buy - NEVER buy again!
-                    self._bought_tokens.add(token_key)
-                    add_to_purchase_history(
-                        mint=token_key,
-                        symbol=token_info.symbol,
-                        bot_name="sniper",
-                        platform=self.platform.value,
-                        price=0,
-                        amount=0,
-                    )
+                    buy_success = await self._handle_token(token_info)
+                    if buy_success:
+                        self._bought_tokens.add(token_key)
+                        add_to_purchase_history(
+                            mint=token_key,
+                            symbol=token_info.symbol,
+                            bot_name="sniper",
+                            platform=self.platform.value,
+                            price=0,
+                            amount=0,
+                        )
                 finally:
                     # Remove from "buying" set (either succeeded or failed)
                     self._buying_tokens.discard(token_key)
@@ -2068,7 +2069,7 @@ class UniversalTrader:
                 if token_info is not None:
                     self.token_queue.task_done()
 
-    async def _handle_token(self, token_info: TokenInfo, skip_checks: bool = False) -> None:
+    async def _handle_token(self, token_info: TokenInfo, skip_checks: bool = False) -> bool:
         """Handle a new token creation event.
         
         Args:
@@ -2082,14 +2083,14 @@ class UniversalTrader:
             mint_str = str(token_info.mint)
             if is_token_in_positions(mint_str):
                 logger.info(f"[SKIP] {token_info.symbol} - already in positions.json (cross-bot check)")
-                return
+                return False
 
             # Validate that token is for our platform
             if token_info.platform != self.platform:
                 logger.warning(
                     f"Token platform mismatch: expected {self.platform.value}, got {token_info.platform.value}"
                 )
-                return
+                return False
 
             mint_str = str(token_info.mint)
 
@@ -2145,7 +2146,7 @@ class UniversalTrader:
                         )
                     # Store token_info for later if signal arrives
                     self.pending_tokens[mint_str] = token_info
-                    return
+                    return False
 
             # Token scoring check (runs in parallel with wait time) - skip if whale copy
             scoring_task = None
@@ -2183,11 +2184,11 @@ class UniversalTrader:
                         logger.info(
                             f"Skipping {token_info.symbol} - score {score.total_score} below threshold"
                         )
-                        return
+                        return False
                 except Exception as e:
                     # CRITICAL: Если scoring упал - НЕ покупаем! Безопасность важнее скорости
                     logger.warning(f"[SKIP] Scoring failed for {token_info.symbol}: {e} - NOT buying!")
-                    return
+                    return False
 
             # Check dev reputation result if enabled
             if dev_check_task:
@@ -2203,14 +2204,14 @@ class UniversalTrader:
                         logger.warning(
                             f"[WARN] Skipping {token_info.symbol} - {dev_result.get('reason', 'bad dev')}"
                         )
-                        return
+                        return False
                 except Exception as e:
                     logger.warning(f"Dev check failed, proceeding anyway: {e}")
 
             # Check wallet balance before buying
             balance_ok = await self._check_balance_before_buy()
             if not balance_ok:
-                return
+                return False
 
             # Buy token
             if skip_checks:
@@ -2232,14 +2233,16 @@ class UniversalTrader:
                 )
             except Exception as e:
                 logger.exception(f"[FAIL] Buy execution failed with exception: {e}")
-                return
+                return False
 
             if buy_result.success:
                 logger.warning(f"[OK] BUY SUCCESS: {token_info.symbol} - {buy_result.tx_signature}")
                 await self._handle_successful_buy(token_info, buy_result)
+                return True
             else:
                 logger.error(f"[FAIL] BUY FAILED: {token_info.symbol} - {buy_result.error_message or 'Unknown error'}")
                 await self._handle_failed_buy(token_info, buy_result)
+                return False
 
             # Only wait for next token in yolo mode
             if self.yolo_mode:
@@ -2250,6 +2253,7 @@ class UniversalTrader:
 
         except Exception:
             logger.exception(f"Error handling token {token_info.symbol}")
+            return False
 
     async def _check_balance_before_buy(self) -> bool:
         """Check if wallet has enough SOL to continue trading.
