@@ -234,8 +234,8 @@ class UniversalPumpPortalListener(BaseTokenListener):
     def _detect_platform_from_mint(self, mint: str) -> str | None:
         """Detect platform from mint address suffix.
         
-        PumpPortal only supports pump.fun tokens.
-        bonk.fun and bags.fm tokens are NOT sent by PumpPortal!
+        PumpPortal supports pump.fun and bonk.fun tokens.
+        Platform is determined by mint address suffix.
         
         Args:
             mint: Token mint address
@@ -246,7 +246,9 @@ class UniversalPumpPortalListener(BaseTokenListener):
         mint_lower = mint.lower()
         if mint_lower.endswith("pump"):
             return "pump"
-        # bonk.fun and bags.fm are NOT supported by PumpPortal
+        if mint_lower.endswith("bonk"):
+            return "bonk"
+        # bags.fm not yet supported by PumpPortal
         return None
 
     async def _wait_for_token_creation(self, websocket) -> TokenInfo | None:

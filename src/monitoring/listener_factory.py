@@ -75,11 +75,18 @@ class ListenerFactory:
 
             from monitoring.bags_logs_listener import BagsLogsListener
 
-            # Try to get RPC endpoint from WSS endpoint
+            # Use Helius/Chainstack RPC for HTTP requests (faster than public Solana)
+            import os
+            if not rpc_endpoint:
+                rpc_endpoint = os.environ.get(
+                    "HELIUS_RPC_ENDPOINT",
+                    os.environ.get("SOLANA_NODE_RPC_ENDPOINT", "")
+                )
             if not rpc_endpoint and wss_endpoint:
                 rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace(
                     "ws://", "http://"
                 )
+            logger.info(f"BonkLogsListener using RPC: {rpc_endpoint[:50]}...")
 
             listener = BagsLogsListener(
                 wss_endpoint=wss_endpoint,
@@ -95,11 +102,18 @@ class ListenerFactory:
 
             from monitoring.bonk_logs_listener import BonkLogsListener
 
-            # Try to get RPC endpoint from WSS endpoint
+            # Use Helius/Chainstack RPC for HTTP requests (faster than public Solana)
+            import os
+            if not rpc_endpoint:
+                rpc_endpoint = os.environ.get(
+                    "HELIUS_RPC_ENDPOINT",
+                    os.environ.get("SOLANA_NODE_RPC_ENDPOINT", "")
+                )
             if not rpc_endpoint and wss_endpoint:
                 rpc_endpoint = wss_endpoint.replace("wss://", "https://").replace(
                     "ws://", "http://"
                 )
+            logger.info(f"BonkLogsListener using RPC: {rpc_endpoint[:50]}...")
 
             listener = BonkLogsListener(
                 wss_endpoint=wss_endpoint,

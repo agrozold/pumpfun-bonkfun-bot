@@ -228,25 +228,56 @@ class BonkLogsListener(BaseTokenListener):
             log_data = data["params"]["result"]["value"]
             logs = log_data.get("logs", [])
             signature = log_data.get("signature", "")
+            
+            # DEBUG: Log all incoming transactions
+            logger.info(f"[BONK-DEBUG] Got log notification, sig={signature[:20]}..., logs_count={len(logs)}")
+            # Check if initialize exists
+            has_init = any("initialize" in log.lower() for log in logs)
+            has_launchlab = any("LanMV9" in log for log in logs)
+            logger.info(f"[BONK-DEBUG] has_initialize={has_init}, has_launchlab={has_launchlab}")
+            if has_init:
+                for log in logs:
+                    if "initialize" in log.lower():
+                        logger.info(f"[BONK-DEBUG] INIT LOG: {log[:100]}")
 
             if not signature:
                 return None
 
             # Check if this looks like a token creation
             # Look for "initialize" in logs or specific patterns
-            is_initialize = any(
-                "initialize" in log.lower() or
-                "Program log: Instruction: Initialize" in log
+            # Look for pool/token creation indicators in logs
+            # Must have program invoke AND not just InitializeAccount3
+            logs_text = " ".join(logs)
+            
+            # LaunchLab pool creation - look for InitializeV2/InitializeMint (not just InitializeAccount)
+            is_real_token_creation = any(
+                "Instruction: InitializeV2" in log or
+                "Instruction: InitializeMint" in log
                 for log in logs
             )
-
-            if not is_initialize:
+            is_pool_create = is_real_token_creation
+            
+            if not is_real_token_creation:
+                # Skip buy/swap transactions (InitializeAccount3 only)
                 return None
-
-            logger.debug(f"Potential token creation detected: {signature[:16]}...")
+            
+            if not is_pool_create:
+                return None
+            
+            logger.info(f"[BONK] Potential pool creation detected: {signature[:20]}... (logs={len(logs)})")
+            logger.info(f"[BONK] Calling _fetch_and_parse_transaction...")
+            
+            # Small delay to let transaction confirm
+            await asyncio.sleep(2.0)
 
             # Fetch full transaction to parse
             token_info = await self._fetch_and_parse_transaction(signature)
+            
+            if token_info:
+                logger.info(f"[BONK] ✅ Token parsed: {token_info.name} ({token_info.symbol})")
+            else:
+                logger.info(f"[BONK] ❌ No token found in transaction")
+            
             return token_info
 
         except asyncio.TimeoutError:
@@ -275,8 +306,10 @@ class BonkLogsListener(BaseTokenListener):
                 )
 
                 if not response.value:
-                    logger.debug(f"Transaction not found: {signature[:16]}...")
+                    logger.info(f"[BONK-FETCH] Transaction not found: {signature[:16]}...")
                     return None
+                
+                logger.info(f"[BONK-FETCH] Got transaction response")
 
                 tx = response.value
                 
@@ -303,6 +336,7 @@ class BonkLogsListener(BaseTokenListener):
 
                 # Extract account keys
                 account_keys = list(transaction.message.account_keys)
+                logger.info(f"[BONK-PARSE] TX has {len(transaction.message.instructions)} instructions, {len(account_keys)} accounts")
                 
                 # Add lookup table addresses if present
                 if hasattr(transaction.message, "address_table_lookups"):
@@ -311,6 +345,7 @@ class BonkLogsListener(BaseTokenListener):
                         pass
 
                 # Find and parse LaunchLab instructions
+                launchlab_ix_count = 0
                 for ix in transaction.message.instructions:
                     program_idx = ix.program_id_index
                     if program_idx >= len(account_keys):
@@ -319,6 +354,11 @@ class BonkLogsListener(BaseTokenListener):
                     program_id = account_keys[program_idx]
                     if str(program_id) != self.program_id:
                         continue
+                    
+                    launchlab_ix_count += 1
+                    # Log instruction discriminator (first 8 bytes)
+                    disc = bytes(ix.data)[:8].hex() if len(ix.data) >= 8 else "short"
+                    logger.info(f"[BONK-PARSE] Found LaunchLab ix #{launchlab_ix_count}, disc={disc}, accounts={len(ix.accounts)}")
 
                     # Convert account keys to bytes
                     account_keys_bytes = [bytes(key) for key in account_keys]
