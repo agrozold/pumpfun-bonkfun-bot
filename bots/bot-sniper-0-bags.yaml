@@ -21,7 +21,7 @@ filters:
 # Priority fees
 priority_fees:
   strategy: sniper
-  enable_dynamic: true
+  enable_dynamic: false
   enable_fixed: true
   fixed_amount: 500000
   min_fee: 100000

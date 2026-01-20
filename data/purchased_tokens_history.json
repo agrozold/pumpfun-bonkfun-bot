@@ -8063,6 +8063,22 @@
       "price": 0,
       "amount": 0,
       "timestamp": "2026-01-19T17:41:11.715420"
+    },
+    "FwTaXBU3r6mqsEu79N2hnXzRRMmv5Rqh5CtCyS2tpump": {
+      "symbol": "Kidney",
+      "bot_name": "volume_analyzer",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-20T08:43:13.670764"
+    },
+    "9vrm9a2nRTPHWTzZsaK6DHsxXQgPw6MtgA6mTHYxpump": {
+      "symbol": "Bacon",
+      "bot_name": "volume_analyzer",
+      "platform": "pump_fun",
+      "price": 0,
+      "amount": 0,
+      "timestamp": "2026-01-20T08:44:42.849282"
     }
   }
 }

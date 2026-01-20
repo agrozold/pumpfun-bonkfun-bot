@@ -1,6 +1,8 @@
 """
 LetsBonk-specific PumpPortal event processor.
 File: src/platforms/letsbonk/pumpportal_processor.py
+
+FIXED: Now uses bondingCurveKey from PumpPortal as pool_state.
 """
 
 from solders.pubkey import Pubkey
@@ -27,23 +29,13 @@ class LetsBonkPumpPortalProcessor:
     @property
     def supported_pool_names(self) -> list[str]:
         """Get the pool names this processor supports from PumpPortal."""
-        return ["bonk"]  # PumpPortal pool name for LetsBonk/bonk pools
+        return ["bonk"]
 
     def can_process(self, token_data: dict) -> bool:
-        """Check if this processor can handle the given token data.
-
-        Args:
-            token_data: Token data from PumpPortal
-
-        Returns:
-            True if this processor can handle the token data
-        """
-        # Check mint suffix first (more reliable than pool field)
+        """Check if this processor can handle the given token data."""
         mint = token_data.get("mint", "").lower()
         if mint.endswith("bonk"):
             return True
-        
-        # Fallback to pool field
         pool = token_data.get("pool", "").lower()
         return pool in self.supported_pool_names
 
@@ -57,28 +49,25 @@ class LetsBonkPumpPortalProcessor:
             TokenInfo if token creation found, None otherwise
         """
         try:
-            # Extract required fields for LetsBonk
+            # Log incoming data for debugging
+            logger.info(f"[BONK] Processing token, keys: {list(token_data.keys())}")
+            
+            # Extract required fields - same structure as pump.fun!
             name = token_data.get("name", "")
             symbol = token_data.get("symbol", "")
             mint_str = token_data.get("mint")
+            # CRITICAL FIX: Use bondingCurveKey as pool_state
+            pool_state_str = token_data.get("bondingCurveKey")
             creator_str = token_data.get("traderPublicKey")
             uri = token_data.get("uri", "")
 
-            # Note: LetsBonk tokens from PumpPortal might have different field mappings
-            # This would need to be adjusted based on actual PumpPortal data for LetsBonk tokens
-
             if not all([name, symbol, mint_str, creator_str]):
                 logger.warning(
-                    f"Missing required fields in PumpPortal LetsBonk token data: "
-                    f"name={name}, symbol={symbol}, mint={mint_str}, creator={creator_str}"
+                    f"[BONK] Missing required fields: name={name}, symbol={symbol}, "
+                    f"mint={mint_str}, creator={creator_str}"
                 )
-                logger.warning(f"Full token_data keys: {list(token_data.keys())}")
-                # Try alternative field names
                 if not creator_str:
-                    creator_str = token_data.get("creator") or token_data.get("user") or token_data.get("deployer")
-                    if creator_str:
-                        logger.info(f"Found creator in alternative field: {creator_str}")
-                
+                    creator_str = token_data.get("creator") or token_data.get("user")
                 if not all([name, symbol, mint_str, creator_str]):
                     return None
 
@@ -87,35 +76,32 @@ class LetsBonkPumpPortalProcessor:
             user = Pubkey.from_string(creator_str)
             creator = user
 
-            # Derive LetsBonk-specific addresses
-            pool_state = self.address_provider.derive_pool_address(mint)
+            # CRITICAL: Use pool_state from PumpPortal if available
+            if pool_state_str:
+                pool_state = Pubkey.from_string(pool_state_str)
+                logger.info(f"[BONK] Using bondingCurveKey as pool_state: {pool_state_str[:20]}...")
+            else:
+                # Fallback to derivation (may be wrong for some tokens)
+                pool_state = self.address_provider.derive_pool_address(mint)
+                logger.warning(f"[BONK] No bondingCurveKey, deriving pool_state (may fail!)")
 
-            # For LetsBonk, vault addresses might need to be derived differently
-            # or provided in the PumpPortal data. For now, we'll derive them
-            # using the standard pattern, but this might need adjustment
-            additional_accounts = self.address_provider.get_additional_accounts(
-                # Create a minimal TokenInfo to get additional accounts
-                TokenInfo(
-                    name=name,
-                    symbol=symbol,
-                    uri=uri,
-                    mint=mint,
-                    platform=Platform.LETS_BONK,
-                    pool_state=pool_state,
-                    user=user,
-                    creator=creator,
-                    base_vault=None,  # Will be filled from additional_accounts
-                    quote_vault=None,  # Will be filled from additional_accounts
-                )
+            # Create temp TokenInfo to get additional accounts
+            token_info_temp = TokenInfo(
+                name=name,
+                symbol=symbol,
+                uri=uri,
+                mint=mint,
+                platform=Platform.LETS_BONK,
+                pool_state=pool_state,
+                user=user,
+                creator=creator,
+                base_vault=None,
+                quote_vault=None,
             )
-
-            # Extract vault addresses if available
+            
+            additional_accounts = self.address_provider.get_additional_accounts(token_info_temp)
             base_vault = additional_accounts.get("base_vault")
             quote_vault = additional_accounts.get("quote_vault")
-
-            # If vaults aren't available from additional_accounts,
-            # we might need to derive them or leave them None
-            # and let the trading logic handle the derivation
 
             return TokenInfo(
                 name=name,
@@ -131,5 +117,5 @@ class LetsBonkPumpPortalProcessor:
             )
 
         except Exception:
-            logger.exception("Failed to process PumpPortal LetsBonk token data")
+            logger.exception("[BONK] Failed to process PumpPortal token data")
             return None
