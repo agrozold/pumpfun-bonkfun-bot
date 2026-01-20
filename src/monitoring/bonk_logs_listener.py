@@ -1,7 +1,7 @@
 """
 Specialized listener for bonk.fun (Raydium LaunchLab) tokens.
 
-PumpPortal does NOT send bonk.fun tokens, so we need to subscribe directly
+PumpPortal NOW supports bonk.fun (Jan 2026), but this listener provides direct RPC access
 to Raydium LaunchLab program logs and parse the transactions.
 
 This listener:

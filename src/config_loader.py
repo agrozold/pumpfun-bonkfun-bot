@@ -80,11 +80,11 @@ VALID_VALUES = {
 }
 
 # Platform-specific listener compatibility
-# NOTE: PumpPortal does NOT support bonk.fun or bags.fm tokens!
-# Use bonk_logs for bonk.fun (Raydium LaunchLab) and bags_logs for bags.fm (Meteora DBC)
+# NOTE: PumpPortal supports pump.fun AND bonk.fun (since Jan 2026)!
+# bags.fm (Meteora DBC) is NOT supported by PumpPortal - use bags_logs for bags.fm
 PLATFORM_LISTENER_COMPATIBILITY = {
-    Platform.PUMP_FUN: ["logs", "blocks", "geyser", "pumpportal", "fallback"],
-    Platform.LETS_BONK: ["bonk_logs", "logs", "blocks", "geyser", "fallback"],
+    Platform.PUMP_FUN: ["pumpportal", "logs", "blocks", "geyser", "fallback"],
+    Platform.LETS_BONK: ["pumpportal", "bonk_logs", "logs", "blocks", "geyser", "fallback"],
     Platform.BAGS: ["bags_logs", "logs", "blocks", "geyser", "fallback"],
 }
 

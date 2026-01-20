@@ -13,7 +13,7 @@ private_key: ${SOLANA_PRIVATE_KEY}
 # Listener
 filters:
   bro_address: null
-  listener_type: fallback
+  listener_type: pumpportal
   match_string: null
   max_token_age: 315360000
   yolo_mode: true
