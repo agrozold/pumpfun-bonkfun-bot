@@ -12,6 +12,10 @@ from solders.pubkey import Pubkey
 
 from utils.logger import get_logger
 
+# Session 9: Atomic file writes
+from utils.safe_file_writer import SafeFileWriter
+_positions_writer = SafeFileWriter(backup_count=10, backup_dir="backups/positions", enable_backups=True)
+
 logger = get_logger(__name__)
 
 # File to store active positions
@@ -236,9 +240,10 @@ def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -
     active_positions = [p.to_dict() for p in positions if p.is_active]
     
     try:
-        with open(filepath, "w") as f:
-            json.dump(active_positions, f, indent=2)
-        logger.info(f"Saved {len(active_positions)} active positions to {filepath}")
+        # SESSION 9: Atomic write
+        success = _positions_writer.write_json(filepath, active_positions)
+        if success:
+            logger.info(f"Saved {len(active_positions)} positions (atomic)")
     except Exception as e:
         logger.exception(f"Failed to save positions: {e}")
 
@@ -283,10 +288,9 @@ def remove_position(mint: str, filepath: Path = POSITIONS_FILE) -> None:
 def is_token_in_positions(mint_str: str, filepath: Path = POSITIONS_FILE) -> bool:
     """Check if token is already in positions file (for cross-bot sync)."""
     try:
-        if not filepath.exists():
+        positions = _positions_writer.read_json_safe(filepath, default=[])
+        if not positions:
             return False
-        with open(filepath) as f:
-            positions = json.load(f)
         for pos in positions:
             if pos.get("mint") == mint_str and pos.get("is_active", True):
                 return True
