@@ -47,6 +47,9 @@ JUPITER_API_KEY = os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
 
 load_dotenv()
 
+# JITO integration for faster transaction landing
+from src.trading.jito_sender import get_jito_sender
+
 # Constants
 EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
 TOKEN_DECIMALS = 6
@@ -427,22 +430,39 @@ async def buy_via_jupiter(
             tx_bytes = base64.b64decode(swap_tx_base64)
             tx = VersionedTransaction.from_bytes(tx_bytes)
             signed_tx = VersionedTransaction(tx.message, [payer])
-            
+
+            # JITO support (note: can't add tip to Jupiter pre-built tx)
+            jito = get_jito_sender()
+
             async with AsyncClient(rpc_endpoint) as client:
                 for attempt in range(max_retries):
                     try:
                         print(f"🚀 Sending Jupiter transaction (attempt {attempt + 1}/{max_retries})...")
-                        result = await client.send_transaction(
-                            signed_tx,
-                            opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                        )
-                        sig = str(result.value)
                         
-                        print(f"📤 Signature: {sig}")
+                        # Try JITO first if enabled
+                        sig = None
+                        if jito.enabled:
+                            try:
+                                jito_sig = await jito.send_transaction(signed_tx)
+                                if jito_sig:
+                                    sig = jito_sig
+                                    print(f"⚡ [JITO] TX sent: {sig}")
+                            except Exception as jito_err:
+                                print(f"⚠️ [JITO] Failed: {jito_err}, using regular RPC...")
+                        
+                        # Fallback to regular RPC
+                        if not sig:
+                            result = await client.send_transaction(
+                                signed_tx,
+                                opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+                            )
+                            sig = str(result.value)
+                            print(f"📤 [RPC] Signature: {sig}")
+
                         print(f"🔗 https://solscan.io/tx/{sig}")
-                        
+
                         await client.confirm_transaction(
-                            Signature.from_string(sig), 
+                            Signature.from_string(sig) if isinstance(sig, str) else sig,
                             commitment="confirmed"
                         )
                         print(f"✅ Jupiter BUY confirmed! Got ~{out_amount_tokens:,.2f} tokens")
@@ -451,9 +471,10 @@ async def buy_via_jupiter(
                         print(f"⚠️ Jupiter attempt {attempt + 1} failed: {e}")
                         if attempt < max_retries - 1:
                             await asyncio.sleep(1.0)
-                
+
                 print("❌ All Jupiter attempts failed")
                 return False
+
                 
     except Exception as e:
         print(f"❌ Jupiter error: {e}")
@@ -662,36 +683,62 @@ async def buy_via_pumpswap(
     
     buy_ix = Instruction(PUMP_AMM_PROGRAM_ID, data, accounts)
 
+    # JITO support
+    jito = get_jito_sender()
+
     for attempt in range(max_retries):
         try:
             # Use cached blockhash for speed
             cache = await get_blockhash_cache(rpc_endpoint)
             blockhash = await cache.get_blockhash()
+            
+            # Build instructions list - add JITO tip if enabled
+            instructions = [compute_limit_ix, compute_price_ix, create_wsol_ata_ix, transfer_sol_ix, sync_native_ix, create_token_ata_ix, buy_ix]
+            if jito.enabled:
+                tip_ix = jito.create_tip_instruction(payer.pubkey())
+                instructions.append(tip_ix)
+                print(f"💰 JITO tip: {jito.tip_lamports} lamports")
+            
             msg = Message.new_with_blockhash(
-                [compute_limit_ix, compute_price_ix, create_wsol_ata_ix, transfer_sol_ix, sync_native_ix, create_token_ata_ix, buy_ix],
+                instructions,
                 payer.pubkey(),
                 blockhash,
             )
             tx = VersionedTransaction(message=msg, keypairs=[payer])
-            
+
             print(f"🚀 Sending PumpSwap transaction (attempt {attempt + 1}/{max_retries})...")
-            result = await client.send_transaction(tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed))
-            sig = result.value
             
-            print(f"📤 Signature: {sig}")
+            # Try JITO first if enabled
+            sig = None
+            if jito.enabled:
+                try:
+                    jito_sig = await jito.send_transaction(tx)
+                    if jito_sig:
+                        sig = jito_sig
+                        print(f"⚡ [JITO] TX sent: {sig}")
+                except Exception as jito_err:
+                    print(f"⚠️ [JITO] Failed: {jito_err}, using regular RPC...")
+            
+            # Fallback to regular RPC
+            if not sig:
+                result = await client.send_transaction(tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed))
+                sig = result.value
+                print(f"📤 [RPC] Signature: {sig}")
+
             print(f"🔗 https://solscan.io/tx/{sig}")
-            
+
             await client.confirm_transaction(sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             return True
-            
+
         except Exception as e:
             print(f"❌ Attempt {attempt + 1} failed: {e}")
             if attempt < max_retries - 1:
                 await asyncio.sleep(1)
-    
+
     print("❌ All PumpSwap attempts failed")
     return False
+
 
 
 # ============================================================================
@@ -760,9 +807,18 @@ async def buy_via_pumpfun(
     # Create ATA if needed
     idempotent_ata_ix = create_idempotent_associated_token_account(payer.pubkey(), payer.pubkey(), mint, token_program_id=token_program_id)
     
-    # Send transaction
-    msg = Message([set_compute_unit_price(priority_fee), idempotent_ata_ix, buy_ix], payer.pubkey())
+    # Send transaction with JITO support
+    jito = get_jito_sender()
     
+    # Build instructions list - add JITO tip if enabled
+    instructions = [set_compute_unit_price(priority_fee), idempotent_ata_ix, buy_ix]
+    if jito.enabled:
+        tip_ix = jito.create_tip_instruction(payer.pubkey())
+        instructions.append(tip_ix)
+        print(f"💰 JITO tip: {jito.tip_lamports} lamports")
+    
+    msg = Message(instructions, payer.pubkey())
+
     for attempt in range(max_retries):
         try:
             # Use cached blockhash for speed
@@ -770,23 +826,37 @@ async def buy_via_pumpfun(
             blockhash = await cache.get_blockhash()
             tx = Transaction([payer], msg, blockhash)
             opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-            
+
             print(f"🚀 Sending Pump.fun transaction (attempt {attempt + 1}/{max_retries})...")
-            result = await client.send_transaction(tx, opts=opts)
-            sig = result.value
             
-            print(f"📤 Signature: {sig}")
+            # Try JITO first if enabled
+            sig = None
+            if jito.enabled:
+                try:
+                    jito_sig = await jito.send_transaction(tx)
+                    if jito_sig:
+                        sig = jito_sig
+                        print(f"⚡ [JITO] TX sent: {sig}")
+                except Exception as jito_err:
+                    print(f"⚠️ [JITO] Failed: {jito_err}, using regular RPC...")
+            
+            # Fallback to regular RPC
+            if not sig:
+                result = await client.send_transaction(tx, opts=opts)
+                sig = result.value
+                print(f"📤 [RPC] Signature: {sig}")
+
             print(f"🔗 https://solscan.io/tx/{sig}")
-            
+
             await client.confirm_transaction(sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             return True
-            
+
         except Exception as e:
             print(f"❌ Attempt {attempt + 1} failed: {e}")
             if attempt < max_retries - 1:
                 await asyncio.sleep(1)
-    
+
     print("❌ All Pump.fun attempts failed")
     return False
 
