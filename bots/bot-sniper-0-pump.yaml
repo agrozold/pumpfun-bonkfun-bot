@@ -20,9 +20,13 @@ filters:
 
 # Priority fees
 priority_fees:
-  enable_dynamic: false
+  strategy: sniper  # conservative|aggressive|sniper
+  enable_dynamic: true
   enable_fixed: true
   fixed_amount: 500000
+  min_fee: 100000
+  max_fee: 5000000
+  hard_cap: 5000000
 
 # PumpPortal
 pumpportal:

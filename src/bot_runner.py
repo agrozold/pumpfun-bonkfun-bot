@@ -138,6 +138,9 @@ async def start_bot(config_path: str):
                 "extra_percentage", 0.0
             ),
             hard_cap_prior_fee=cfg.get("priority_fees", {}).get("hard_cap", 500000),
+            priority_fee_strategy=cfg.get("priority_fees", {}).get("strategy", "aggressive"),
+            priority_fee_min=cfg.get("priority_fees", {}).get("min_fee", 50000),
+            priority_fee_max=cfg.get("priority_fees", {}).get("max_fee", 10000000),
             # Retry and timeout settings
             max_retries=cfg.get("retries", {}).get("max_attempts", 10),
             wait_time_after_creation=cfg.get("retries", {}).get(

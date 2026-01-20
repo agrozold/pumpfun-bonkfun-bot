@@ -84,6 +84,9 @@ class UniversalTrader:
         fixed_priority_fee: int = 200_000,
         extra_priority_fee: float = 0.0,
         hard_cap_prior_fee: int = 200_000,
+        priority_fee_strategy: str = "aggressive",
+        priority_fee_min: int = 50_000,
+        priority_fee_max: int = 10_000_000,
         # Retry and timeout settings
         max_retries: int = 5,
         wait_time_after_creation: int = 5,
@@ -188,6 +191,9 @@ class UniversalTrader:
             fixed_fee=fixed_priority_fee,
             extra_fee=extra_priority_fee,
             hard_cap=hard_cap_prior_fee,
+            strategy=priority_fee_strategy,
+            min_fee=priority_fee_min,
+            max_fee=priority_fee_max,
         )
 
         # Platform setup
