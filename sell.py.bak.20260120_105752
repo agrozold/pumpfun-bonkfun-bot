@@ -535,9 +535,6 @@ async def sell_via_pumpswap(
 ) -> bool:
     """Sell tokens via PumpSwap/Raydium AMM, fallback to Jupiter for other DEXes."""
     
-    # Get RPC endpoint for blockhash cache
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-
     # Find market via RPC first
     market = await get_market_address_by_base_mint(client, mint)
     
@@ -647,13 +644,11 @@ async def sell_via_pumpswap(
     
     for attempt in range(max_retries):
         try:
-            # Use cached blockhash for speed
-            cache = await get_blockhash_cache(rpc_endpoint)
-            blockhash = await cache.get_blockhash()
+            blockhash = await retry_rpc_call(client.get_latest_blockhash)
             msg = Message.new_with_blockhash(
                 [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
                 payer.pubkey(),
-                blockhash,
+                blockhash.value.blockhash,
             )
             tx = VersionedTransaction(message=msg, keypairs=[payer])
             
@@ -699,8 +694,6 @@ async def sell_via_pumpfun(
 ) -> bool:
     """Sell tokens via Pump.fun bonding curve."""
     token_program_id = await get_token_program_id(client, mint)
-    # Get RPC endpoint for blockhash cache
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     bonding_curve, _ = get_bonding_curve_address(mint)
     
     # Get token balance
@@ -765,10 +758,8 @@ async def sell_via_pumpfun(
     
     for attempt in range(max_retries):
         try:
-            # Use cached blockhash for speed
-            cache = await get_blockhash_cache(rpc_endpoint)
-            blockhash = await cache.get_blockhash()
-            tx = Transaction([payer], msg, blockhash)
+            blockhash = await retry_rpc_call(client.get_latest_blockhash)
+            tx = Transaction([payer], msg, blockhash.value.blockhash)
             opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             
             print(f"🚀 Sending Pump.fun transaction (attempt {attempt + 1}/{max_retries})...")
@@ -812,7 +803,6 @@ async def sell_token(
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
     # Use Alchemy for manual scripts to avoid rate limits from bot
     rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-
     
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")

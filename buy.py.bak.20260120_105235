@@ -664,13 +664,11 @@ async def buy_via_pumpswap(
 
     for attempt in range(max_retries):
         try:
-            # Use cached blockhash for speed
-            cache = await get_blockhash_cache(rpc_endpoint)
-            blockhash = await cache.get_blockhash()
+            blockhash = await client.get_latest_blockhash()
             msg = Message.new_with_blockhash(
                 [compute_limit_ix, compute_price_ix, create_wsol_ata_ix, transfer_sol_ix, sync_native_ix, create_token_ata_ix, buy_ix],
                 payer.pubkey(),
-                blockhash,
+                blockhash.value.blockhash,
             )
             tx = VersionedTransaction(message=msg, keypairs=[payer])
             
@@ -709,8 +707,6 @@ async def buy_via_pumpfun(
     max_retries: int,
 ) -> bool:
     """Buy tokens via Pump.fun bonding curve."""
-    # Get RPC endpoint for blockhash cache
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     token_program_id = await get_token_program_id(client, mint)
     bonding_curve, _ = get_bonding_curve_address(mint)
     
@@ -765,10 +761,8 @@ async def buy_via_pumpfun(
     
     for attempt in range(max_retries):
         try:
-            # Use cached blockhash for speed
-            cache = await get_blockhash_cache(rpc_endpoint)
-            blockhash = await cache.get_blockhash()
-            tx = Transaction([payer], msg, blockhash)
+            blockhash = await client.get_latest_blockhash()
+            tx = Transaction([payer], msg, blockhash.value.blockhash)
             opts = TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             
             print(f"🚀 Sending Pump.fun transaction (attempt {attempt + 1}/{max_retries})...")

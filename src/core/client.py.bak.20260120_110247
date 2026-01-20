@@ -20,7 +20,6 @@ from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 
 from utils.logger import get_logger
-from core.blockhash_cache import get_blockhash_cache
 from trading.jito_sender import get_jito_sender
 
 logger = get_logger(__name__)
@@ -66,13 +65,33 @@ class SolanaClient:
         """
         self.rpc_endpoint = rpc_endpoint
         self._client = None
-        self._blockhash_cache = None  # Will be initialized lazily
+        self._cached_blockhash: Hash | None = None
+        self._blockhash_lock = asyncio.Lock()
+        self._blockhash_updater_task = asyncio.create_task(
+            self.start_blockhash_updater()
+        )
+
+    async def start_blockhash_updater(self, interval: float = 30.0):
+        """Start background task to update recent blockhash.
+        
+        Blockhash is valid for ~60-90 seconds, so 30s interval is safe.
+        """
+        while True:
+            try:
+                blockhash = await self.get_latest_blockhash()
+                async with self._blockhash_lock:
+                    self._cached_blockhash = blockhash
+            except Exception as e:
+                logger.warning(f"Blockhash fetch failed: {e!s}")
+            finally:
+                await asyncio.sleep(interval)
 
     async def get_cached_blockhash(self) -> Hash:
-        """Return cached blockhash from global BlockhashCache."""
-        if self._blockhash_cache is None:
-            self._blockhash_cache = await get_blockhash_cache(self.rpc_endpoint)
-        return await self._blockhash_cache.get_blockhash()
+        """Return the most recently cached blockhash."""
+        async with self._blockhash_lock:
+            if self._cached_blockhash is None:
+                raise RuntimeError("No cached blockhash available yet")
+            return self._cached_blockhash
 
     async def get_client(self) -> AsyncClient:
         """Get or create the AsyncClient instance.
@@ -85,7 +104,14 @@ class SolanaClient:
         return self._client
 
     async def close(self):
-        """Close the client connection."""
+        """Close the client connection and stop the blockhash updater."""
+        if self._blockhash_updater_task:
+            self._blockhash_updater_task.cancel()
+            try:
+                await self._blockhash_updater_task
+            except asyncio.CancelledError:
+                pass
+
         if self._client:
             await self._client.close()
             self._client = None
