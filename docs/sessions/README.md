@@ -1,18 +1,39 @@
 # Session Logs
 
-| # | Дата | Описание | Статус |
-|---|------|----------|--------|
-| 001 | 2025-01-19 | API оптимизация | Done |
-| 002 | 2026-01-19 | Volume Analyzer fix | Done |
-| 003 | 2026-01-19 | Security + RPC fix | Done |
-| 004 | 2026-01-19 | Whale tracker optimization | Done |
-| 005 | 2026-01-19 | BAGS filter + moon bag config | Done |
-| 006 | 2026-01-19 | Purchase history + sniper enabled | Done |
-| 007 | 2026-01-19 | PumpPortal fallback for selling | Done |
-| 008 | 2026-01-19 | Volume history fix + whale_copy cleanup | Done |
-| 009 | 2026-01-19 | Whale multi-platform + stablecoin filter | Done |
-| 010 | 2026-01-19 | Global purchase history | Done |
-| 011 | 2026-01-19 | PumpPortal fallback for selling | Done |
-| 012 | 2026-01-19 | JITO integration | Done |
-| 013 | 2026-01-19 | JITO tip + volume analyzer fixes | Done |
-| 014 | 2026-01-19 | Whale copy investigation | Incomplete |
+Журнал рабочих сессий по проекту pumpfun-bonkfun-bot.
+
+**Формат:** `NN_YYYY-MM-DD_описание.md`
+
+## 2026-01-19 (14 сессий)
+
+| # | Описание |
+|---|----------|
+| 01 | API Optimization |
+| 02 | Volume Analyzer Fix |
+| 03 | Security and RPC Fix |
+| 04 | Whale Tracker Optimization |
+| 05 | BAGS Filter + Moonbag |
+| 06 | Purchase History Sniper |
+| 07 | PumpPortal Fallback |
+| 08 | Volume History Fix |
+| 09 | Whale Multiplatform |
+| 10 | Purchase History Global |
+| 11 | PumpPortal Sell |
+| 12 | JITO Integration |
+| 13 | JITO Tip Fixes |
+| 14 | Whale Copy Investigation |
+
+## 2026-01-20 (10 сессий)
+
+| # | Описание |
+|---|----------|
+| 01 | Security Audit |
+| 02 | Race Conditions |
+| 03 | RPC Manager Audit |
+| 04 | Platform Listener Validation |
+| 05 | Dynamic Priority Fee |
+| 06 | Blockhash Cache |
+| 07 | BONK.FUN Listener Audit |
+| 08 | BAGS Listener Verification |
+| 09 | Atomic File Writes |
+| 10 | JITO Buy/Sell Integration |
