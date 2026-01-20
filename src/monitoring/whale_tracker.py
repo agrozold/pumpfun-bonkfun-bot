@@ -559,6 +559,7 @@ class WhaleTracker:
         Args:
             data: Сырые данные лог-нотификации от WebSocket
         """
+        logger.warning(f"[WHALE-DBG] _handle_log called, method={data.get('method')}")
         if data.get("method") != "logsNotification":
             return
 
@@ -571,6 +572,7 @@ class WhaleTracker:
             logs = value.get("logs", [])
             err = value.get("err")
 
+            logger.warning(f"[WHALE-DBG] sig={signature[:16]}... err={err}, logs_count={len(logs)}")
             if err or not signature:
                 return
 
@@ -579,6 +581,7 @@ class WhaleTracker:
 
             # Определяем платформу по логам
             platform = self._detect_platform_from_logs(logs)
+            logger.warning(f"[WHALE-DBG] Platform: {platform}, target: {self.target_platform}")
             if not platform:
                 return
 
@@ -606,6 +609,7 @@ class WhaleTracker:
                     is_buy = True
                     break
 
+            logger.warning(f"[WHALE-DBG] is_buy={is_buy} for {signature[:16]}")
             if not is_buy:
                 return
 
@@ -625,6 +629,7 @@ class WhaleTracker:
             signature: Сигнатура транзакции
             platform: Платформа ("pump_fun" или "lets_bonk")
         """
+        logger.warning(f"[WHALE-DBG] _check_if_whale_tx CALLED: {signature[:16]}...")
 
         # Mark as processed to avoid duplicates
         self._processed_txs.add(signature)
@@ -654,6 +659,7 @@ class WhaleTracker:
 
     async def _check_whale_tx_with_manager(self, signature: str, platform: str):
         """Check whale TX using RPC Manager (optimized path)."""
+        logger.warning(f"[WHALE-DBG] _check_whale_tx_with_manager START: {signature[:16]}...")
         # Initialize RPC Manager lazily
         if self._rpc_manager is None:
             self._rpc_manager = await get_rpc_manager()
@@ -661,7 +667,9 @@ class WhaleTracker:
         self._metrics["rpc_manager_calls"] += 1
 
         # Try Helius Enhanced API first (best for parsed transactions)
+        logger.warning(f"[WHALE-DBG] Calling Helius Enhanced for {signature[:16]}...")
         tx = await self._rpc_manager.get_transaction_helius_enhanced(signature)
+        logger.warning(f"[WHALE-DBG] Helius result: {bool(tx)} for {signature[:16]}...")
         if tx:
             self._metrics["helius_success"] += 1
             self._cache_tx(signature, tx)

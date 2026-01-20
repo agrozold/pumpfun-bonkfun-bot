@@ -166,7 +166,7 @@ class RPCManager:
                 name="Helius Enhanced",
                 http_endpoint=helius_enhanced,
                 wss_endpoint=None,
-                rate_limit_per_second=0.008,  # ~1 req/min - very expensive!
+                rate_limit_per_second=0.02,  # ~1 req/min - very expensive!
                 priority=10,
                 is_primary=True,
             )
