@@ -5,13 +5,13 @@
 
 ## Критические проблемы
 
-1. Компрометация кошелька CLZUb4bLZQRJQAjhz8uTz36fz17doowbY5WqS9wCAHdX
+1. Компрометация кошелька [REDACTED_COMPROMISED_WALLET]
 2. Хардкод API ключей в коде и документации
 3. Метод get_transaction_helius_enhanced был вне класса RPCManager
 
 ## Исправления
 
-1. Новый кошелёк: G8Jg7JG7h59bvsuPi57GuRS4mZ1S99PUbp4JLNCJgcWF
+1. Новый кошелёк: [CURRENT_WALLET]
 2. Очищены все ключи из кода и истории git (git filter-repo)
 3. Метод перемещён внутрь класса RPCManager
 

@@ -169,3 +169,19 @@ cython_debug/
 trades/trades.log
 # Mac OS X
 .DS_Store.env.backup
+
+# Security additions - 2026-01-20
+*.swp
+*.swo
+*~
+positions.json
+nohup.out
+*.tar.gz
+*.tar
+*.zip
+backups/
+*.backup
+*.bak
+*.log
+logs/
+security_audit_report_*.txt
