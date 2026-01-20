@@ -451,19 +451,18 @@ class WhaleTracker:
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 try:
                                     data = json.loads(msg.data)
-                                    # Process with timeout to prevent hanging
-                                    # INCREASED to 60s to allow RPC Manager rate limit waits
-                                    await asyncio.wait_for(
-                                        self._handle_log(data),
-                                        timeout=90,  # 90s max - allows rate limit waits
-                                    )
-                                except TimeoutError:
-                                    logger.warning(
-                                        "[WHALE] Message processing timeout (60s) - skipping message"
-                                    )
-                                    continue
+                                    # Process WITHOUT timeout - RPC Manager handles rate limits
+                                    # and may need to wait longer than any fixed timeout
+                                    await self._handle_log(data)
+                                except asyncio.CancelledError:
+                                    # Graceful handling - WebSocket closing or shutdown
+                                    logger.debug("[WHALE] Message handling cancelled")
+                                    raise  # Re-raise to exit loop properly
                                 except json.JSONDecodeError:
                                     pass
+                                except Exception as e:
+                                    # Log but don't crash on individual message errors
+                                    logger.debug(f"[WHALE] Error processing message: {e}")
                             elif msg.type == aiohttp.WSMsgType.PING:
                                 await ws.pong(msg.data)
                             elif msg.type == aiohttp.WSMsgType.PONG:
