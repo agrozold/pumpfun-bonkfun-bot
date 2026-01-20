@@ -252,9 +252,9 @@ class BagsLogsListener(BaseTokenListener):
             # Check if this looks like a token creation
             # Look for "initialize" in logs or specific patterns for Meteora DBC
             is_initialize = any(
-                False  # disabled: too broad
-                or "Program log: Instruction: InitializeVirtualPoolWithSplToken" in log
-                or "InitializeVirtualPool" in log
+                # Must be exact instruction name from Meteora DBC
+                "Program log: Instruction: InitializeVirtualPoolWithSplToken" in log
+                or "Instruction: InitializeVirtualPoolWithSplToken" in log
                 for log in logs
             )
 

@@ -10,6 +10,7 @@
   "instructions": [
     {
       "name": "initialize_virtual_pool_with_spl_token",
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
       "docs": ["Initialize a new DBC virtual pool with SPL token"],
       "accounts": [
         {"name": "creator", "isMut": true, "isSigner": true},
@@ -33,6 +34,7 @@
     },
     {
       "name": "swap",
+      "discriminator": [248, 198, 158, 145, 225, 117, 135, 200],
       "docs": ["Swap tokens on the DBC bonding curve (buy or sell)"],
       "accounts": [
         {"name": "pool", "isMut": true, "isSigner": false},
@@ -55,6 +57,7 @@
     },
     {
       "name": "migrate_meteora_damm",
+      "discriminator": [155, 234, 202, 35, 65, 241, 194, 87],
       "docs": ["Migrate DBC pool to Meteora DAMM v1"],
       "accounts": [
         {"name": "virtualPool", "isMut": true, "isSigner": false},
@@ -70,6 +73,7 @@
     },
     {
       "name": "migrate_meteora_damm_v2",
+      "discriminator": [60, 45, 176, 91, 198, 158, 213, 100],
       "docs": ["Migrate DBC pool to Meteora DAMM v2"],
       "accounts": [
         {"name": "virtualPool", "isMut": true, "isSigner": false},
@@ -90,6 +94,7 @@
   "accounts": [
     {
       "name": "VirtualPool",
+      "discriminator": [234, 242, 154, 178, 179, 64, 137, 39],
       "docs": ["DBC Virtual Pool state account"],
       "type": {
         "kind": "struct",
@@ -113,6 +118,7 @@
     },
     {
       "name": "PoolConfig",
+      "discriminator": [26, 108, 14, 123, 116, 230, 129, 43],
       "docs": ["DBC Pool configuration"],
       "type": {
         "kind": "struct",
@@ -176,6 +182,7 @@
   "events": [
     {
       "name": "EvtInitializeVirtualPoolWithSplToken",
+      "discriminator": [59, 236, 181, 13, 180, 231, 66, 54],
       "fields": [
         {"name": "name", "type": "string", "index": false},
         {"name": "symbol", "type": "string", "index": false},
@@ -190,6 +197,7 @@
     },
     {
       "name": "EvtSwap2",
+      "discriminator": [73, 27, 148, 138, 189, 203, 145, 112],
       "fields": [
         {"name": "pool", "type": "publicKey", "index": false},
         {"name": "config", "type": "publicKey", "index": false},
@@ -197,38 +205,18 @@
         {"name": "hasReferral", "type": "bool", "index": false},
         {"name": "amount0", "type": "u128", "index": false},
         {"name": "amount1", "type": "u64", "index": false},
-        {"name": "swapMode", "type": "u8", "index": false},
-        {"name": "outputAmount", "type": "u64", "index": false},
-        {"name": "nextSqrtPrice", "type": "u128", "index": false},
-        {"name": "tradingFee", "type": "u64", "index": false},
-        {"name": "protocolFee", "type": "u64", "index": false},
-        {"name": "referralFee", "type": "u64", "index": false},
-        {"name": "quoteReserveAmount", "type": "u64", "index": false},
-        {"name": "migrationThreshold", "type": "u64", "index": false},
-        {"name": "currentTimestamp", "type": "i64", "index": false}
-      ]
-    },
-    {
-      "name": "EvtMigrateMeteoraDamm",
-      "fields": [
-        {"name": "virtualPool", "type": "publicKey", "index": false},
-        {"name": "migrationMetadata", "type": "publicKey", "index": false},
-        {"name": "pool", "type": "publicKey", "index": false},
-        {"name": "lpMint", "type": "publicKey", "index": false},
-        {"name": "tokenAMint", "type": "publicKey", "index": false},
-        {"name": "tokenBMint", "type": "publicKey", "index": false}
+        {"name": "swapMode", "type": "u8", "index": false}
       ]
     },
     {
       "name": "EvtMigrateMeteoraDammV2",
+      "discriminator": [211, 137, 224, 163, 73, 231, 88, 144],
       "fields": [
         {"name": "virtualPool", "type": "publicKey", "index": false},
-        {"name": "migrationMetadata", "type": "publicKey", "index": false},
         {"name": "pool", "type": "publicKey", "index": false},
         {"name": "baseMint", "type": "publicKey", "index": false},
         {"name": "quoteMint", "type": "publicKey", "index": false}
       ]
     }
-  ],
-  "errors": []
+  ]
 }
