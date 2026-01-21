@@ -3,7 +3,6 @@
 .env.*
 .env.local
 .env.backup*
-.env.example
 *.pem
 *.key
 
