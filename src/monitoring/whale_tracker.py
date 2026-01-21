@@ -174,6 +174,9 @@ class WhaleTracker:
             "rpc_manager_calls": 0,
         }
 
+        # СТАТИСТИКА КОПИРОВАНИЯ
+        self._copy_stats = {"signals": 0, "success": 0, "failed": 0, "skipped": 0}
+
         self._load_wallets()
 
         platform_info = f"platform={platform}" if platform else "ALL platforms"
@@ -215,6 +218,15 @@ class WhaleTracker:
             logger.warning(
                 f"[WHALE] Loaded {len(self.whale_wallets)} whale wallets successfully"
             )
+
+            # ВЫВОД ПЕРВЫХ 10 КОШЕЛЬКОВ
+            logger.warning("=" * 70)
+            logger.warning("[WHALE] MY SMART MONEY WALLETS (first 10):")
+            for i, (w, info) in enumerate(list(self.whale_wallets.items())[:10], 1):
+                logger.warning(f"  {i}. {w} | {info.get('label', 'whale')} | wr={info.get('win_rate', 0):.0%}")
+            if len(self.whale_wallets) > 10:
+                logger.warning(f"  ... and {len(self.whale_wallets) - 10} more wallets")
+            logger.warning("=" * 70)
 
         except json.JSONDecodeError as e:
             logger.error(f"[WHALE] JSON parse error in {self.wallets_file}: {e}")
@@ -1088,6 +1100,7 @@ class WhaleTracker:
         logger.warning(f"  TX:        {signature}")
         logger.warning("=" * 70)
 
+        self._copy_stats["signals"] += 1
         if self.on_whale_buy:
             await self.on_whale_buy(whale_buy)
 

@@ -774,6 +774,7 @@ class UniversalTrader:
                 logger.warning("=" * 70)
                 logger.warning("[WHALE COPY] SUCCESS")
                 logger.warning(f"  SYMBOL:    {whale_buy.token_symbol}")
+                if self.whale_tracker: self.whale_tracker._copy_stats["success"] += 1
                 logger.warning(f"  TOKEN:     {mint_str}")
                 logger.warning(f"  DEX:       {dex_used}")
                 logger.warning(f"  AMOUNT:    {token_amount:.2f} tokens")
@@ -847,6 +848,7 @@ class UniversalTrader:
                 logger.error("=" * 70)
                 logger.error("[WHALE COPY] FAILED - no liquidity found")
                 logger.error(f"  SYMBOL:    {whale_buy.token_symbol}")
+                if self.whale_tracker: self.whale_tracker._copy_stats["failed"] += 1
                 logger.error(f"  TOKEN:     {mint_str}")
                 logger.error(f"  WHALE:     {whale_buy.whale_label}")
                 logger.error(f"  WALLET:    {whale_buy.whale_wallet}")
