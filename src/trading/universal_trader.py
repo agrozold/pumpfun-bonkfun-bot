@@ -565,17 +565,27 @@ class UniversalTrader:
                     logger.info(
                         f"[SCORE] Signal token {symbol}: {score.total_score}/100 -> {score.recommendation}"
                     )
+                    
+                    # Check if no Dexscreener data - return to pending
+                    if score.details.get("error") == "No Dexscreener data - SKIP":
+                        logger.info(
+                            f"[PENDING] {symbol} - no Dexscreener data yet, keeping in pending"
+                        )
+                        self.pending_tokens[mint] = token_info
+                        return
+                    
+                    # Check score threshold
                     if not should_buy:
                         logger.warning(
-                            f"[SKIP] {symbol} - score {score.total_score} below threshold despite signal"
+                            f"[PENDING] {symbol} - score {score.total_score} below threshold, keeping in pending"
                         )
+                        self.pending_tokens[mint] = token_info
                         return
+                        
                 except Exception as e:
-                    logger.warning(f"Scoring failed for signal token {symbol}: {e}")
-                    # If scoring fails, require VERY strong signal
-                    if strength < 0.85:
-                        logger.warning(f"[SKIP] {symbol} - scoring failed and signal not strong enough")
-                        return
+                    logger.warning(f"Scoring failed for signal token {symbol}: {e}, keeping in pending")
+                    self.pending_tokens[mint] = token_info
+                    return
 
             logger.warning(
                 f"[BUY] BUYING on STRONG pump signal: {symbol} "
