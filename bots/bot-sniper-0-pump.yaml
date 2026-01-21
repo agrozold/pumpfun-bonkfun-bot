@@ -26,7 +26,6 @@ priority_fees:
   fixed_amount: 500000
   min_fee: 100000
   max_fee: 5000000
-  hard_cap: 5000000
 
 # PumpPortal
 pumpportal:

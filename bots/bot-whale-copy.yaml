@@ -27,6 +27,7 @@ priority_fees:
   enable_dynamic: false
   enable_fixed: true
   fixed_amount: 500000
+  max_fee: 5000000
 
 # PumpPortal
 pumpportal:

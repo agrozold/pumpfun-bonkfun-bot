@@ -80,3 +80,74 @@ pkill -f pump_bot
 # Start bots again
 pump_bot
 ```
+
+---
+
+## Update 2026-01-21: dRPC Integration & Health Check
+
+### New Providers Priority
+
+| Provider | Priority | Role | Rate Limit |
+|----------|----------|------|------------|
+| Chainstack | 1 | CO-PRIMARY | 0.12 req/s |
+| Helius | 2 | PRIMARY | 0.08 req/s |
+| Alchemy | 5 | FALLBACK #1 | 0.05 req/s |
+| **dRPC** | **8** | **FALLBACK #2** | **0.15 req/s** |
+| Public Solana | 20 | LAST RESORT | 0.02 req/s |
+
+### New Files
+
+1. **`src/health_check.py`** - RPC endpoint health monitoring
+2. **`bots/config/bot_rpc_config.py`** - Bot-specific RPC profiles
+
+### Bot RPC Distribution
+
+| Bot | Primary HTTP | Primary WSS |
+|-----|--------------|-------------|
+| PUMP | Helius → Chainstack → dRPC | Chainstack → dRPC |
+| BONK | Chainstack → Helius → dRPC | Chainstack → dRPC |
+| BAGS | Chainstack → dRPC → Helius | Chainstack → dRPC |
+| WHALE | dRPC → Alchemy → Chainstack | dRPC → Chainstack |
+| COPY | dRPC → Chainstack → Alchemy | dRPC → Chainstack |
+
+### Usage
+
+```python
+# Health Check
+from src.health_check import get_health_checker
+checker = await get_health_checker()
+await checker.start()
+checker.print_status()
+
+# Bot RPC Profile
+from bots.config.bot_rpc_config import get_bot_rpc_profile
+profile = get_bot_rpc_profile("bot-sniper-0-pump.yaml")
+print(profile.primary_http)  # [HELIUS, CHAINSTACK, DRPC]
+
+
+---
+
+## Update 2026-01-21: dRPC + Failover + Load Balancing
+
+### Provider Configuration
+
+| Provider | HTTP | WSS | Rate Limit | Priority | Role |
+|----------|------|-----|------------|----------|------|
+| Helius | ✅ | ❌ | 0.08 req/s | 2 | PRIMARY HTTP |
+| Chainstack | ✅ | ✅ | 0.12 req/s | 1 | CO-PRIMARY |
+| Alchemy | ✅ | ❌ | 0.05 req/s | 5 | FALLBACK #1 |
+| **dRPC** | ✅ | ✅ | 0.15 req/s | 8 | **FALLBACK #2** |
+| Public | ✅ | ✅ | 0.02 req/s | 20 | LAST RESORT |
+
+### WSS Fallback Chain
+
+Chainstack → dRPC → Public Solana
+
+
+### New Files
+- `src/health_check.py` - RPC health monitoring
+- `bots/config/bot_rpc_config.py` - Bot-specific RPC profiles
+
+### Bot Load Distribution
+- **PUMP/BONK** (speed critical): Helius/Chainstack HTTP, Chainstack WSS
+- **WHALE/COPY** (less critical): dRPC/Alchemy HTTP, dRPC WSS

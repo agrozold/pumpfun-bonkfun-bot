@@ -208,6 +208,28 @@ class RPCManager:
             logger.info("[RPC] ✓ Alchemy FALLBACK #1: 0.5 req/s")
 
         # =================================================================
+        # dRPC = FALLBACK #2 (decentralized RPC with auto-failover)
+        # =================================================================
+        drpc_http = os.getenv("DRPC_RPC_ENDPOINT")
+        drpc_wss = os.getenv("DRPC_WSS_ENDPOINT")
+        if drpc_http:
+            self.providers["drpc"] = ProviderConfig(
+                name="dRPC",
+                http_endpoint=drpc_http,
+                wss_endpoint=drpc_wss,
+                rate_limit_per_second=0.15,  # dRPC usually fast
+                priority=8,  # After Alchemy (5), before Public (20)
+                is_primary=False,
+            )
+            logger.info("[RPC] ✓ dRPC FALLBACK #2: 0.15 req/s + WSS")
+        else:
+            logger.debug("[RPC] ⚠ DRPC_RPC_ENDPOINT not set (optional)")
+
+
+
+
+
+        # =================================================================
         # PUBLIC SOLANA = FALLBACK #2 (last resort)
         # =================================================================
         self.providers["public_solana"] = ProviderConfig(
@@ -483,7 +505,8 @@ class RPCManager:
         
         Priority:
         1. Chainstack (has WSS, primary)
-        2. Public Solana (has WSS, fallback)
+        2. dRPC (has WSS, fallback #2)
+        3. Public Solana (has WSS, last resort)
         """
         now = time.time()
         
@@ -493,7 +516,13 @@ class RPCManager:
             if now >= chainstack.backoff_until:
                 return ("chainstack", chainstack.wss_endpoint)
         
-        # Fallback to public Solana WSS
+        # Fallback #2: dRPC (decentralized, has WSS)
+        drpc = self.providers.get("drpc")
+        if drpc and drpc.wss_endpoint and drpc.enabled:
+            if now >= drpc.backoff_until:
+                return ("drpc", drpc.wss_endpoint)
+
+        # Fallback #3: Public Solana WSS (last resort)
         public = self.providers.get("public_solana")
         if public and public.wss_endpoint and public.enabled:
             if now >= public.backoff_until:
