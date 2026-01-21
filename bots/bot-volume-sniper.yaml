@@ -25,14 +25,16 @@ filters:
 # ============================================
 volume_pattern:
   enabled: true
-  min_volume_1h: 5000           # Минимум $5k объёма за час
+  min_volume_1h: 10000           # Минимум $10k объёма за час
   volume_spike_threshold: 2.5    # 2.5x спайк относительно среднего
-  min_trades_5m: 30              # Минимум 30 сделок за 5 мин
-  min_buy_pressure: 0.55         # Минимум 55% покупок
+  min_trades_5m: 50              # Минимум 50 сделок за 5 мин
+  min_buy_pressure: 0.70         # Минимум 70% покупок
   scan_interval: 45              # Сканировать каждые 45 сек
   max_tokens_per_scan: 80        # Анализировать до 80 токенов
   min_health_score: 65           # Минимум 65 health
-  min_opportunity_score: 65      # Минимум 65 opportunity
+  min_opportunity_score: 65
+  min_market_cap: 70000          # Минимум $70k MC
+  max_market_cap: 20000000       # Максимум $20M MC
 
 # Trading - консервативные настройки
 trade:

@@ -12,10 +12,10 @@ Multi-Source Trending Token Scanner.
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable
 
 import aiohttp
 
@@ -24,14 +24,17 @@ logger = logging.getLogger(__name__)
 
 class DataSource(Enum):
     """Источники данных для мониторинга."""
+
     DEXSCREENER = "dexscreener"
     JUPITER = "jupiter"
     BIRDEYE = "birdeye"
+    DEXTOOLS = "dextools"
 
 
 @dataclass
 class TrendingToken:
     """Трендовый токен."""
+
     mint: str
     symbol: str
     name: str
@@ -80,6 +83,7 @@ class TrendingToken:
 @dataclass
 class RateLimiter:
     """Rate limiter с дневным/месячным бюджетом."""
+
     # Per-window limits
     max_requests: int
     window_seconds: float
@@ -103,15 +107,15 @@ class RateLimiter:
         now = datetime.utcnow().timestamp()
         # Очистить старые запросы
         self.requests = [t for t in self.requests if now - t < self.window_seconds]
-        
+
         # Check window limit
         if len(self.requests) >= self.max_requests:
             return False
-        
+
         # Check daily budget
         if self.daily_budget > 0 and self.daily_requests >= self.daily_budget:
             return False
-        
+
         return True
 
     def record_request(self) -> None:
@@ -147,6 +151,7 @@ class RateLimiter:
 
 # API endpoints
 DEXSCREENER_API = "https://api.dexscreener.com"
+DEXTOOLS_API = "https://public-api.dextools.io/trial/v2"
 JUPITER_LITE_API = "https://lite-api.jup.ag"
 JUPITER_PRICE_API = "https://price.jup.ag"
 BIRDEYE_API = "https://public-api.birdeye.so"
@@ -198,7 +203,7 @@ class TrendingScanner:
         self.birdeye_api_key = birdeye_api_key or os.getenv("BIRDEYE_API_KEY")
 
         # Rate limiters с дневными бюджетами
-        # 
+        #
         # Jupiter Free Tier (Basic):
         #   - Price API: 1 RPS = 60 req/min = 86,400/day
         #   - Tokens API: ~1 RPS
@@ -209,23 +214,31 @@ class TrendingScanner:
         #
         self.rate_limiters = {
             DataSource.DEXSCREENER: RateLimiter(
-                max_requests=20, window_seconds=10, daily_budget=0  # unlimited
+                max_requests=20,
+                window_seconds=10,
+                daily_budget=0,  # unlimited
             ),
             DataSource.JUPITER: RateLimiter(
-                max_requests=55,      # 55 req/min (оставляем запас от 60)
+                max_requests=55,  # 55 req/min (оставляем запас от 60)
                 window_seconds=60,
-                daily_budget=10000    # ~12% от 86,400 - консервативно
+                daily_budget=10000,  # ~12% от 86,400 - консервативно
             ),
             DataSource.BIRDEYE: RateLimiter(
                 max_requests=5, window_seconds=60, daily_budget=1000
+            ),
+            DataSource.DEXTOOLS: RateLimiter(
+                max_requests=10,
+                window_seconds=60,
+                daily_budget=500,  # Trial tier limit
             ),
         }
 
         # Source priority (higher = more preferred when available)
         self._source_priority = {
             DataSource.DEXSCREENER: 100,  # Primary - no limits
-            DataSource.JUPITER: 50,       # Secondary - has free tier
-            DataSource.BIRDEYE: 25,       # Tertiary - needs API key
+            DataSource.JUPITER: 50,  # Secondary - has free tier
+            DataSource.DEXTOOLS: 40,  # DEXTools - trial tier
+            DataSource.BIRDEYE: 25,  # Tertiary - needs API key
         }
 
         # State
@@ -244,6 +257,10 @@ class TrendingScanner:
         self._enabled_sources.append(DataSource.JUPITER)
         if self.birdeye_api_key:
             self._enabled_sources.append(DataSource.BIRDEYE)
+
+        # Add DEXTools if API key is configured
+        if os.getenv("DEXTOOLS_API_KEY"):
+            self._enabled_sources.append(DataSource.DEXTOOLS)
 
         # Rotation state - tracks which source to use next
         self._last_source_used: DataSource | None = None
@@ -266,7 +283,9 @@ class TrendingScanner:
         self._running = True
         self._session = aiohttp.ClientSession()
         self._scan_task = asyncio.create_task(self._scan_loop())
-        logger.info(f"[SCANNER] Multi-source scanner started: {[s.value for s in self._enabled_sources]}")
+        logger.info(
+            f"[SCANNER] Multi-source scanner started: {[s.value for s in self._enabled_sources]}"
+        )
 
     async def stop(self) -> None:
         """Остановить сканер."""
@@ -283,11 +302,11 @@ class TrendingScanner:
             try:
                 await self._scan_trending()
                 self._scan_count += 1
-                
+
                 # Log stats every 10 scans
                 if self._scan_count % 10 == 0:
                     self._log_budget_stats()
-                
+
                 await asyncio.sleep(self.scan_interval)
             except asyncio.CancelledError:
                 break
@@ -310,38 +329,38 @@ class TrendingScanner:
     def _select_sources_for_scan(self) -> list[DataSource]:
         """Выбрать источники для текущего скана с учётом бюджета и ротации."""
         available = []
-        
+
         for source in self._enabled_sources:
             limiter = self.rate_limiters[source]
-            
+
             # Skip if rate limited
             if not limiter.can_request():
                 continue
-            
+
             # Skip if daily budget exhausted (except unlimited sources)
             if limiter.daily_budget > 0:
                 remaining = limiter.get_daily_remaining()
                 usage_pct = limiter.get_usage_percent()
-                
+
                 # Экономим бюджет: если использовано >80%, пропускаем каждый 2й запрос
                 if usage_pct > 80 and self._scan_count % 2 == 0:
                     continue
                 # Если использовано >90%, пропускаем каждые 3 из 4 запросов
                 if usage_pct > 90 and self._scan_count % 4 != 0:
                     continue
-            
+
             available.append(source)
-        
+
         # Sort by priority
         available.sort(key=lambda s: self._source_priority[s], reverse=True)
-        
+
         # Smart rotation: DexScreener always, others rotate
         result = []
-        
+
         # Always include DexScreener if available (no limits)
         if DataSource.DEXSCREENER in available:
             result.append(DataSource.DEXSCREENER)
-        
+
         # Add one secondary source (rotate between Jupiter/Birdeye)
         secondary = [s for s in available if s != DataSource.DEXSCREENER]
         if secondary:
@@ -350,7 +369,7 @@ class TrendingScanner:
                 secondary.remove(self._last_source_used)
             result.append(secondary[0])
             self._last_source_used = secondary[0]
-        
+
         return result
 
     def _get_next_source(self) -> DataSource:
@@ -367,9 +386,11 @@ class TrendingScanner:
 
         # Select sources for this scan (budget-aware)
         sources_to_use = self._select_sources_for_scan()
-        
+
         if not sources_to_use:
-            logger.warning("[WARN] No sources available (all rate limited or budget exhausted)")
+            logger.warning(
+                "[WARN] No sources available (all rate limited or budget exhausted)"
+            )
             return
 
         # Fetch from selected sources
@@ -398,7 +419,9 @@ class TrendingScanner:
             logger.info("📡 No tokens fetched from any source")
             return
 
-        logger.info(f"[SCAN] Scanned {len(all_tokens)} tokens from {len(sources_to_use)} sources")
+        logger.info(
+            f"[SCAN] Scanned {len(all_tokens)} tokens from {len(sources_to_use)} sources"
+        )
 
         # Filter and score
         candidates = []
@@ -445,6 +468,8 @@ class TrendingScanner:
             return await self._fetch_jupiter()
         elif source == DataSource.BIRDEYE:
             return await self._fetch_birdeye()
+        elif source == DataSource.DEXTOOLS:
+            return await self._fetch_dextools()
         return []
 
     # ==================== DEXSCREENER ====================
@@ -460,7 +485,7 @@ class TrendingScanner:
         try:
             # Use token boosted endpoint - more reliable
             url = f"{DEXSCREENER_API}/token-boosts/top/v1"
-            
+
             async with self._session.get(
                 url, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
@@ -477,7 +502,7 @@ class TrendingScanner:
                                 continue
                             # Get token details
                             seen_mints.add(mint)
-            
+
             # Also try search endpoint
             search_tokens = await self._fetch_dexscreener_search()
             for token in search_tokens:
@@ -510,14 +535,14 @@ class TrendingScanner:
 
                 data = await resp.json()
                 pairs = data.get("pairs") or []
-                
+
                 for pair in pairs[:50]:
                     if pair.get("chainId") != "solana":
                         continue
 
                     base = pair.get("baseToken", {})
                     mint_addr = base.get("address", "")
-                    
+
                     if not mint_addr:
                         continue
 
@@ -585,7 +610,7 @@ class TrendingScanner:
 
     async def _fetch_jupiter(self) -> list[TrendingToken]:
         """Fetch trending tokens from Jupiter (free tier - 1 RPS).
-        
+
         Uses:
         - /tokens/v1/tagged/pump-fun - list of pump.fun tokens
         - /v6/price - batch price data
@@ -654,7 +679,8 @@ class TrendingScanner:
 
                 # Filter pump.fun, bonk.fun, bags tokens (all platforms)
                 platform_mints = [
-                    m for m in mints 
+                    m
+                    for m in mints
                     if m.endswith("pump") or m.endswith("bonk") or m.endswith("bags")
                 ][:25]
 
@@ -776,9 +802,9 @@ class TrendingScanner:
                     # Support pump.fun, bonk.fun, bags, and all Solana tokens (for migrated)
                     if token:
                         is_platform_token = (
-                            token.mint.endswith("pump") or 
-                            token.mint.endswith("bonk") or 
-                            token.mint.endswith("bags")
+                            token.mint.endswith("pump")
+                            or token.mint.endswith("bonk")
+                            or token.mint.endswith("bags")
                         )
                         # Include all tokens from Birdeye trending (they filter for quality)
                         if is_platform_token or token.volume_24h > 50000:
@@ -814,6 +840,97 @@ class TrendingScanner:
             )
         except Exception as e:
             logger.debug(f"Parse Birdeye error: {e}")
+            return None
+
+    # ==================== DEXTOOLS ====================
+
+    async def _fetch_dextools(self) -> list[TrendingToken]:
+        """Fetch hot tokens from DEXTools API (trial/free tier)."""
+        if not self._session:
+            return []
+
+        dextools_api_key = os.getenv("DEXTOOLS_API_KEY")
+        if not dextools_api_key:
+            logger.debug("[DEXTOOLS] No API key configured")
+            return []
+
+        tokens = []
+
+        try:
+            # DEXTools hot pools endpoint for Solana
+            url = f"{DEXTOOLS_API}/pool/solana/hot"
+            headers = {
+                "X-BLOBR-KEY": dextools_api_key,
+                "accept": "application/json",
+            }
+
+            async with self._session.get(
+                url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status == 429:
+                    logger.warning("[DEXTOOLS] Rate limited, skipping")
+                    return []
+                if resp.status != 200:
+                    logger.debug(f"[DEXTOOLS] Error: {resp.status}")
+                    return []
+
+                data = await resp.json()
+
+                for item in data.get("data", [])[:30]:
+                    token = self._parse_dextools_token(item)
+                    if token:
+                        # Filter for pump.fun, bonk.fun, bags or high volume
+                        is_platform = (
+                            token.mint.endswith("pump")
+                            or token.mint.endswith("bonk")
+                            or token.mint.endswith("bags")
+                        )
+                        if is_platform or token.volume_24h > 50000:
+                            tokens.append(token)
+
+            logger.debug(f"[DEXTOOLS] Fetched {len(tokens)} tokens")
+
+        except Exception as e:
+            logger.debug(f"[DEXTOOLS] Fetch error: {e}")
+
+        return tokens
+
+    def _parse_dextools_token(self, item: dict) -> TrendingToken | None:
+        """Parse DEXTools pool data to TrendingToken."""
+        try:
+            main_token = item.get("mainToken", {})
+            metrics = item.get("metrics", {})
+
+            mint = main_token.get("address", "")
+            if not mint:
+                return None
+
+            # DEXTools provides different metric structure
+            volume_24h = float(metrics.get("volume24h", 0) or 0)
+
+            return TrendingToken(
+                mint=mint,
+                symbol=main_token.get("symbol", ""),
+                name=main_token.get("name", ""),
+                price_usd=float(metrics.get("price", 0) or 0),
+                volume_24h=volume_24h,
+                volume_1h=volume_24h / 24,  # Estimate
+                volume_5m=0,
+                market_cap=float(metrics.get("fdv", 0) or 0),
+                price_change_5m=float(metrics.get("priceChange5m", 0) or 0),
+                price_change_1h=float(metrics.get("priceChange1h", 0) or 0),
+                price_change_24h=float(metrics.get("priceChange24h", 0) or 0),
+                buys_5m=int(metrics.get("txns5mBuys", 0) or 0),
+                sells_5m=int(metrics.get("txns5mSells", 0) or 0),
+                buys_1h=int(metrics.get("txns1hBuys", 0) or 0),
+                sells_1h=int(metrics.get("txns1hSells", 0) or 0),
+                liquidity=float(metrics.get("liquidity", 0) or 0),
+                created_at=None,
+                dex_id="dextools",
+                source=DataSource.DEXTOOLS,
+            )
+        except Exception as e:
+            logger.debug(f"[DEXTOOLS] Parse error: {e}")
             return None
 
     # ==================== EVALUATION ====================
@@ -852,10 +969,10 @@ class TrendingScanner:
         # Buy pressure
         if token.buy_pressure_5m >= self.min_buy_pressure:
             score += 30
-            reasons.append(f"[STRONG] Buy pressure {token.buy_pressure_5m*100:.0f}%")
+            reasons.append(f"[STRONG] Buy pressure {token.buy_pressure_5m * 100:.0f}%")
         elif token.buy_pressure_5m >= 0.5:
             score += 15
-            reasons.append(f"[OK] Buy pressure {token.buy_pressure_5m*100:.0f}%")
+            reasons.append(f"[OK] Buy pressure {token.buy_pressure_5m * 100:.0f}%")
 
         # Trade velocity
         if token.trade_velocity >= self.min_trade_velocity:
@@ -906,7 +1023,9 @@ class TrendingScanner:
         if expired:
             for mint in expired:
                 self.monitored_tokens.pop(mint, None)
-            logger.info(f"[ROTATE] Rotated {len(expired)} tokens (TTL={self.token_monitor_ttl}s)")
+            logger.info(
+                f"[ROTATE] Rotated {len(expired)} tokens (TTL={self.token_monitor_ttl}s)"
+            )
 
     def is_being_monitored(self, mint: str) -> bool:
         """Check if token is being monitored."""
@@ -963,5 +1082,7 @@ class TrendingScanner:
                     f"({usage:.1f}% used, {remaining} remaining)"
                 )
             else:
-                lines.append(f"  {source.value}: unlimited (used {limiter.daily_requests} today)")
+                lines.append(
+                    f"  {source.value}: unlimited (used {limiter.daily_requests} today)"
+                )
         return "\n".join(lines)
