@@ -52,3 +52,5 @@ backups/
 
 # === TEST FILES ===
 test_*.py
+backups/
+*.backup*
