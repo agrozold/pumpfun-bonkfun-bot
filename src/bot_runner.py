@@ -115,6 +115,15 @@ async def start_bot(config_path: str):
             stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
             max_hold_time=cfg["trade"].get("max_hold_time"),
             price_check_interval=cfg["trade"].get("price_check_interval", 10),
+            # Trailing Stop-Loss (TSL) configuration
+            tsl_enabled=cfg["trade"].get("tsl_enabled", False),
+            tsl_activation_pct=cfg["trade"].get("tsl_activation_pct", 0.20),
+            tsl_trail_pct=cfg["trade"].get("tsl_trail_pct", 0.10),
+            tsl_sell_pct=cfg["trade"].get("tsl_sell_pct", 0.50),
+            # Token Vetting (security)
+            token_vetting_enabled=cfg.get("token_vetting", {}).get("enabled", False),
+            vetting_require_freeze_revoked=cfg.get("token_vetting", {}).get("require_freeze_revoked", True),
+            vetting_skip_bonding_curve=cfg.get("token_vetting", {}).get("skip_bonding_curve", True),
             # Listener configuration
             listener_type=cfg["filters"]["listener_type"],
             # Geyser configuration (if applicable)

@@ -44,6 +44,11 @@ trade:
   exit_strategy: tp_sl
   take_profit_percentage: 0.50   # 50% TP
   stop_loss_percentage: 0.20     # 20% SL
+  # Trailing Stop-Loss (TSL)
+  tsl_enabled: true
+  tsl_activation_pct: 0.20
+  tsl_trail_pct: 0.10
+  tsl_sell_pct: 0.50
   max_hold_time: 3600            # Макс 1 час
   min_sol_balance: 0.05
   price_check_interval: 3

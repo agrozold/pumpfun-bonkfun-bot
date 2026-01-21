@@ -43,6 +43,11 @@ trade:
   sell_slippage: 0.35
   stop_loss_percentage: 0.20
   take_profit_percentage: 1.0
+  # Trailing Stop-Loss (TSL)
+  tsl_enabled: true
+  tsl_activation_pct: 0.20  # Activate after +20% profit
+  tsl_trail_pct: 0.10
+  tsl_sell_pct: 0.50  # Sell 50% when TSL triggers
 
 # Pattern detection
 pattern_detection:
@@ -94,3 +99,24 @@ trending_scanner:
   min_price_change_1h: 50
   min_buy_pressure: 0.85
   scan_interval: 30
+
+# ========================================
+# TRAILING STOP-LOSS (TSL) - NEW!
+# ========================================
+# TSL активируется когда цена достигает +activation%
+# После этого стоп-лосс "следует" за ценой на расстоянии trail%
+# Пример: activation=20%, trail=10%
+#   - Цена выросла на +25% -> TSL активирован, стоп на +15%
+#   - Цена выросла на +50% -> стоп подтягивается на +40%
+#   - Цена падает до +35% -> продажа с профитом +35%!
+
+# ========================================
+# TOKEN VETTING (Security)
+# ========================================
+# Проверяет токены перед покупкой:
+# - freeze_authority должен быть отозван (иначе могут заморозить ваши токены!)
+# - Для bonding curve токенов проверка пропускается (платформа контролирует)
+token_vetting:
+  enabled: true
+  require_freeze_revoked: true
+  skip_bonding_curve: true  # Пропускать проверку для свежих токенов на bonding curve

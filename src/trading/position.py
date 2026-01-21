@@ -1,9 +1,10 @@
 """
 Position management for take profit/stop loss functionality.
+UPDATED: Added Trailing Stop-Loss (TSL) support.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -27,13 +28,14 @@ class ExitReason(Enum):
 
     TAKE_PROFIT = "take_profit"
     STOP_LOSS = "stop_loss"
+    TRAILING_STOP = "trailing_stop"  # NEW: TSL triggered
     MAX_HOLD_TIME = "max_hold_time"
     MANUAL = "manual"
 
 
 @dataclass
 class Position:
-    """Represents an active trading position."""
+    """Represents an active trading position with TSL support."""
 
     # Token information
     mint: Pubkey
@@ -44,11 +46,24 @@ class Position:
     quantity: float
     entry_time: datetime
 
-    # Exit conditions
+    # Exit conditions (static)
     take_profit_price: float | None = None
     stop_loss_price: float | None = None
     max_hold_time: int | None = None  # seconds
 
+    # ========================================
+    # TRAILING STOP-LOSS (TSL) - NEW!
+    # ========================================
+    tsl_enabled: bool = False
+    tsl_activation_pct: float = 0.20  # Activate TSL after +20% profit
+    tsl_trail_pct: float = 0.10  # Trail 10% below high water mark
+    tsl_sell_pct: float = 0.50  # Sell 50% of position when TSL triggers
+    
+    # TSL State
+    tsl_active: bool = False
+    high_water_mark: float = 0.0  # Highest price since entry
+    tsl_trigger_price: float = 0.0  # Current trailing stop level
+    
     # Status
     is_active: bool = True
     exit_reason: ExitReason | None = None
@@ -58,6 +73,11 @@ class Position:
     # Platform info for restoration
     platform: str = "pump_fun"
     bonding_curve: str | None = None
+
+    def __post_init__(self):
+        """Initialize high water mark to entry price."""
+        if self.high_water_mark == 0.0:
+            self.high_water_mark = self.entry_price
 
     def to_dict(self) -> dict:
         """Convert position to dictionary for JSON serialization."""
@@ -70,6 +90,15 @@ class Position:
             "take_profit_price": self.take_profit_price,
             "stop_loss_price": self.stop_loss_price,
             "max_hold_time": self.max_hold_time,
+            # TSL fields
+            "tsl_enabled": self.tsl_enabled,
+            "tsl_activation_pct": self.tsl_activation_pct,
+            "tsl_trail_pct": self.tsl_trail_pct,
+            "tsl_active": self.tsl_active,
+            "high_water_mark": self.high_water_mark,
+            "tsl_trigger_price": self.tsl_trigger_price,
+            "tsl_sell_pct": self.tsl_sell_pct,
+            # Status
             "is_active": self.is_active,
             "platform": self.platform,
             "bonding_curve": self.bonding_curve,
@@ -78,7 +107,7 @@ class Position:
     @classmethod
     def from_dict(cls, data: dict) -> "Position":
         """Create position from dictionary."""
-        return cls(
+        position = cls(
             mint=Pubkey.from_string(data["mint"]),
             symbol=data["symbol"],
             entry_price=data["entry_price"],
@@ -87,10 +116,20 @@ class Position:
             take_profit_price=data.get("take_profit_price"),
             stop_loss_price=data.get("stop_loss_price"),
             max_hold_time=data.get("max_hold_time"),
+            # TSL fields
+            tsl_enabled=data.get("tsl_enabled", False),
+            tsl_activation_pct=data.get("tsl_activation_pct", 0.20),
+            tsl_trail_pct=data.get("tsl_trail_pct", 0.10),
+            tsl_active=data.get("tsl_active", False),
+            high_water_mark=data.get("high_water_mark", data["entry_price"]),
+            tsl_trigger_price=data.get("tsl_trigger_price", 0.0),
+            tsl_sell_pct=data.get("tsl_sell_pct", 0.50),
+            # Status
             is_active=data.get("is_active", True),
             platform=data.get("platform", "pump_fun"),
             bonding_curve=data.get("bonding_curve"),
         )
+        return position
 
     @classmethod
     def create_from_buy_result(
@@ -104,6 +143,11 @@ class Position:
         max_hold_time: int | None = None,
         platform: str = "pump_fun",
         bonding_curve: str | None = None,
+        # TSL parameters - NEW!
+        tsl_enabled: bool = False,
+        tsl_activation_pct: float = 0.20,
+        tsl_trail_pct: float = 0.10,
+        tsl_sell_pct: float = 0.50,  # Sell 50% when TSL triggers
     ) -> "Position":
         """Create a position from a successful buy transaction.
 
@@ -117,6 +161,9 @@ class Position:
             max_hold_time: Maximum hold time in seconds
             platform: Trading platform
             bonding_curve: Bonding curve address for price checks
+            tsl_enabled: Enable trailing stop-loss
+            tsl_activation_pct: Profit % to activate TSL (0.20 = +20%)
+            tsl_trail_pct: Trail % below high water mark (0.10 = 10%)
 
         Returns:
             Position instance
@@ -128,15 +175,12 @@ class Position:
         stop_loss_price = None
         if stop_loss_percentage is not None:
             stop_loss_price = entry_price * (1 - stop_loss_percentage)
-            # CRITICAL: Log SL calculation for debugging
-            from utils.logger import get_logger
-            _logger = get_logger(__name__)
-            _logger.warning(
+            logger.warning(
                 f"[SL CALC] entry={entry_price:.10f}, sl_pct={stop_loss_percentage*100:.1f}%, "
                 f"sl_price={stop_loss_price:.10f}"
             )
 
-        return cls(
+        position = cls(
             mint=mint,
             symbol=symbol,
             entry_price=entry_price,
@@ -147,10 +191,62 @@ class Position:
             max_hold_time=max_hold_time,
             platform=platform,
             bonding_curve=bonding_curve,
+            # TSL
+            tsl_enabled=tsl_enabled,
+            tsl_activation_pct=tsl_activation_pct,
+            tsl_trail_pct=tsl_trail_pct,
+            tsl_sell_pct=tsl_sell_pct,
+            high_water_mark=entry_price,
         )
+        
+        if tsl_enabled:
+            activation_price = entry_price * (1 + tsl_activation_pct)
+            logger.warning(
+                f"[TSL] {symbol} TSL enabled: activates at {activation_price:.10f} "
+                f"(+{tsl_activation_pct*100:.0f}%), trails {tsl_trail_pct*100:.0f}%"
+            )
+        
+        return position
+
+    def update_price(self, current_price: float) -> None:
+        """
+        Update position with new price - handles TSL logic.
+        Call this BEFORE should_exit() for TSL to work correctly.
+        
+        Args:
+            current_price: Current token price
+        """
+        if not self.is_active or not self.tsl_enabled:
+            return
+        
+        # Calculate current profit percentage
+        profit_pct = (current_price - self.entry_price) / self.entry_price
+        
+        # Check TSL activation
+        if not self.tsl_active and profit_pct >= self.tsl_activation_pct:
+            self.tsl_active = True
+            self.high_water_mark = current_price
+            self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+            logger.warning(
+                f"[TSL] {self.symbol} TSL ACTIVATED at {current_price:.10f} "
+                f"(+{profit_pct*100:.1f}%). Trail stop: {self.tsl_trigger_price:.10f}"
+            )
+        
+        # Update high water mark and trailing stop if TSL is active
+        if self.tsl_active and current_price > self.high_water_mark:
+            old_hwm = self.high_water_mark
+            self.high_water_mark = current_price
+            old_trigger = self.tsl_trigger_price
+            self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+            logger.info(
+                f"[TSL] {self.symbol} NEW HIGH: {old_hwm:.10f} -> {current_price:.10f}. "
+                f"Trail stop: {old_trigger:.10f} -> {self.tsl_trigger_price:.10f}"
+            )
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
+        
+        IMPORTANT: Call update_price() before this for TSL to work!
 
         Args:
             current_price: Current token price
@@ -161,15 +257,35 @@ class Position:
         if not self.is_active:
             return False, None
 
-        # Check take profit
+        # ========================================
+        # 1. Check STATIC stop loss first (safety net)
+        # ========================================
+        if self.stop_loss_price and current_price <= self.stop_loss_price:
+            logger.warning(
+                f"[SL] {self.symbol} STOP LOSS: {current_price:.10f} <= {self.stop_loss_price:.10f}"
+            )
+            return True, ExitReason.STOP_LOSS
+
+        # ========================================
+        # 2. Check TRAILING stop loss (if active)
+        # ========================================
+        if self.tsl_active and current_price <= self.tsl_trigger_price:
+            profit_pct = (current_price - self.entry_price) / self.entry_price * 100
+            logger.warning(
+                f"[TSL] {self.symbol} TRAILING STOP: {current_price:.10f} <= {self.tsl_trigger_price:.10f}. "
+                f"Locked profit: +{profit_pct:.1f}%"
+            )
+            return True, ExitReason.TRAILING_STOP
+
+        # ========================================
+        # 3. Check take profit
+        # ========================================
         if self.take_profit_price and current_price >= self.take_profit_price:
             return True, ExitReason.TAKE_PROFIT
 
-        # Check stop loss
-        if self.stop_loss_price and current_price <= self.stop_loss_price:
-            return True, ExitReason.STOP_LOSS
-
-        # Check max hold time
+        # ========================================
+        # 4. Check max hold time
+        # ========================================
         if self.max_hold_time:
             elapsed_time = (datetime.utcnow() - self.entry_time).total_seconds()
             if elapsed_time >= self.max_hold_time:
@@ -216,12 +332,17 @@ class Position:
             "price_change_pct": price_change_pct,
             "unrealized_pnl_sol": unrealized_pnl,
             "quantity": self.quantity,
+            "tsl_active": self.tsl_active,
+            "high_water_mark": self.high_water_mark,
+            "tsl_trigger_price": self.tsl_trigger_price if self.tsl_active else None,
         }
 
     def __str__(self) -> str:
         """String representation of position."""
         if self.is_active:
             status = "ACTIVE"
+            if self.tsl_active:
+                status += f" [TSL @ {self.tsl_trigger_price:.10f}]"
         elif self.exit_reason:
             status = f"CLOSED ({self.exit_reason.value})"
         else:

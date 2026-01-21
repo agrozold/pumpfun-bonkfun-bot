@@ -42,6 +42,11 @@ trade:
   price_check_interval: 1
   sell_slippage: 0.35
   stop_loss_percentage: 0.20
+  # Trailing Stop-Loss (TSL)
+  tsl_enabled: true
+  tsl_activation_pct: 0.20
+  tsl_trail_pct: 0.10
+  tsl_sell_pct: 0.50
   take_profit_percentage: 1.0
 
 # Pattern detection

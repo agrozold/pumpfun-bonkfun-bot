@@ -33,6 +33,7 @@ from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position import Position, save_positions, load_positions, remove_position, ExitReason
+from security.token_vetter import TokenVetter, VetResult
 from trading.purchase_history import (
     was_token_purchased,
     add_to_purchase_history,
@@ -77,6 +78,15 @@ class UniversalTrader:
         take_profit_percentage: float | None = None,
         stop_loss_percentage: float | None = None,
         max_hold_time: int | None = None,
+        # Trailing Stop-Loss parameters
+        tsl_enabled: bool = False,
+        tsl_activation_pct: float = 0.20,  # Activate after +20% profit
+        tsl_trail_pct: float = 0.10,  # Trail 10% below high
+        tsl_sell_pct: float = 0.50,  # Sell 50% when TSL triggers
+        # Token Vetting (security)
+        token_vetting_enabled: bool = False,
+        vetting_require_freeze_revoked: bool = True,
+        vetting_skip_bonding_curve: bool = True,
         price_check_interval: int = 10,
         # Priority fee configuration
         enable_dynamic_priority_fee: bool = False,
@@ -443,6 +453,25 @@ class UniversalTrader:
         self.stop_loss_percentage = stop_loss_percentage
         self.max_hold_time = max_hold_time
         self.price_check_interval = price_check_interval
+        
+        # Trailing Stop-Loss (TSL) parameters
+        self.tsl_enabled = tsl_enabled
+        self.tsl_activation_pct = tsl_activation_pct
+        self.tsl_trail_pct = tsl_trail_pct
+        self.tsl_sell_pct = tsl_sell_pct
+        if self.tsl_enabled:
+            logger.warning(f"[TSL] Trailing Stop-Loss ENABLED: activates at +{tsl_activation_pct*100:.0f}%, trails {tsl_trail_pct*100:.0f}%")
+
+        # Token Vetter initialization
+        self.token_vetting_enabled = token_vetting_enabled
+        self.token_vetter: TokenVetter | None = None
+        if token_vetting_enabled:
+            self.token_vetter = TokenVetter(
+                rpc_endpoint=rpc_endpoint,
+                require_freeze_revoked=vetting_require_freeze_revoked,
+                skip_for_bonding_curve=vetting_skip_bonding_curve,
+            )
+            logger.warning("[VET] Token Vetting ENABLED")
 
         # Timing parameters
         self.wait_time_after_creation = wait_time_after_creation
@@ -799,6 +828,11 @@ class UniversalTrader:
                     max_hold_time=self.max_hold_time,
                     platform=dex_used,
                     bonding_curve=None,  # Will be derived if needed
+                    # TSL parameters
+                    tsl_enabled=self.tsl_enabled,
+                    tsl_activation_pct=self.tsl_activation_pct,
+                    tsl_trail_pct=self.tsl_trail_pct,
+                    tsl_sell_pct=self.tsl_sell_pct,
                 )
 
                 self.active_positions.append(position)
@@ -2093,6 +2127,22 @@ class UniversalTrader:
                 logger.info(f"[SKIP] {token_info.symbol} - already in positions.json (cross-bot check)")
                 return False
 
+            # ============================================
+            # TOKEN VETTING (Security Check)
+            # ============================================
+            if self.token_vetter and not skip_checks:
+                is_bonding_curve = hasattr(token_info, 'bonding_curve') or self.platform.value in ['pump_fun', 'lets_bonk', 'bags']
+                vet_report = await self.token_vetter.vet_token(
+                    mint_address=mint_str,
+                    symbol=token_info.symbol,
+                    is_bonding_curve=is_bonding_curve,
+                )
+                if not self.token_vetter.should_buy(vet_report):
+                    logger.warning(
+                        f"[VET] ⛔ BLOCKED: {token_info.symbol} - {vet_report.reason}"
+                    )
+                    return False
+
             # Validate that token is for our platform
             if token_info.platform != self.platform:
                 logger.warning(
@@ -2377,6 +2427,11 @@ class UniversalTrader:
             max_hold_time=self.max_hold_time,
             platform=self.platform.value,
             bonding_curve=bonding_curve_str,
+            # TSL parameters
+            tsl_enabled=self.tsl_enabled,
+            tsl_activation_pct=self.tsl_activation_pct,
+            tsl_trail_pct=self.tsl_trail_pct,
+            tsl_sell_pct=self.tsl_sell_pct,
         )
 
         logger.info(f"Created position: {position}")
@@ -2384,6 +2439,9 @@ class UniversalTrader:
             logger.info(f"Take profit target: {position.take_profit_price:.8f} SOL")
         if position.stop_loss_price:
             logger.info(f"Stop loss target: {position.stop_loss_price:.8f} SOL")
+        if position.tsl_enabled:
+            activation_price = position.entry_price * (1 + position.tsl_activation_pct)
+            logger.warning(f"[TSL] Trailing Stop enabled: activates at {activation_price:.8f} SOL (+{position.tsl_activation_pct*100:.0f}%)")
 
         # Save position to file for recovery after restart
         self._save_position(position)
@@ -2551,6 +2609,8 @@ class UniversalTrader:
                 # ============================================
 
                 # Check if position should be exited (includes config SL check!)
+                # UPDATE: Call update_price() for TSL (Trailing Stop-Loss) support
+                position.update_price(current_price)
                 should_exit, exit_reason = position.should_exit(current_price)
 
                 # ============================================
@@ -2570,6 +2630,16 @@ class UniversalTrader:
                         f"Price {current_price:.10f} <= SL {position.stop_loss_price:.10f}"
                     )
                     pending_stop_loss = True
+
+                # Handle TRAILING STOP (TSL) - sells with locked profit
+                if should_exit and exit_reason == ExitReason.TRAILING_STOP:
+                    locked_profit = ((current_price - position.entry_price) / position.entry_price) * 100
+                    logger.warning(
+                        f"[TSL] {token_info.symbol}: TRAILING STOP TRIGGERED! "
+                        f"Price {current_price:.10f} <= TSL trigger {position.tsl_trigger_price:.10f}. "
+                        f"Locked profit: +{locked_profit:.1f}%"
+                    )
+                    # TSL exit is like TP - we're in profit, so proceed with sell
 
                 # ============================================
                 # HARD STOP LOSS - ЖЁСТКАЯ ЗАЩИТА ОТ УБЫТКОВ
@@ -2614,15 +2684,30 @@ class UniversalTrader:
                         f"[EXIT] Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
                     )
 
-                    # Handle moon_bag exit strategy (only for TP, NOT for SL!)
-                    if exit_reason.value == "take_profit" and self.moon_bag_percentage > 0:
+                    # Handle exit strategies based on exit_reason
+                    if exit_reason == ExitReason.TAKE_PROFIT and self.moon_bag_percentage > 0:
+                        # Take Profit with moon bag
                         sell_quantity = position.quantity * (1 - self.moon_bag_percentage / 100)
                         logger.info(f"[MOON] TP reached! Selling {100 - self.moon_bag_percentage:.0f}%, keeping {self.moon_bag_percentage:.0f}% moon bag 🌙")
-                    else:
+                    elif exit_reason == ExitReason.TRAILING_STOP:
+                        # TSL - продаём только часть позиции (tsl_sell_pct)
+                        sell_quantity = position.quantity * position.tsl_sell_pct
+                        remaining_pct = (1 - position.tsl_sell_pct) * 100
+                        logger.warning(
+                            f"[TSL] Partial sell: {position.tsl_sell_pct*100:.0f}% of position. "
+                            f"Keeping {remaining_pct:.0f}% for potential further gains!"
+                        )
+                        # После частичной продажи - деактивировать TSL, обновить quantity
+                        # TSL может снова активироваться если цена пойдёт вверх
+                        position.tsl_active = False
+                        position.high_water_mark = current_price
+                    elif exit_reason == ExitReason.STOP_LOSS:
                         # STOP LOSS - продаём ВСЁ, никаких moon bags!
                         sell_quantity = position.quantity
-                        if exit_reason.value == "stop_loss":
-                            logger.warning(f"[SL] STOP LOSS - selling 100% of position, NO moon bag!")
+                        logger.warning(f"[SL] STOP LOSS - selling 100% of position, NO moon bag!")
+                    else:
+                        # MAX_HOLD_TIME или другие причины - продаём всё
+                        sell_quantity = position.quantity
 
                     # ============================================
                     # AGGRESSIVE SELL RETRY для STOP LOSS
