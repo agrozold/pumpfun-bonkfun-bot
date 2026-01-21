@@ -36,13 +36,13 @@ trade:
   buy_amount: 0.01
   buy_slippage: 0.3
   exit_strategy: tp_sl
-  max_hold_time: 86400
+  max_hold_time: 2592000  # 30 days
   min_sol_balance: 0.03
   moon_bag_percentage: 50
   price_check_interval: 1
   sell_slippage: 0.35
   stop_loss_percentage: 0.20
-  take_profit_percentage: 1.0
+#  take_profit_percentage: 1.0
   # Trailing Stop-Loss (TSL)
   tsl_enabled: true
   tsl_activation_pct: 0.20  # Activate after +20% profit

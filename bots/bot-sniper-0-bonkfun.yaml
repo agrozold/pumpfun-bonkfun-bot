@@ -36,7 +36,7 @@ trade:
   buy_amount: 0.01
   buy_slippage: 0.3
   exit_strategy: tp_sl
-  max_hold_time: 86400
+  max_hold_time: 2592000  # 30 days
   min_sol_balance: 0.03
   moon_bag_percentage: 50
   price_check_interval: 1
@@ -47,7 +47,7 @@ trade:
   tsl_activation_pct: 0.20
   tsl_trail_pct: 0.10
   tsl_sell_pct: 0.50
-  take_profit_percentage: 1.0
+#  take_profit_percentage: 1.0
 
 # Pattern detection
 pattern_detection:
@@ -99,3 +99,9 @@ trending_scanner:
   min_price_change_1h: 50
   min_buy_pressure: 0.85
   scan_interval: 30
+
+# Token Vetting - проверка безопасности
+token_vetting:
+  enabled: true
+  require_freeze_revoked: true
+  skip_bonding_curve: true  # Launchpad - пропускаем проверки
