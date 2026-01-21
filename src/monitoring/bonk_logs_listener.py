@@ -164,7 +164,7 @@ class BonkLogsListener(BaseTokenListener):
                 logger.error(f"Too many errors ({consecutive_errors}), waiting 30s...")
                 await asyncio.sleep(30)
                 consecutive_errors = 0
-            else:
+#            else:
                 backoff = min(5 * (2 ** consecutive_errors), 30)
                 logger.info(f"Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
@@ -172,7 +172,7 @@ class BonkLogsListener(BaseTokenListener):
     async def _subscribe_to_logs(self, websocket) -> None:
         """Subscribe to Raydium LaunchLab program logs."""
         subscription = json.dumps({
-            "jsonrpc": "2.0",
+#            "jsonrpc": "2.0",
             "id": 1,
             "method": "logsSubscribe",
             "params": [

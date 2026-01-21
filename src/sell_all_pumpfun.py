@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Sell all pump.fun tokens via PumpPortal trade-local API.
+Sell all pump.fun/BAGS/BONK tokens via PumpPortal trade-local API.
+Works with Token-2022 via DRPC/Helius DAS API.
+Removes sold positions from positions.json.
 """
 
 import asyncio
-import aiohttp
 import requests
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -21,53 +23,136 @@ from solders.rpc.config import RpcSendTransactionConfig
 
 load_dotenv()
 
-TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+# Position management
+try:
+    from trading.position import load_positions, save_positions, remove_position
+    from solders.pubkey import Pubkey
+    POSITIONS_AVAILABLE = True
+except ImportError:
+    POSITIONS_AVAILABLE = False
 
 SKIP_TOKENS = {
-    "So11111111111111111111111111111111111111112",
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    "So11111111111111111111111111111111111111112",  # WSOL
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
 }
 
 
-async def get_all_tokens(wallet_pubkey: str) -> list[dict]:
-    """Get all pump.fun tokens."""
+def get_all_tokens_das(wallet_pubkey: str) -> list[dict]:
+    """Get all tokens using DAS API (DRPC or Helius - supports Token-2022)."""
+    
+    # Try DRPC first, then Helius
+    drpc_endpoint = os.getenv("DRPC_RPC_ENDPOINT")
+    helius_key = os.getenv("HELIUS_API_KEY")
+    
+    # DRPC with DAS support
+    if drpc_endpoint:
+        api_url = drpc_endpoint
+    elif helius_key:
+        api_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    else:
+        print("⚠️  No DRPC or HELIUS API configured")
+        return []
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getAssetsByOwner",
+        "params": {
+            "ownerAddress": wallet_pubkey,
+            "page": 1,
+            "limit": 100,
+            "displayOptions": {"showFungible": True}
+        }
+    }
+    
+    try:
+        resp = requests.post(api_url, json=payload, timeout=30)
+        data = resp.json()
+    except Exception as e:
+        print(f"⚠️  DAS API error: {e}")
+        return []
+    
+    tokens = []
+    if 'result' in data and 'items' in data['result']:
+        for item in data['result']['items']:
+            mint = item.get('id')
+            if not mint or mint in SKIP_TOKENS:
+                continue
+            
+            # Only pump.fun/BAGS/BONK tokens (ending with 'pump')
+            if not mint.endswith('pump'):
+                continue
+            
+            token_info = item.get('token_info', {})
+            balance = token_info.get('balance', 0)
+            decimals = token_info.get('decimals', 6)
+            
+            if balance and int(balance) > 0:
+                content = item.get('content', {})
+                meta = content.get('metadata', {})
+                symbol = meta.get('symbol') or meta.get('name') or 'UNKNOWN'
+                
+                tokens.append({
+                    "mint": mint,
+                    "symbol": symbol,
+                    "balance": int(balance) / (10 ** decimals)
+                })
+    elif 'error' in data:
+        print(f"⚠️  DAS API returned error: {data['error']}")
+        # Fallback to standard RPC
+        return get_all_tokens_rpc(wallet_pubkey)
+    
+    return tokens
+
+
+def get_all_tokens_rpc(wallet_pubkey: str) -> list[dict]:
+    """Fallback: Get tokens using standard RPC (may miss Token-2022)."""
     rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
+    
+    TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+    TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+    
     tokens = []
     
-    async with aiohttp.ClientSession() as session:
-        for program_id in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM]:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getTokenAccountsByOwner",
-                "params": [
-                    wallet_pubkey,
-                    {"programId": program_id},
-                    {"encoding": "jsonParsed"}
-                ]
-            }
-            
-            async with session.post(rpc_endpoint, json=payload) as resp:
-                data = await resp.json()
-            
-            if "result" in data and "value" in data["result"]:
-                for account in data["result"]["value"]:
-                    info = account["account"]["data"]["parsed"]["info"]
-                    mint = info["mint"]
-                    balance = float(info["tokenAmount"]["uiAmount"] or 0)
-                    
-                    if balance > 0 and mint not in SKIP_TOKENS and mint.endswith("pump"):
-                        tokens.append({"mint": mint, "balance": balance})
+    for program_id in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM]:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                wallet_pubkey,
+                {"programId": program_id},
+                {"encoding": "jsonParsed"}
+            ]
+        }
+        
+        try:
+            resp = requests.post(rpc_endpoint, json=payload, timeout=30)
+            data = resp.json()
+        except Exception as e:
+            print(f"⚠️  RPC error: {e}")
+            continue
+        
+        if "result" in data and "value" in data["result"]:
+            for account in data["result"]["value"]:
+                info = account["account"]["data"]["parsed"]["info"]
+                mint = info["mint"]
+                balance = float(info["tokenAmount"]["uiAmount"] or 0)
+                
+                if balance > 0 and mint not in SKIP_TOKENS and mint.endswith("pump"):
+                    tokens.append({
+                        "mint": mint,
+                        "symbol": "UNKNOWN",
+                        "balance": balance
+                    })
     
     return tokens
 
 
 def sell_token(mint: str, keypair: Keypair, pubkey: str, rpc: str) -> tuple[bool, str, str]:
-    """Sell 100% of token."""
+    """Sell 100% of token via PumpPortal."""
     
-    # Get unsigned TX from PumpPortal
     response = requests.post(
         url="https://pumpportal.fun/api/trade-local",
         data={
@@ -76,7 +161,7 @@ def sell_token(mint: str, keypair: Keypair, pubkey: str, rpc: str) -> tuple[bool
             "mint": mint,
             "amount": "100%",
             "denominatedInSol": "false",
-            "slippage": 25,
+            "slippage": 30,  # 30% slippage for memecoins
             "priorityFee": 0.0005,
             "pool": "auto"
         }
@@ -111,28 +196,49 @@ def sell_token(mint: str, keypair: Keypair, pubkey: str, rpc: str) -> tuple[bool
         return False, None, str(result)
 
 
+def remove_from_positions(mint: str, symbol: str):
+    """Remove token from positions.json after successful sell."""
+    if not POSITIONS_AVAILABLE:
+        return
+    
+    try:
+        positions = load_positions()
+        for p in positions:
+            if str(p.mint) == mint:
+                remove_position(Pubkey.from_string(mint))
+                print(f"  📝 Removed {symbol} from positions.json")
+                return
+    except Exception as e:
+        print(f"  ⚠️ Could not update positions.json: {e}")
+
+
 async def main():
     private_key = os.getenv("SOLANA_PRIVATE_KEY")
     rpc = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
+    
+    if not private_key:
+        print("❌ SOLANA_PRIVATE_KEY not set")
+        return
     
     keypair = Keypair.from_base58_string(private_key)
     pubkey = str(keypair.pubkey())
     
     print(f"\nWallet: {pubkey}")
-    print("Fetching tokens...\n")
+    print("Fetching tokens (DRPC/Helius DAS API)...\n")
     
-    tokens = await get_all_tokens(pubkey)
+    # Use DAS API for Token-2022 support
+    tokens = get_all_tokens_das(pubkey)
     
     if not tokens:
-        print("No pump.fun tokens!")
+        print("No pump.fun/BAGS/BONK tokens found!")
         return
     
     print(f"Found {len(tokens)} tokens:\n")
     for i, t in enumerate(tokens, 1):
-        print(f"  {i}. {t['mint'][:20]}... ({t['balance']:.2f})")
+        print(f"  {i}. {t['symbol']:12} | {t['mint'][:20]}... ({t['balance']:.2f})")
     
     if "--dry-run" in sys.argv:
-        print("\nDRY RUN")
+        print("\nDRY RUN - no sells executed")
         return
     
     confirm = input("\nType 'SELL' to confirm: ")
@@ -146,13 +252,14 @@ async def main():
     failed = 0
     
     for t in tokens:
-        print(f"Selling {t['mint'][:20]}...")
+        print(f"Selling {t['symbol']} ({t['mint'][:20]}...)...")
         
         try:
             ok, sig, error = sell_token(t["mint"], keypair, pubkey, rpc)
             
             if ok:
                 print(f"  ✅ TX: {sig}")
+                remove_from_positions(t["mint"], t["symbol"])
                 success += 1
             else:
                 print(f"  ❌ {error}")
@@ -161,7 +268,6 @@ async def main():
             print(f"  ❌ {e}")
             failed += 1
         
-        import time
         time.sleep(2)  # Delay between sells
     
     print(f"\nDONE: {success} sold, {failed} failed")

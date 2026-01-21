@@ -553,8 +553,9 @@ class UniversalTrader:
         # Cleanup old pending tokens (older than 5 minutes)
         self._cleanup_pending_tokens()
 
-        # If pattern_only_mode and we have pending token_info - check scoring FIRST!
-        if self.pattern_only_mode and mint in self.pending_tokens:
+        # If we have pending token_info (waiting for patterns) - check scoring and buy!
+        logger.info(f"[DEBUG] Checking pending_tokens for {mint}, have {len(self.pending_tokens)} tokens: {list(self.pending_tokens.keys())[:5]}")
+        if mint in self.pending_tokens:
             token_info = self.pending_tokens.pop(mint)
 
             # MANDATORY SCORING CHECK before buying on signal
@@ -585,21 +586,27 @@ class UniversalTrader:
 
     def _cleanup_pending_tokens(self):
         """Remove pending tokens older than 5 minutes."""
-        import time
-        now = time.time()
+        from time import monotonic
+        now = monotonic()
         max_age = 300  # 5 minutes
 
+        before_count = len(self.pending_tokens)
         to_remove = []
         for mint_str in self.pending_tokens:
             if mint_str in self.token_timestamps:
                 age = now - self.token_timestamps[mint_str]
                 if age > max_age:
                     to_remove.append(mint_str)
+            # If no timestamp - don't remove (keep it)
 
         for mint_str in to_remove:
             self.pending_tokens.pop(mint_str, None)
-            if to_remove:
-                logger.debug(f"Cleaned up {len(to_remove)} old pending tokens")
+        
+        if to_remove:
+            logger.warning(f"[CLEANUP] Removed {len(to_remove)} old pending tokens")
+        
+        if before_count > 0:
+            logger.info(f"[CLEANUP] pending_tokens: {before_count} before, {len(self.pending_tokens)} after")
 
     def _has_pump_signal(self, mint: str) -> bool:
         """Check if token has pump signal."""
@@ -1471,6 +1478,15 @@ class UniversalTrader:
                 creator_vault=None,
             )
             
+            # Check if token is actually on pump_fun (not graduated to Raydium)
+            if self.platform == Platform.PUMP_FUN:
+                from platforms.pumpfun.bonding_curve_address_provider import get_bonding_curve_address
+                bc = get_bonding_curve_address(token_info.mint)
+                bc_exists = await self.client.check_account_exists(bc)
+                if not bc_exists:
+                    logger.warning(f"[VOLUME] {analysis.symbol} not on pump_fun (graduated/raydium), skipping")
+                    return
+
             buy_success = await self._handle_token(token_info, skip_checks=False)
 
             # Mark as BOUGHT only if purchase was successful
@@ -2240,8 +2256,14 @@ class UniversalTrader:
                     )
                     if not should_buy:
                         logger.info(
-                            f"Skipping {token_info.symbol} - score {score.total_score} below threshold"
+                            f"Skipping {token_info.symbol} - score {score.total_score} below threshold, waiting for patterns"
                         )
+                        # Store for pattern detection - if patterns appear later, _on_pump_signal will buy
+                        logger.warning(f"[DEBUG] SAVING to pending_tokens: {mint_str} ({token_info.symbol}), total: {len(self.pending_tokens)+1}")
+                        self.pending_tokens[mint_str] = token_info
+                        # Save timestamp for cleanup
+                        from time import monotonic
+                        self.token_timestamps[mint_str] = monotonic()
                         return False
                 except Exception as e:
                     # CRITICAL: Если scoring упал - НЕ покупаем! Безопасность важнее скорости
@@ -2340,15 +2362,15 @@ class UniversalTrader:
                 self._critical_low_balance = True
                 return False
 
-            # Check if we have enough for buy + reserve for sells
-            required = self.buy_amount + self.min_sol_balance
-
-            if balance_sol < required:
+            # Simple balance check: don't buy if balance < MIN_BALANCE_FOR_BUY
+            # TSL/SL/TP will still work regardless of balance
+            MIN_BALANCE_FOR_BUY = 0.03
+            
+            if balance_sol < MIN_BALANCE_FOR_BUY:
                 logger.warning(
-                    f"[BALANCE] LOW BALANCE: {balance_sol:.4f} SOL < {required:.4f} SOL required "
-                    f"(buy: {self.buy_amount}, reserve: {self.min_sol_balance})"
+                    f"[BALANCE] LOW BALANCE: {balance_sol:.4f} SOL < {MIN_BALANCE_FOR_BUY} SOL minimum"
                 )
-                logger.warning("⛔ Skipping buy to preserve SOL for selling positions")
+                logger.warning("⛔ Skipping buy - need at least 0.03 SOL to buy new tokens")
                 return False
 
             logger.debug(f"Balance OK: {balance_sol:.4f} SOL")

@@ -17,13 +17,85 @@ from solders.instruction import Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
+from solders.account import Account
 from solders.transaction import Transaction
+from solders.signature import Signature
 
 from utils.logger import get_logger
 from core.blockhash_cache import get_blockhash_cache
 from trading.jito_sender import get_jito_sender
 
 logger = get_logger(__name__)
+
+# Redis cache for RPC
+try:
+    from core.redis_cache import cache_get, cache_set
+    REDIS_AVAILABLE = True
+    logger.info("[RPC] Redis cache enabled")
+except ImportError:
+    REDIS_AVAILABLE = False
+    cache_get = lambda k: None
+    cache_set = lambda k, v, t=60: False
+
+# =============================================================================
+# GLOBAL RPC CACHE - reduces QuickNode/Helius API calls
+# =============================================================================
+import time as _time
+
+_rpc_cache: dict[str, tuple[any, float]] = {}  # key -> (value, expiry_timestamp)
+_cache_stats = {"hits": 0, "misses": 0}
+
+CACHE_TTL = {
+    "account_info": 10,      # 10 sec
+    "token_balance": 5,      # 5 sec  
+    "multiple_accounts": 10, # 10 sec
+    "health": 30,            # 30 sec
+    "balance": 5,            # 5 sec
+}
+
+def _cache_get(key: str):
+    """Get from cache (Redis first, then local)."""
+    # Try Redis first
+    if REDIS_AVAILABLE:
+        cached = cache_get(f"rpc:{key}")
+        if cached is not None:
+            _cache_stats["hits"] += 1
+            return cached
+    
+    # Fall back to local cache
+    if key in _rpc_cache:
+        value, expiry = _rpc_cache[key]
+        if _time.time() < expiry:
+            _cache_stats["hits"] += 1
+            return value
+        del _rpc_cache[key]
+    _cache_stats["misses"] += 1
+    return None
+
+def _cache_set(key: str, value, ttl: int):
+    """Set cache with TTL (Redis + local)."""
+    # Save to Redis for cross-bot sharing
+    if REDIS_AVAILABLE:
+        cache_set(f"rpc:{key}", value, ttl)
+    
+    # Also save locally for speed
+    if len(_rpc_cache) > 5000:
+        now = _time.time()
+        expired = [k for k, (v, exp) in _rpc_cache.items() if exp < now]
+        for k in expired:
+            del _rpc_cache[k]
+        if len(_rpc_cache) > 4000:
+            sorted_keys = sorted(_rpc_cache.keys(), key=lambda k: _rpc_cache[k][1])[:1000]
+            for k in sorted_keys:
+                del _rpc_cache[k]
+    _rpc_cache[key] = (value, _time.time() + ttl)
+
+def get_cache_stats() -> dict:
+    """Return cache statistics."""
+    total = _cache_stats["hits"] + _cache_stats["misses"]
+    hit_rate = (_cache_stats["hits"] / total * 100) if total > 0 else 0
+    return {**_cache_stats, "total": total, "hit_rate": f"{hit_rate:.1f}%", "cache_size": len(_rpc_cache)}
+# =============================================================================
 
 
 def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
@@ -91,6 +163,11 @@ class SolanaClient:
             self._client = None
 
     async def get_health(self) -> str | None:
+        cache_key = "health"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return Account.from_json(cached)
+            
         body = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -98,11 +175,12 @@ class SolanaClient:
         }
         result = await self.post_rpc(body)
         if result and "result" in result:
+            _cache_set(cache_key, result["result"], CACHE_TTL["health"])
             return result["result"]
         return None
 
     async def get_account_info(self, pubkey: Pubkey) -> dict[str, Any]:
-        """Get account info from the blockchain.
+        """Get account info from the blockchain (with caching).
 
         Args:
             pubkey: Public key of the account
@@ -113,12 +191,19 @@ class SolanaClient:
         Raises:
             ValueError: If account doesn't exist or has no data
         """
+        cache_key = f"acc:{str(pubkey)}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return Account.from_json(cached)
+            
         client = await self.get_client()
         response = await client.get_account_info(
             pubkey, encoding="base64"
         )  # base64 encoding for account data by default
         if not response.value:
             raise ValueError(f"Account {pubkey} not found")
+        
+        _cache_set(cache_key, response.value.to_json(), CACHE_TTL["account_info"])
         return response.value
 
     async def get_multiple_accounts(self, pubkeys: list[Pubkey]) -> list[dict[str, Any] | None]:
@@ -151,7 +236,7 @@ class SolanaClient:
         return results
 
     async def get_token_account_balance(self, token_account: Pubkey) -> int:
-        """Get token balance for an account.
+        """Get token balance for an account (with caching).
 
         Args:
             token_account: Token account address
@@ -159,11 +244,17 @@ class SolanaClient:
         Returns:
             Token balance as integer
         """
+        cache_key = f"bal:{str(token_account)}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return Account.from_json(cached)
+            
         client = await self.get_client()
         response = await client.get_token_account_balance(token_account)
-        if response.value:
-            return int(response.value.amount)
-        return 0
+        result = int(response.value.amount) if response.value else 0
+        
+        _cache_set(cache_key, result, CACHE_TTL["token_balance"])
+        return result
 
     async def get_latest_blockhash(self) -> Hash:
         """Get the latest blockhash.
@@ -356,6 +447,9 @@ class SolanaClient:
         self, signature: str, commitment: str = "confirmed", timeout: float = 45.0
     ) -> bool:
         """Wait for transaction confirmation with timeout.
+        
+        IMPROVED: If timeout occurs, check transaction status directly.
+        Transactions may be confirmed even if wait times out.
 
         Args:
             signature: Transaction signature
@@ -366,18 +460,44 @@ class SolanaClient:
             Whether transaction was confirmed
         """
         client = await self.get_client()
+        sig_obj = Signature.from_string(signature) if isinstance(signature, str) else signature
+        
         try:
             logger.info(f"Waiting for confirmation (timeout: {timeout}s)...")
             await asyncio.wait_for(
-                client.confirm_transaction(
-                    signature, commitment=commitment, sleep_seconds=0.5
-                ),
+                client.confirm_transaction(sig_obj, commitment=commitment, sleep_seconds=0.5),
                 timeout=timeout,
             )
             return True
         except TimeoutError:
-            logger.warning(f"Transaction confirmation timed out after {timeout}s: {signature}")
-            return False
+            logger.warning(f"Confirmation wait timed out after {timeout}s, checking status directly...")
+            # Don't give up! Check if transaction actually succeeded
+            try:
+                status = await client.get_signature_statuses([sig_obj])
+                if status.value and status.value[0]:
+                    stat = status.value[0]
+                    if stat.err is None:
+                        logger.info(f"Transaction {signature[:20]}... confirmed despite timeout!")
+                        return True
+                    else:
+                        logger.error(f"Transaction failed with error: {stat.err}")
+                        return False
+                # Status not found yet - check transaction directly
+                tx_resp = await client.get_transaction(
+                    sig_obj, 
+                    encoding="jsonParsed",
+                    max_supported_transaction_version=0
+                )
+                if tx_resp.value and tx_resp.value.transaction:
+                    meta = tx_resp.value.transaction.meta
+                    if meta and meta.err is None:
+                        logger.info(f"Transaction {signature[:20]}... SUCCESS (verified via getTransaction)")
+                        return True
+                logger.warning(f"Transaction {signature[:20]}... status unclear after timeout")
+                return False
+            except Exception as e:
+                logger.warning(f"Failed to check transaction status: {e}")
+                return False
         except Exception:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False

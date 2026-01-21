@@ -43,6 +43,15 @@ from spl.token.instructions import get_associated_token_address
 
 load_dotenv()
 
+# Position management for tracking
+import sys as _sys
+_sys.path.insert(0, "src")
+try:
+    from trading.position import load_positions, save_positions, remove_position
+    POSITIONS_AVAILABLE = True
+except ImportError:
+    POSITIONS_AVAILABLE = False
+
 # JITO integration for faster transaction landing
 from src.trading.jito_sender import get_jito_sender
 
@@ -434,6 +443,24 @@ async def sell_via_jupiter(
 
                 await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
                 print("✅ Transaction confirmed!")
+                
+                # Update positions.json
+                if POSITIONS_AVAILABLE:
+                    try:
+                        positions = load_positions()
+                        for p in positions:
+                            if str(p.mint) == str(mint):
+                                if percent >= 100:
+                                    remove_position(p.mint)
+                                    print(f"📝 Removed {p.symbol} from positions.json")
+                                else:
+                                    p.quantity = p.quantity * (1 - percent/100)
+                                    save_positions(positions)
+                                    print(f"📝 Updated position: {p.quantity:.2f} remaining")
+                                break
+                    except Exception as e:
+                        print(f"⚠️ positions.json update failed: {e}")
+                
                 return True
 
             except Exception as e:
@@ -712,6 +739,24 @@ async def sell_via_pumpswap(
 
             await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
+            
+            # Update positions.json
+            if POSITIONS_AVAILABLE:
+                try:
+                    positions = load_positions()
+                    for p in positions:
+                        if str(p.mint) == str(mint):
+                            if percent >= 100:
+                                remove_position(p.mint)
+                                print(f"📝 Removed {p.symbol} from positions.json")
+                            else:
+                                p.quantity = p.quantity * (1 - percent/100)
+                                save_positions(positions)
+                                print(f"📝 Updated position: {p.quantity:.2f} remaining")
+                            break
+                except Exception as e:
+                    print(f"⚠️ positions.json update failed: {e}")
+            
             return True
 
         except Exception as e:
@@ -850,6 +895,24 @@ async def sell_via_pumpfun(
 
             await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
+            
+            # Update positions.json
+            if POSITIONS_AVAILABLE:
+                try:
+                    positions = load_positions()
+                    for p in positions:
+                        if str(p.mint) == str(mint):
+                            if percent >= 100:
+                                remove_position(p.mint)
+                                print(f"📝 Removed {p.symbol} from positions.json")
+                            else:
+                                p.quantity = p.quantity * (1 - percent/100)
+                                save_positions(positions)
+                                print(f"📝 Updated position: {p.quantity:.2f} remaining")
+                            break
+                except Exception as e:
+                    print(f"⚠️ positions.json update failed: {e}")
+            
             return True
 
         except Exception as e:
@@ -935,3 +998,27 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def update_position_after_sell(mint, percent: float):
+    """Remove or update position in positions.json after successful sell."""
+    if not POSITIONS_AVAILABLE:
+        return
+    
+    try:
+        positions = load_positions()
+        mint_str = str(mint)
+        
+        for p in positions:
+            if str(p.mint) == mint_str:
+                if percent >= 100:
+                    remove_position(p.mint)
+                    print(f"📝 Removed {p.symbol} from positions.json")
+                else:
+                    # Update quantity
+                    p.quantity = p.quantity * (1 - percent/100)
+                    save_positions(positions)
+                    print(f"📝 Updated position: {p.quantity:.2f} tokens remaining")
+                return
+    except Exception as e:
+        print(f"⚠️ Could not update positions.json: {e}")

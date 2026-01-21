@@ -7,7 +7,7 @@ separate_process: true
 
 # Connection - из .env
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
-wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
+wss_endpoint: ${QUICKNODE_WSS_ENDPOINT}
 private_key: ${SOLANA_PRIVATE_KEY}
 
 # Listener - bonk_logs для bonk.fun
@@ -54,7 +54,7 @@ pattern_detection:
   enabled: true
   pattern_only_mode: false
   min_patterns_to_buy: 2
-  min_signal_strength: 0.8
+  min_signal_strength: 0.75
   min_whale_buys: 2
   buy_pressure_threshold: 0.80
   trade_velocity_threshold: 500
@@ -105,3 +105,9 @@ token_vetting:
   enabled: true
   require_freeze_revoked: true
   skip_bonding_curve: true  # Launchpad - пропускаем проверки
+
+# Retries and wait times
+retries:
+  wait_after_creation: 0
+  wait_after_buy: 0
+  wait_before_new_token: 0

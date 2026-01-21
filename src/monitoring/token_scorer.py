@@ -10,6 +10,14 @@ from datetime import datetime
 
 import aiohttp
 
+try:
+    from core.redis_cache import cache_get, cache_set
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    cache_get = lambda k: None
+    cache_set = lambda k, v, t=60: False
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,21 +87,22 @@ class TokenScorer:
             if age < self._cache_ttl:
                 return cached
         
-        # SNIPER MODE: Покупаем СРАЗУ без Dexscreener!
-        # PumpPortal уже детектировал токен - не теряем время на API
+        # SNIPER MODE: НЕ покупаем сразу - ждём паттерны!
+        # Пусть pattern_detector решает
         if is_sniper_mode:
-            logger.info(f"[SNIPER] {symbol} - BUYING immediately (no Dexscreener)")
+            logger.info(f"[SNIPER] {symbol} - waiting for pattern detection (no auto-buy)")
+            # Возвращаем низкий score чтобы не купить без паттернов
             score = TokenScore(
                 mint=mint,
                 symbol=symbol,
-                total_score=75,
+                total_score=50,  # Ниже min_score=75, не купит
                 volume_score=50,
-                buy_pressure_score=70,
-                momentum_score=80,
-                liquidity_score=60,
-                details={"sniper_mode": True, "reason": "Fresh token from PumpPortal"},
+                buy_pressure_score=50,
+                momentum_score=50,
+                liquidity_score=50,
+                details={"sniper_mode": True, "reason": "Waiting for patterns"},
                 timestamp=datetime.utcnow(),
-                recommendation="BUY",
+                recommendation="WAIT",
             )
             self._cache[mint] = score
             return score
@@ -359,7 +368,7 @@ class TokenScorer:
                 # Взять пару с наибольшей ликвидностью
                 pair = max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0)
                 
-                return {
+                result = {
                     "symbol": pair.get("baseToken", {}).get("symbol", "UNKNOWN"),
                     "price_usd": float(pair.get("priceUsd", 0) or 0),
                     "volume_5m": float(pair.get("volume", {}).get("m5", 0) or 0),
@@ -376,6 +385,10 @@ class TokenScorer:
                     "fdv": float(pair.get("fdv", 0) or 0),
                     "pair_created": pair.get("pairCreatedAt"),
                 }
+                # Cache in Redis for 30 seconds
+                if REDIS_AVAILABLE:
+                    cache_set(cache_key, result, 30)
+                return result
                 
         except asyncio.TimeoutError:
             logger.debug(f"Dexscreener timeout for {mint[:8]}...")
