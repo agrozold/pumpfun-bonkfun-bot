@@ -41,10 +41,10 @@ trade:
   sell_slippage: 0.35
   min_sol_balance: 0.05
   exit_strategy: tp_sl
-  stop_loss_percentage: 0.25
+  stop_loss_percentage: 0.20
   take_profit_percentage: null
   tsl_enabled: true
-  tsl_activation_pct: 0.30
+  tsl_activation_pct: 0.0
   tsl_trail_pct: 0.15
   tsl_sell_pct: 1.0
   price_check_interval: 2
