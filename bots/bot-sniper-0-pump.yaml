@@ -1,73 +1,61 @@
-# PUMP.FUN Blind Sniper - БЕЗ Dexscreener, СРАЗУ покупаем!
-enabled: true
-env_file: .env
-name: bot-sniper-pump
-platform: pump_fun
-separate_process: true
-
-rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
-wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
-private_key: ${SOLANA_PRIVATE_KEY}
-
-filters:
-  listener_type: pumpportal
-  yolo_mode: true
-  max_token_age: 10
-  bro_address: null
-  match_string: null
-
-pumpportal:
-  url: wss://pumpportal.fun/api/data
-
 blind_snipe:
   enabled: true
-  skip_scoring: true
-  skip_patterns: true
-  skip_dev_check: true
-  max_concurrent_positions: 20
   force_sell_timeout: 600
-
+  max_concurrent_positions: 20
+  skip_dev_check: true
+  skip_patterns: true
+  skip_scoring: true
+dev_check:
+  enabled: false
+enabled: true
+env_file: .env
+filters:
+  bro_address: null
+  listener_type: pumpportal
+  match_string: null
+  max_token_age: 10
+  yolo_mode: true
+name: bot-sniper-pump
+pattern_detection:
+  enabled: false
+platform: pump_fun
 priority_fees:
-  strategy: sniper
   enable_dynamic: false
   enable_fixed: true
   fixed_amount: 500000
-  min_fee: 100000
   max_fee: 5000000
-
-trade:
-  buy_amount: 0.005
-  buy_slippage: 0.30
-  sell_slippage: 0.35
-  min_sol_balance: 0.05
-  exit_strategy: tp_sl
-  stop_loss_percentage: 0.25
-  take_profit_percentage: null
-  tsl_enabled: true
-  tsl_activation_pct: 0.30
-  tsl_trail_pct: 0.15
-  tsl_sell_pct: 1.0
-  price_check_interval: 2
-  moon_bag_percentage: 0
-
-pattern_detection:
-  enabled: false
-
+  min_fee: 100000
+  strategy: sniper
+private_key: ${SOLANA_PRIVATE_KEY}
+pumpportal:
+  url: wss://pumpportal.fun/api/data
+retries:
+  wait_after_buy: 0
+  wait_after_creation: 5
+  wait_before_new_token: 0
+rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
 scoring:
   enabled: false
-
-dev_check:
-  enabled: false
-
-trending_scanner:
-  enabled: false
-
+separate_process: true
 token_vetting:
   enabled: true
   require_freeze_revoked: true
   skip_bonding_curve: true
-
-retries:
-  wait_after_creation: 5
-  wait_after_buy: 0
-  wait_before_new_token: 0
+trade:
+  buy_amount: 0.005
+  buy_slippage: 0.3
+  exit_strategy: tp_sl
+  max_hold_time: 60
+  min_sol_balance: 0.05
+  moon_bag_percentage: 0
+  price_check_interval: 2
+  sell_slippage: 0.35
+  stop_loss_percentage: 0.25
+  take_profit_percentage: null
+  tsl_activation_pct: 0.1
+  tsl_enabled: true
+  tsl_sell_pct: 1.0
+  tsl_trail_pct: 0.15
+trending_scanner:
+  enabled: false
+wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}

@@ -38,8 +38,11 @@ from config_loader import (
     print_config_summary,
     validate_platform_listener_combination,
 )
+from trading.restore_and_monitor import restore_and_monitor_positions
 from trading.universal_trader import UniversalTrader
 from utils.logger import setup_file_logging
+
+logger = logging.getLogger(__name__)
 
 
 def setup_logging(bot_name: str):
@@ -262,14 +265,14 @@ async def start_bot(config_path: str):
             volume_pattern_min_health=cfg.get("volume_pattern", {}).get("min_health_score", 70),
             volume_pattern_min_opportunity=cfg.get("volume_pattern", {}).get("min_opportunity_score", 70),
             # Blind snipe mode configuration
-            blind_snipe_enabled=cfg.get("blind_snipe", {}).get("enabled", False),
-            blind_snipe_skip_scoring=cfg.get("blind_snipe", {}).get("skip_scoring", True),
-            blind_snipe_skip_patterns=cfg.get("blind_snipe", {}).get("skip_patterns", True),
-            blind_snipe_skip_dev_check=cfg.get("blind_snipe", {}).get("skip_dev_check", True),
-            blind_snipe_max_concurrent=cfg.get("blind_snipe", {}).get("max_concurrent_positions", 5),
-            blind_snipe_force_sell_timeout=cfg.get("blind_snipe", {}).get("force_sell_timeout", 600),
         )
 
+        # CRITICAL: Restore and monitor old positions FIRST
+        logger.warning("[MAIN] Restoring and monitoring old positions...")
+        await restore_and_monitor_positions(trader)
+        
+        # Then start listening for new tokens
+        logger.warning("[MAIN] Starting new token listener...")
         await trader.start()
 
     except Exception as e:
@@ -380,6 +383,14 @@ def main() -> None:
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    
+    # Check if specific config file passed as argument
+    if len(sys.argv) > 1:
+        config_path = sys.argv[1]
+        logging.info(f"Starting single bot from: {config_path}")
+        asyncio.run(start_bot(config_path))
+        return
+    
     # Log supported platforms and listeners
     try:
         from platforms import platform_factory

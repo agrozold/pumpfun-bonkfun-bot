@@ -359,15 +359,30 @@ def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -
         filepath: Path to save file
     """
     active_positions = [p.to_dict() for p in positions if p.is_active]
-    
+
     try:
         # SESSION 9: Atomic write
         success = _positions_writer.write_json(filepath, active_positions)
         if success:
             logger.info(f"Saved {len(active_positions)} positions (atomic)")
+        
+        # ALSO SAVE TO REDIS
+        try:
+            import redis
+            redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+            for pos_dict in active_positions:
+                mint_str = pos_dict.get("mint")
+                if mint_str:
+                    redis_key = f"position:{mint_str}"
+                    redis_client.setex(redis_key, 7 * 24 * 3600, json.dumps(pos_dict))
+            mints = [p.get("mint") for p in active_positions if p.get("mint")]
+            redis_client.setex("positions:all", 7 * 24 * 3600, json.dumps(mints))
+            redis_client.bgsave()
+            logger.debug(f"[REDIS] Saved {len(active_positions)} positions")
+        except Exception as redis_err:
+            logger.warning(f"[REDIS] Failed: {redis_err}")
     except Exception as e:
         logger.exception(f"Failed to save positions: {e}")
-
 
 def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
     """Load positions from file.

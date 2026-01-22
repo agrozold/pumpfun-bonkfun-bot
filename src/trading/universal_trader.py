@@ -2410,6 +2410,19 @@ class UniversalTrader:
         if token_info.token_program_id:
             self.traded_token_programs[mint_str] = token_info.token_program_id
 
+        # ===== CRITICAL: Save position IMMEDIATELY =====
+        logger.warning(f"[SAVE] Saving position for {token_info.symbol}")
+        self.active_positions.append(Position(
+            mint=token_info.mint,
+            symbol=token_info.symbol,
+            entry_price=buy_result.price,
+            quantity=buy_result.amount,
+            entry_time=datetime.utcnow(),
+            platform=self.platform.value,
+        ))
+        save_positions(self.active_positions)
+        logger.warning(f"[SAVED] Position saved to file + Redis")
+
         # Choose exit strategy
         if not self.marry_mode:
             if self.exit_strategy == "tp_sl":

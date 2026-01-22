@@ -3,6 +3,7 @@ Platform-aware trader implementations that use the interface system.
 Final cleanup removing all platform-specific hardcoding.
 """
 
+import asyncio
 from solders.pubkey import Pubkey
 
 from core.client import SolanaClient

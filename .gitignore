@@ -1,10 +1,10 @@
 .env
-.env.*
 *.log
 logs/
-data/
 __pycache__/
 *.pyc
-*.pyo
+.venv/
+venv/
 positions.json
-purchase_history.json
+*.pem
+*.key

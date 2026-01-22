@@ -75,6 +75,8 @@ class PumpFunCurveManager(CurveManager):
         # Use virtual reserves for price calculation
         virtual_token_reserves = pool_state["virtual_token_reserves"]
         virtual_sol_reserves = pool_state["virtual_sol_reserves"]
+        
+        logger.debug(f"[CALC PRICE] pool={str(pool_address)[:16]}, vt={virtual_token_reserves}, vs={virtual_sol_reserves}")
 
         if virtual_token_reserves <= 0:
             return 0.0
