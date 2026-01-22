@@ -167,10 +167,18 @@ class PlatformAwareBuyer(Trader):
                     error_message=f"Transaction failed: {e}",
                 )
 
-            success = await self.client.confirm_transaction(tx_signature, timeout=45.0)
+            # Try to confirm but don't block forever
+            try:
+                success = await asyncio.wait_for(
+                    self.client.confirm_transaction(tx_signature, timeout=30.0),
+                    timeout=35.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"[BUY] Confirmation timeout, assuming success: {tx_signature}")
+                success = True  # TX was sent, assume it landed
 
             if success:
-                logger.info(f"Buy transaction confirmed: {tx_signature}")
+                logger.info(f"Buy transaction confirmed/assumed: {tx_signature}")
 
                 # Fetch actual tokens and SOL spent from transaction
                 # Uses preBalances/postBalances to get exact amounts

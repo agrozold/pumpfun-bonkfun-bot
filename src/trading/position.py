@@ -101,7 +101,7 @@ class Position:
             # Status
             "is_active": self.is_active,
             "platform": self.platform,
-            "bonding_curve": self.bonding_curve,
+            "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
         }
 
     @classmethod
@@ -190,7 +190,7 @@ class Position:
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
             platform=platform,
-            bonding_curve=bonding_curve,
+            bonding_curve=str(bonding_curve) if bonding_curve else None,
             # TSL
             tsl_enabled=tsl_enabled,
             tsl_activation_pct=tsl_activation_pct,

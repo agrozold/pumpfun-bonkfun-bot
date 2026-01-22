@@ -2478,8 +2478,14 @@ class UniversalTrader:
         # Save position to file for recovery after restart
         self._save_position(position)
 
-        # Monitor position until exit condition is met
-        # CRITICAL: Wrap in try-except to prevent silent failures!
+        # Monitor position in parallel (don't block)
+        logger.warning(f"[MONITOR] Starting async monitor for {token_info.symbol}")
+        asyncio.create_task(self._monitor_position_wrapper(token_info, position))
+
+    async def _monitor_position_wrapper(
+        self, token_info: TokenInfo, position: Position
+    ) -> None:
+        """Wrapper for position monitor with error handling."""
         try:
             await self._monitor_position_until_exit(token_info, position)
         except Exception as e:
@@ -2487,7 +2493,6 @@ class UniversalTrader:
                 f"[CRITICAL] Position monitor CRASHED for {token_info.symbol}! "
                 f"Error: {e}. Attempting emergency sell..."
             )
-            # Try emergency sell on crash
             try:
                 fallback_success = await self._emergency_fallback_sell(
                     token_info, position, position.entry_price

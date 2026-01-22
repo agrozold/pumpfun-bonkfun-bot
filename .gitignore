@@ -1,55 +1,10 @@
-# === SECRETS - NEVER COMMIT ===
 .env
 .env.*
-.env.local
-.env.backup*
-*.pem
-*.key
-
-# === BACKUPS ===
-*.bak*
-*.backup*
-*_backup*
-
-# === PYTHON ===
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-venv/
-.venv/
-env/
-.eggs/
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-
-# === REDIS ===
-dump.rdb
-*.rdb
-
-# === LOGS ===
 *.log
 logs/
-
-# === IDE ===
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# === OS ===
-.DS_Store
-Thumbs.db
-
-# === TRADES & DATA ===
-trades/
 data/
+__pycache__/
+*.pyc
+*.pyo
 positions.json
-backups/
-
-# === TEST FILES ===
-test_*.py
-backups/
-*.backup*
+purchase_history.json

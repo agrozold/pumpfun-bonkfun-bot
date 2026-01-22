@@ -68,6 +68,6 @@ token_vetting:
   skip_bonding_curve: true
 
 retries:
-  wait_after_creation: 0
+  wait_after_creation: 1
   wait_after_buy: 0
   wait_before_new_token: 0
