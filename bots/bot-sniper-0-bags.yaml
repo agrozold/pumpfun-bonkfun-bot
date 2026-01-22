@@ -1,24 +1,32 @@
-# BAGS Platform Sniper Bot - ЖЁСТКИЕ ФИЛЬТРЫ
+# BAGS.FM Blind Sniper
 enabled: true
 env_file: .env
 name: bot-sniper-bags
 platform: bags
 separate_process: true
 
-# Connection - из .env
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
 wss_endpoint: ${QUICKNODE_WSS_ENDPOINT}
 private_key: ${SOLANA_PRIVATE_KEY}
 
-# Listener - bags_logs для Meteora DBC
 filters:
-  bro_address: null
   listener_type: bags_logs
-  match_string: null
-  max_token_age: 315360000
   yolo_mode: true
+  max_token_age: 10
+  bro_address: null
+  match_string: null
 
-# Priority fees
+pumpportal:
+  url: wss://pumpportal.fun/api/data
+
+blind_snipe:
+  enabled: true
+  skip_scoring: true
+  skip_patterns: true
+  skip_dev_check: true
+  max_concurrent_positions: 20
+  force_sell_timeout: 600
+
 priority_fees:
   strategy: sniper
   enable_dynamic: false
@@ -27,86 +35,38 @@ priority_fees:
   min_fee: 100000
   max_fee: 5000000
 
-# PumpPortal
-pumpportal:
-  url: wss://pumpportal.fun/api/data
-
-# Trade settings
 trade:
-  buy_amount: 0.01
-  buy_slippage: 0.3
-  exit_strategy: tp_sl
-  max_hold_time: 2592000  # 30 days
-  min_sol_balance: 0.03
-  moon_bag_percentage: 50
-  price_check_interval: 1
+  buy_amount: 0.005
+  buy_slippage: 0.30
   sell_slippage: 0.35
-  stop_loss_percentage: 0.20
-  # Trailing Stop-Loss (TSL)
+  min_sol_balance: 0.05
+  exit_strategy: tp_sl
+  stop_loss_percentage: 0.25
+  take_profit_percentage: null
   tsl_enabled: true
-  tsl_activation_pct: 0.20
-  tsl_trail_pct: 0.10
-  tsl_sell_pct: 0.50
-#  take_profit_percentage: 1.0
+  tsl_activation_pct: 0.30
+  tsl_trail_pct: 0.15
+  tsl_sell_pct: 1.0
+  price_check_interval: 2
+  moon_bag_percentage: 0
 
-# Pattern detection
 pattern_detection:
-  enabled: true
-  pattern_only_mode: false
-  min_patterns_to_buy: 2
-  min_signal_strength: 0.75
-  min_whale_buys: 2
-  buy_pressure_threshold: 0.80
-  trade_velocity_threshold: 500
-  price_momentum_threshold: 0.15
-  volume_spike_threshold: 4.0
-  high_volume_buys_1h: 600
-  high_volume_sells_1h: 350
-  high_volume_alt_buys_1h: 250
-  high_volume_alt_max_sells_1h: 100
-  extreme_buy_pressure_min_buys_5m: 1000
-  extreme_buy_pressure_max_sells_5m: 100
+  enabled: false
 
-# Scoring
 scoring:
-  enabled: true
-  min_score: 75
-  volume_weight: 30
-  buy_pressure_weight: 35
-  momentum_weight: 20
-  liquidity_weight: 15
+  enabled: false
 
-# Whale copy - OFF
-# REMOVED: whale_copy:
-#  enabled: false
-#  wallets_file: "smart_money_wallets.json"
-#  min_buy_amount: 1.0
-#  helius_api_key: ${HELIUS_API_KEY}
-
-# Dev check - оптимизирован!
 dev_check:
   enabled: false
-  max_tokens_created: 10
-  min_account_age_days: 3
 
-# Trending scanner
 trending_scanner:
   enabled: false
-  min_volume_1h: 100000
-  min_market_cap: 25000
-  max_market_cap: 0
-  min_price_change_5m: 20
-  min_price_change_1h: 50
-  min_buy_pressure: 0.85
-  scan_interval: 30
 
-# Token Vetting - проверка безопасности
 token_vetting:
   enabled: true
   require_freeze_revoked: true
-  skip_bonding_curve: true  # Launchpad - пропускаем проверки
+  skip_bonding_curve: true
 
-# Retries and wait times
 retries:
   wait_after_creation: 0
   wait_after_buy: 0

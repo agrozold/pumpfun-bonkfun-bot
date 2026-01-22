@@ -27,6 +27,15 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Redis integration for persistent cache
+try:
+    from core.redis_cache import cache_get as redis_get, cache_set as redis_set
+    REDIS_ENABLED = True
+except ImportError:
+    REDIS_ENABLED = False
+    redis_get = lambda k: None
+    redis_set = lambda k, v, t=60: False
+
 
 # ======================================================================
 # BUDGET CALCULATION (6 bots, 14+ days)
@@ -61,11 +70,11 @@ AUTO_RECOVER_AFTER = 60         # Try to recover after 60 seconds
 class CacheType(Enum):
     """Cache TTL by request type."""
     TRANSACTION = 300      # 5 min - transactions don't change
-    ACCOUNT_INFO = 30      # 30 sec - account state changes
+    ACCOUNT_INFO = 3600      # 1 hour - mint/freeze authority rarely changes
     HEALTH = 60            # 1 min - health checks
     SIGNATURE = 120        # 2 min - signature status
     BALANCE = 10           # 10 sec - balance changes often
-    TOKEN_ACCOUNTS = 30    # 30 sec
+    TOKEN_ACCOUNTS = 300    # 5 min - token accounts
 
 
 @dataclass
@@ -247,7 +256,8 @@ class RPCManager:
         logger.info(f"[RPC] Daily budget: Helius {HELIUS_DAILY} + Chainstack {CHAINSTACK_DAILY}")
 
     def _get_cache(self, key: str) -> Any | None:
-        """Get from cache if not expired."""
+        """Get from cache (local first, then Redis)."""
+        # Check local cache first (fastest)
         if key in self._cache:
             value, timestamp, ttl = self._cache[key]
             if time.time() - timestamp < ttl:
@@ -255,17 +265,32 @@ class RPCManager:
                 return value
             else:
                 del self._cache[key]
+        
+        # Check Redis (persistent, shared between bots)
+        if REDIS_ENABLED:
+            cached = redis_get(f"rpc:{key}")
+            if cached is not None:
+                self._metrics["cache_hits"] += 1
+                # Also save to local cache for speed
+                self._cache[key] = (cached, time.time(), 3600)
+                return cached
+        
         self._metrics["cache_misses"] += 1
         return None
 
     def _set_cache(self, key: str, value: Any, ttl: float) -> None:
-        """Set cache with TTL."""
+        """Set cache (local + Redis for persistence)."""
         self._cache[key] = (value, time.time(), ttl)
         
-        # LRU eviction
+        # Also save to Redis for persistence and cross-bot sharing
+        if REDIS_ENABLED:
+            redis_set(f"rpc:{key}", value, int(ttl))
+
+        # LRU eviction for local cache
         if len(self._cache) > self._cache_max_size:
             oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])
             del self._cache[oldest_key]
+
 
     def _get_available_provider(self, exclude: set[str] | None = None) -> ProviderConfig | None:
         """Get best available provider."""

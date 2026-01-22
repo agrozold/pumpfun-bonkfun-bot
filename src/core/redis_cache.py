@@ -10,7 +10,7 @@ logger = get_logger(__name__)
 _redis_client = None
 
 # TTL настройки (секунды) - 0 = бессрочно
-TTL_RPC_CACHE = 10           # RPC данные - короткий кэш
+TTL_RPC_CACHE = 3600         # RPC данные - 1 час (immutable data)
 TTL_DEXSCREENER = 60         # Dexscreener - 1 минута
 TTL_TOKEN_SCORE = 30         # Score токена - 30 сек
 TTL_PENDING_TOKEN = 0        # Pending - бессрочно (удаляем вручную)

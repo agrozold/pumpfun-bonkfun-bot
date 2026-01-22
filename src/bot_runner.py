@@ -261,6 +261,13 @@ async def start_bot(config_path: str):
             volume_pattern_max_tokens=cfg.get("volume_pattern", {}).get("max_tokens_per_scan", 50),
             volume_pattern_min_health=cfg.get("volume_pattern", {}).get("min_health_score", 70),
             volume_pattern_min_opportunity=cfg.get("volume_pattern", {}).get("min_opportunity_score", 70),
+            # Blind snipe mode configuration
+            blind_snipe_enabled=cfg.get("blind_snipe", {}).get("enabled", False),
+            blind_snipe_skip_scoring=cfg.get("blind_snipe", {}).get("skip_scoring", True),
+            blind_snipe_skip_patterns=cfg.get("blind_snipe", {}).get("skip_patterns", True),
+            blind_snipe_skip_dev_check=cfg.get("blind_snipe", {}).get("skip_dev_check", True),
+            blind_snipe_max_concurrent=cfg.get("blind_snipe", {}).get("max_concurrent_positions", 5),
+            blind_snipe_force_sell_timeout=cfg.get("blind_snipe", {}).get("force_sell_timeout", 600),
         )
 
         await trader.start()
