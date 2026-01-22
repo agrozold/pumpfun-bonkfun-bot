@@ -8,3 +8,13 @@ venv/
 positions.json
 *.pem
 *.key
+
+# Data & trades
+data/
+trades/
+*.bak
+backups/
+*.orig
+*.rej
+*.orig
+*.rej

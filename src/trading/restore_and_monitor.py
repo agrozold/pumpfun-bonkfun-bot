@@ -73,5 +73,6 @@ async def restore_and_monitor_positions(
     
     # Wait for all monitors (they run until position is closed)
     if monitor_tasks:
-        await asyncio.gather(*monitor_tasks, return_exceptions=True)
+        # await asyncio.gather(*monitor_tasks, return_exceptions=True)  # REMOVED - non-blocking
+        pass  # Monitors run in background
 

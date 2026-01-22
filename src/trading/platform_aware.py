@@ -176,7 +176,7 @@ class PlatformAwareBuyer(Trader):
                 )
             except asyncio.TimeoutError:
                 logger.warning(f"[BUY] Confirmation timeout, assuming success: {tx_signature}")
-                success = True  # TX was sent, assume it landed
+                success = False  # Timeout - do not assume success
 
             if success:
                 logger.info(f"Buy transaction confirmed/assumed: {tx_signature}")
@@ -523,6 +523,22 @@ class PlatformAwareSeller(Trader):
             success = await self.client.confirm_transaction(tx_signature, timeout=45.0)
 
             if success:
+                # VERIFY: Check token balance is actually 0 after sell
+                try:
+                    from core.pubkeys import get_associated_token_address
+                    ata = get_associated_token_address(self.wallet.pubkey, token_info.mint)
+                    remaining = await self.client.get_token_account_balance(ata)
+                    if remaining > 1000:  # More than dust remaining
+                        logger.error(f"[VERIFY FAIL] Tokens still in wallet: {remaining / 10**6:.2f} - sell did NOT complete!")
+                        return TradeResult(
+                            success=False,
+                            platform=token_info.platform,
+                            error_message=f"Sell verification failed: {remaining / 10**6:.2f} tokens still in wallet",
+                        )
+                    logger.info(f"[VERIFY OK] Token balance after sell: {remaining}")
+                except Exception as ve:
+                    logger.warning(f"[VERIFY] Could not verify balance: {ve}")
+                
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
                 return TradeResult(
                     success=True,

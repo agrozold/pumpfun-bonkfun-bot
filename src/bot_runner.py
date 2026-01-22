@@ -269,7 +269,7 @@ async def start_bot(config_path: str):
 
         # CRITICAL: Restore and monitor old positions FIRST
         logger.warning("[MAIN] Restoring and monitoring old positions...")
-        await restore_and_monitor_positions(trader)
+        asyncio.create_task(restore_and_monitor_positions(trader))
         
         # Then start listening for new tokens
         logger.warning("[MAIN] Starting new token listener...")
