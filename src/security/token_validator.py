@@ -9,8 +9,8 @@ import logging
 from typing import Optional
 from dataclasses import dataclass, field
 
-from .rugcheck_client import RugcheckClient, RugcheckResult, RiskLevel
-from ..data_providers import get_holder_provider, HolderAnalysis
+from security.rugcheck_client import RugcheckClient, RugcheckResult, RiskLevel
+from data_providers import get_holder_provider, HolderAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -40,86 +40,64 @@ class TokenValidator:
         self.min_liquidity_usd = min_liquidity_usd
         self.max_holder_concentration = max_holder_concentration
         self.max_rugcheck_score = max_rugcheck_score
-        self._rugcheck = RugcheckClient() if enable_rugcheck else None
-        self._holder_provider = None  # Lazy init
-
-    async def _get_holder_provider(self):
-        """Lazy initialization of holder provider."""
-        if self._holder_provider is None and self.enable_holder_check:
-            self._holder_provider = await get_holder_provider()
-        return self._holder_provider
-
-    async def validate(self, mint: str) -> TokenValidation:
-        start = time.perf_counter()
-        rejection_reasons = []
-        rugcheck_result = None
-        holder_result = None
-        data_source = ""
-
+        
+        self.rugcheck = RugcheckClient() if enable_rugcheck else None
+        
+    async def validate_token(self, mint: str, timeout: float = 5.0) -> TokenValidation:
+        """Validate token using multiple sources."""
+        start = time.time()
+        validation = TokenValidation(mint=mint, is_safe=True)
+        
         tasks = []
         
-        if self._rugcheck:
-            tasks.append(("rugcheck", self._rugcheck.check_token(mint)))
+        # Rugcheck validation
+        if self.enable_rugcheck and self.rugcheck:
+            tasks.append(self._check_rugcheck(mint, validation))
         
+        # Holder analysis
         if self.enable_holder_check:
-            holder_provider = await self._get_holder_provider()
-            if holder_provider:
-                tasks.append(("holders", holder_provider.get_holders(mint)))
-
+            tasks.append(self._check_holders(mint, validation))
+        
         if tasks:
-            results = await asyncio.gather(
-                *[t[1] for t in tasks],
-                return_exceptions=True
-            )
-            for (name, _), result in zip(tasks, results):
-                if isinstance(result, Exception):
-                    logger.error(f"{name} check failed: {result}")
-                    continue
-                if name == "rugcheck":
-                    rugcheck_result = result
-                elif name == "holders":
-                    holder_result = result
-                    if holder_result:
-                        data_source = holder_result.source
-
-        # Evaluate rugcheck results
-        if rugcheck_result:
-            if rugcheck_result.rugged:
-                rejection_reasons.append("Token marked as RUGGED")
-            if rugcheck_result.risk_level == RiskLevel.DANGER:
-                rejection_reasons.append("Rugcheck Danger level")
-            if rugcheck_result.score > self.max_rugcheck_score:
-                rejection_reasons.append(f"High risk score: {rugcheck_result.score}")
-            if rugcheck_result.has_mint_authority:
-                rejection_reasons.append("Has mint authority")
-            if rugcheck_result.has_freeze_authority:
-                rejection_reasons.append("Has freeze authority")
-            if rugcheck_result.liquidity_usd < self.min_liquidity_usd:
-                rejection_reasons.append(f"Low liquidity: ${rugcheck_result.liquidity_usd:.0f}")
-            if rugcheck_result.top_holders_concentration > self.max_holder_concentration:
-                rejection_reasons.append(f"Top10 concentration: {rugcheck_result.top_holders_concentration:.1f}%")
-
-        # Evaluate holder analysis results
-        if holder_result:
-            if holder_result.top_10_concentration > self.max_holder_concentration:
-                rejection_reasons.append(f"Holder top10 ({holder_result.source}): {holder_result.top_10_concentration:.1f}%")
-            if holder_result.top_holder_pct > 30:
-                rejection_reasons.append(f"Top holder ({holder_result.source}): {holder_result.top_holder_pct:.1f}%")
-
-        elapsed_ms = (time.perf_counter() - start) * 1000
-
-        return TokenValidation(
-            mint=mint,
-            is_safe=len(rejection_reasons) == 0,
-            rugcheck=rugcheck_result,
-            holder_analysis=holder_result,
-            rejection_reasons=rejection_reasons,
-            validation_time_ms=elapsed_ms,
-            data_source=data_source
-        )
-
-    async def close(self):
-        if self._rugcheck:
-            await self._rugcheck.close()
-        if self._holder_provider:
-            await self._holder_provider.close()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"[TokenValidator] Timeout for {mint[:8]}...")
+        
+        validation.validation_time_ms = (time.time() - start) * 1000
+        return validation
+    
+    async def _check_rugcheck(self, mint: str, validation: TokenValidation):
+        """Check token with Rugcheck."""
+        try:
+            result = await self.rugcheck.check_token(mint)
+            validation.rugcheck = result
+            
+            if result and result.score > self.max_rugcheck_score:
+                validation.is_safe = False
+                validation.rejection_reasons.append(
+                    f"Rugcheck score {result.score} > {self.max_rugcheck_score}"
+                )
+        except Exception as e:
+            logger.debug(f"[TokenValidator] Rugcheck error: {e}")
+    
+    async def _check_holders(self, mint: str, validation: TokenValidation):
+        """Check holder distribution."""
+        try:
+            provider = get_holder_provider()
+            analysis = await provider.get_holders(mint, limit=10)
+            
+            if analysis:
+                validation.holder_analysis = analysis
+                validation.data_source = analysis.source
+                
+                if analysis.top_holder_pct > self.max_holder_concentration:
+                    validation.is_safe = False
+                    validation.rejection_reasons.append(
+                        f"Top holder {analysis.top_holder_pct:.1f}% > {self.max_holder_concentration}%"
+                    )
+        except Exception as e:
+            logger.debug(f"[TokenValidator] Holder check error: {e}")

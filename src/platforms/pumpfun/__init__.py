@@ -11,9 +11,13 @@ from .event_parser import PumpFunEventParser
 from .instruction_builder import PumpFunInstructionBuilder
 from .pumpportal_processor import PumpFunPumpPortalProcessor
 
+# Backward compatibility aliases
+PumpFunAddresses = PumpFunAddressProvider
+
 # Export implementations for direct use if needed
 __all__ = [
     "PumpFunAddressProvider",
+    "PumpFunAddresses",  # Alias
     "PumpFunCurveManager",
     "PumpFunEventParser",
     "PumpFunInstructionBuilder",
