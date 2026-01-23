@@ -57,7 +57,18 @@ class LetsBonkPumpPortalProcessor:
             symbol = token_data.get("symbol", "")
             mint_str = token_data.get("mint")
             # CRITICAL FIX: Use bondingCurveKey as pool_state
-            pool_state_str = token_data.get("bondingCurveKey")
+            # PumpPortal sends 'pool' for bonk tokens (not bondingCurveKey like pump.fun)
+            pool_raw = token_data.get("pool")
+            bonding_key = token_data.get("bondingCurveKey")
+            logger.info(f"[BONK-DEBUG] pool={pool_raw}, bondingCurveKey={bonding_key}")
+            
+            # pool field might be "bonk" string, not an address!
+            # If pool is not a valid pubkey (32+ chars), derive it
+            pool_state_str = None
+            if bonding_key and len(str(bonding_key)) >= 32:
+                pool_state_str = bonding_key
+            elif pool_raw and len(str(pool_raw)) >= 32:
+                pool_state_str = pool_raw
             creator_str = token_data.get("traderPublicKey")
             uri = token_data.get("uri", "")
 
@@ -83,7 +94,7 @@ class LetsBonkPumpPortalProcessor:
             else:
                 # Fallback to derivation (may be wrong for some tokens)
                 pool_state = self.address_provider.derive_pool_address(mint)
-                logger.warning(f"[BONK] No bondingCurveKey, deriving pool_state (may fail!)")
+                logger.warning(f"[BONK] No pool/bondingCurveKey, deriving pool_state (may fail!)")
 
             # Create temp TokenInfo to get additional accounts
             token_info_temp = TokenInfo(

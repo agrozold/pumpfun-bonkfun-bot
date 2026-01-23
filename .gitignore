@@ -18,3 +18,15 @@ backups/
 *.rej
 *.orig
 *.rej
+
+# Backups with potential secrets
+*.backup
+*.backup.*
+.env.backup*
+*.tar.gz
+
+# Test files
+test_*.py
+
+# Egg info
+*.egg-info/

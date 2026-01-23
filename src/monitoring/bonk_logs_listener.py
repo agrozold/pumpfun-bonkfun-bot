@@ -172,7 +172,7 @@ class BonkLogsListener(BaseTokenListener):
     async def _subscribe_to_logs(self, websocket) -> None:
         """Subscribe to Raydium LaunchLab program logs."""
         subscription = json.dumps({
-#            "jsonrpc": "2.0",
+            "jsonrpc": "2.0",
             "id": 1,
             "method": "logsSubscribe",
             "params": [
@@ -230,15 +230,15 @@ class BonkLogsListener(BaseTokenListener):
             signature = log_data.get("signature", "")
             
             # DEBUG: Log all incoming transactions
-            logger.info(f"[BONK-DEBUG] Got log notification, sig={signature[:20]}..., logs_count={len(logs)}")
+            logger.debug(f"[BONK-DEBUG] Got log notification, sig={signature[:20]}..., logs_count={len(logs)}")
             # Check if initialize exists
             has_init = any("initialize" in log.lower() for log in logs)
             has_launchlab = any("LanMV9" in log for log in logs)
-            logger.info(f"[BONK-DEBUG] has_initialize={has_init}, has_launchlab={has_launchlab}")
+            logger.debug(f"[BONK-DEBUG] has_initialize={has_init}, has_launchlab={has_launchlab}")
             if has_init:
                 for log in logs:
                     if "initialize" in log.lower():
-                        logger.info(f"[BONK-DEBUG] INIT LOG: {log[:100]}")
+                        logger.debug(f"[BONK-DEBUG] INIT LOG: {log[:100]}")
 
             if not signature:
                 return None

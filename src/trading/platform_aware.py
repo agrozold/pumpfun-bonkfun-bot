@@ -61,23 +61,35 @@ class PlatformAwareBuyer(Trader):
             pool_address = self._get_pool_address(token_info, address_provider)
             logger.info(f"[INIT] Pool address: {pool_address}")
             
-            # Quick check if pool account exists (prevents "Account not found" errors)
-            try:
-                logger.info(f"[CHECK] Checking pool account exists...")
-                await self.client.get_account_info(pool_address)
-                logger.info(f"[CHECK] Pool account exists [OK]")
-            except ValueError as e:
-                if "not found" in str(e).lower():
-                    logger.warning(
-                        f"Pool account {pool_address} does not exist for {token_info.symbol} "
-                        f"on {token_info.platform.value} - token may have migrated or not yet created"
-                    )
-                    return TradeResult(
-                        success=False,
-                        platform=token_info.platform,
-                        error_message=f"Pool account not found: {pool_address}",
-                    )
-                raise
+            # Quick check if pool account exists with retries (race condition fix)
+            max_retries = 5
+            pool_exists = False
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"[CHECK] Checking pool account exists... (attempt {attempt+1}/{max_retries})")
+                    await self.client.get_account_info(pool_address)
+                    logger.info(f"[CHECK] Pool account exists [OK]")
+                    pool_exists = True
+                    break
+                except ValueError as e:
+                    if "not found" in str(e).lower():
+                        if attempt < max_retries - 1:
+                            logger.warning(f"[WAIT] Pool not ready, waiting 1s...")
+                            await asyncio.sleep(1)
+                        else:
+                            logger.warning(
+                                f"Pool account {pool_address} does not exist for {token_info.symbol} "
+                                f"on {token_info.platform.value} after {max_retries} attempts"
+                            )
+                    else:
+                        raise
+            
+            if not pool_exists:
+                return TradeResult(
+                    success=False,
+                    platform=token_info.platform,
+                    error_message=f"Pool account not found: {pool_address}",
+                )
 
             # Convert amount to lamports
             amount_lamports = int(self.amount * LAMPORTS_PER_SOL)

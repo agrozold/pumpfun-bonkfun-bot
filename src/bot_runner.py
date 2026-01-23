@@ -156,11 +156,11 @@ async def start_bot(config_path: str):
             # Retry and timeout settings
             max_retries=cfg.get("retries", {}).get("max_attempts", 10),
             wait_time_after_creation=cfg.get("retries", {}).get(
-                "wait_after_creation", 15
+                "wait_after_creation", 2
             ),
-            wait_time_after_buy=cfg.get("retries", {}).get("wait_after_buy", 15),
+            wait_time_after_buy=cfg.get("retries", {}).get("wait_after_buy", 2),
             wait_time_before_new_token=cfg.get("retries", {}).get(
-                "wait_before_new_token", 15
+                "wait_before_new_token", 2
             ),
             max_token_age=cfg.get("filters", {}).get("max_token_age", 0.001),
             token_wait_timeout=cfg.get("timing", {}).get("token_wait_timeout", 120),

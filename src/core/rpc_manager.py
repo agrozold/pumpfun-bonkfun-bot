@@ -1,17 +1,13 @@
 """
-Global RPC Manager - Optimized for 6 bots with smart caching.
+Global RPC Manager - Optimized with Dynamic Latency Testing.
 
 ENDPOINTS (from .env):
-- Helius: PRIMARY for HTTP (1M credits/month)
-- Chainstack: PRIMARY for WSS + HTTP fallback (1M req/month)
-- Alchemy: FALLBACK #1
-- Public Solana: FALLBACK #2 (last resort)
-
-OPTIMIZATION:
-- Smart caching with TTL by request type
-- Rate limiting per provider
-- Daily budget tracking
-- Automatic fallback on 429
+- Chainstack: PRIMARY (3M req/month, HTTP + WSS)
+- dRPC: FALLBACK #1 (HTTP + WSS)
+- Syndica: FALLBACK #2 (HTTP + WSS) - NEW!
+- Alchemy: FALLBACK #3
+- QuickNode: FALLBACK #4 (WSS only)
+- Public Solana: LAST RESORT
 """
 
 import asyncio
@@ -27,7 +23,13 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Redis integration for persistent cache
+try:
+    from core.dynamic_rpc_tester import DynamicRPCTester
+    DYNAMIC_TESTER_AVAILABLE = True
+except ImportError:
+    DYNAMIC_TESTER_AVAILABLE = False
+    logger.warning("[RPC] DynamicRPCTester not available")
+
 try:
     from core.redis_cache import cache_get as redis_get, cache_set as redis_set
     REDIS_ENABLED = True
@@ -37,49 +39,25 @@ except ImportError:
     redis_set = lambda k, v, t=60: False
 
 
-# ======================================================================
-# BUDGET CALCULATION (6 bots, 14+ days)
-# ======================================================================
-# BUDGET FOR 14+ DAYS (2M total requests):
-# Chainstack: 700,000 req (PRIMARY - WSS + HTTP)  = 50,000/day = 0.12 req/s per bot
-# Helius: 300,000 credits (SECONDARY - HTTP only) = 21,428/day = 0.08 req/s per bot
-# Combined: ~0.20 req/s per bot = SAFE for 14 days
-# ======================================================================
-# Helius: 1,000,000 credits/month = 33,333/day = 1,388/hour
-# Chainstack: 1,000,000 req/month = 33,333/day = 1,388/hour
-# Combined: ~2,776/hour for all 6 bots = ~462/hour per bot = 7.7/min per bot
-# 
-# SAFE LIMITS (70% of budget):
-# - Helius: 0.08 req/s per bot (4.8 req/min)
-# - Chainstack: 0.10 req/s per bot (6 req/min)
-# =============================================================================
-
 NUM_BOTS = 6
-HELIUS_MONTHLY_CREDITS = 1_000_000
-CHAINSTACK_MONTHLY_REQUESTS = 1_000_000
+CHAINSTACK_MONTHLY_REQUESTS = 3_000_000  # Updated to 3M!
+CHAINSTACK_DAILY = CHAINSTACK_MONTHLY_REQUESTS // 30  # ~100k/day
 
-HELIUS_DAILY = HELIUS_MONTHLY_CREDITS // 30
-CHAINSTACK_DAILY = CHAINSTACK_MONTHLY_REQUESTS // 30
-
-# Health check thresholds
-MAX_CONSECUTIVE_ERRORS = 5      # Disable provider after this many errors
-PROVIDER_COOLDOWN_SECONDS = 300  # 5 minutes cooldown when disabled
-AUTO_RECOVER_AFTER = 60         # Try to recover after 60 seconds
+MAX_CONSECUTIVE_ERRORS = 5
+PROVIDER_COOLDOWN_SECONDS = 300
 
 
 class CacheType(Enum):
-    """Cache TTL by request type."""
-    TRANSACTION = 300      # 5 min - transactions don't change
-    ACCOUNT_INFO = 3600      # 1 hour - mint/freeze authority rarely changes
-    HEALTH = 60            # 1 min - health checks
-    SIGNATURE = 120        # 2 min - signature status
-    BALANCE = 10           # 10 sec - balance changes often
-    TOKEN_ACCOUNTS = 300    # 5 min - token accounts
+    TRANSACTION = 300
+    ACCOUNT_INFO = 3600
+    HEALTH = 60
+    SIGNATURE = 120
+    BALANCE = 10
+    TOKEN_ACCOUNTS = 300
 
 
 @dataclass
 class ProviderConfig:
-    """RPC provider configuration."""
     name: str
     http_endpoint: str
     wss_endpoint: str | None = None
@@ -87,24 +65,19 @@ class ProviderConfig:
     priority: int = 1
     enabled: bool = True
     is_primary: bool = False
-    
-    # Runtime state
     last_request_time: float = field(default=0.0, repr=False)
     consecutive_errors: int = field(default=0, repr=False)
     total_requests: int = field(default=0, repr=False)
     total_errors: int = field(default=0, repr=False)
     backoff_until: float = field(default=0.0, repr=False)
-    disabled_until: float = field(default=0.0, repr=False)  # Временное отключение при ошибках
+    disabled_until: float = field(default=0.0, repr=False)
     daily_requests: int = field(default=0, repr=False)
     daily_reset_time: float = field(default=0.0, repr=False)
 
 
 class RPCManager:
-    """Optimized RPC manager with caching and rate limiting."""
-    
     _instance: "RPCManager | None" = None
     _lock = asyncio.Lock()
-    
     HTTP_OK = 200
     HTTP_RATE_LIMITED = 429
 
@@ -112,12 +85,8 @@ class RPCManager:
         self.providers: dict[str, ProviderConfig] = {}
         self._session: aiohttp.ClientSession | None = None
         self._initialized = False
-        
-        # Smart cache with TTL
-        self._cache: dict[str, tuple[Any, float, float]] = {}  # key -> (value, timestamp, ttl)
+        self._cache: dict[str, tuple[Any, float, float]] = {}
         self._cache_max_size = 2000
-        
-        # Metrics
         self._metrics = {
             "total_requests": 0,
             "successful_requests": 0,
@@ -125,17 +94,14 @@ class RPCManager:
             "fallback_used": 0,
             "cache_hits": 0,
             "cache_misses": 0,
-            "helius_credits_used": 0,
             "chainstack_requests": 0,
         }
-        
-        # Request log for debugging
         self._request_log: list[dict] = []
         self._max_log_entries = 100
+        self._dynamic_tester: "DynamicRPCTester | None" = None
 
     @classmethod
     async def get_instance(cls) -> "RPCManager":
-        """Get singleton instance."""
         if cls._instance is None:
             async with cls._lock:
                 if cls._instance is None:
@@ -144,48 +110,15 @@ class RPCManager:
         return cls._instance
 
     async def _initialize(self) -> None:
-        """Initialize providers from .env."""
         if self._initialized:
             return
-            
+
         self._session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=15),
             connector=aiohttp.TCPConnector(limit=100, limit_per_host=20),
         )
-        
-        # =================================================================
-        # HELIUS = PRIMARY HTTP (use key from .env!)
-        # =================================================================
-        helius_key = os.getenv("HELIUS_API_KEY")
-        if helius_key:
-            helius_http = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
-            self.providers["helius"] = ProviderConfig(
-                name="Helius",
-                http_endpoint=helius_http,
-                wss_endpoint=None,  # Helius doesn't have WSS
-                rate_limit_per_second=0.08,  # 4.8 req/min per bot
-                priority=2,
-                is_primary=True,
-            )
-            logger.info(f"[RPC] ✓ HELIUS PRIMARY: 0.08 req/s ({helius_key[:8]}...)")
-            
-            # Helius Enhanced API (50 credits per request)
-            helius_enhanced = f"https://api.helius.xyz/v0/transactions/?api-key={helius_key}"
-            self.providers["helius_enhanced"] = ProviderConfig(
-                name="Helius Enhanced",
-                http_endpoint=helius_enhanced,
-                wss_endpoint=None,
-                rate_limit_per_second=0.02,  # ~1 req/min - very expensive!
-                priority=10,
-                is_primary=True,
-            )
-            logger.info("[RPC] ✓ Helius Enhanced: 0.015 req/s (50 credits each)")
-        else:
-            logger.error("[RPC] ✗ HELIUS_API_KEY not found in .env!")
 
-        # =================================================================
-        # CHAINSTACK = CO-PRIMARY (HTTP + WSS)
-        # =================================================================
+        # === CHAINSTACK = PRIMARY (3M requests!) ===
         chainstack_http = os.getenv("CHAINSTACK_RPC_ENDPOINT")
         chainstack_wss = os.getenv("CHAINSTACK_WSS_ENDPOINT")
         if chainstack_http:
@@ -193,32 +126,13 @@ class RPCManager:
                 name="Chainstack",
                 http_endpoint=chainstack_http,
                 wss_endpoint=chainstack_wss,
-                rate_limit_per_second=0.12,  # 6 req/min per bot
+                rate_limit_per_second=0.5,  # Increased! 3M/month = 1.15/s safe
                 priority=1,
                 is_primary=True,
             )
-            logger.info("[RPC] ✓ CHAINSTACK CO-PRIMARY: 0.10 req/s + WSS")
-        else:
-            logger.warning("[RPC] ⚠ CHAINSTACK_RPC_ENDPOINT not set")
+            logger.info("[RPC] ✓ CHAINSTACK PRIMARY: priority=1, 0.5 req/s + WSS (3M/month)")
 
-        # =================================================================
-        # ALCHEMY = FALLBACK #1
-        # =================================================================
-        alchemy_http = os.getenv("ALCHEMY_RPC_ENDPOINT")
-        if alchemy_http:
-            self.providers["alchemy"] = ProviderConfig(
-                name="Alchemy",
-                http_endpoint=alchemy_http,
-                wss_endpoint=None,
-                rate_limit_per_second=0.05,  # 30 req/min
-                priority=5,
-                is_primary=False,
-            )
-            logger.info("[RPC] ✓ Alchemy FALLBACK #1: 0.5 req/s")
-
-        # =================================================================
-        # dRPC = FALLBACK #2 (decentralized RPC with auto-failover)
-        # =================================================================
+        # === dRPC = FALLBACK #1 ===
         drpc_http = os.getenv("DRPC_RPC_ENDPOINT")
         drpc_wss = os.getenv("DRPC_WSS_ENDPOINT")
         if drpc_http:
@@ -226,38 +140,75 @@ class RPCManager:
                 name="dRPC",
                 http_endpoint=drpc_http,
                 wss_endpoint=drpc_wss,
-                rate_limit_per_second=0.15,  # dRPC usually fast
-                priority=8,  # After Alchemy (5), before Public (20)
+                rate_limit_per_second=0.2,
+                priority=2,
                 is_primary=False,
             )
-            logger.info("[RPC] ✓ dRPC FALLBACK #2: 0.15 req/s + WSS")
-        else:
-            logger.debug("[RPC] ⚠ DRPC_RPC_ENDPOINT not set (optional)")
+            logger.info("[RPC] ✓ dRPC: priority=2, 0.2 req/s + WSS")
 
+        # === SYNDICA = FALLBACK #2 (NEW!) ===
+        syndica_http = os.getenv("SYNDICA_RPC_ENDPOINT")
+        syndica_wss = os.getenv("SYNDICA_WSS_ENDPOINT")
+        if syndica_http:
+            self.providers["syndica"] = ProviderConfig(
+                name="Syndica",
+                http_endpoint=syndica_http,
+                wss_endpoint=syndica_wss,
+                rate_limit_per_second=0.2,
+                priority=3,
+                is_primary=False,
+            )
+            logger.info("[RPC] ✓ SYNDICA: priority=3, 0.2 req/s + WSS")
 
+        # === ALCHEMY = FALLBACK #3 ===
+        alchemy_http = os.getenv("ALCHEMY_RPC_ENDPOINT")
+        if alchemy_http:
+            self.providers["alchemy"] = ProviderConfig(
+                name="Alchemy",
+                http_endpoint=alchemy_http,
+                rate_limit_per_second=0.1,
+                priority=4,
+                is_primary=False,
+            )
+            logger.info("[RPC] ✓ ALCHEMY: priority=4, 0.1 req/s")
 
+        # === QUICKNODE = FALLBACK #4 (WSS) ===
+        quicknode_wss = os.getenv("QUICKNODE_WSS_ENDPOINT")
+        if quicknode_wss:
+            quicknode_http = quicknode_wss.replace("wss://", "https://")
+            self.providers["quicknode"] = ProviderConfig(
+                name="QuickNode",
+                http_endpoint=quicknode_http,
+                wss_endpoint=quicknode_wss,
+                rate_limit_per_second=0.15,
+                priority=5,
+                is_primary=False,
+            )
+            logger.info("[RPC] ✓ QUICKNODE: priority=5, 0.15 req/s + WSS")
 
-
-        # =================================================================
-        # PUBLIC SOLANA = FALLBACK #2 (last resort)
-        # =================================================================
+        # === PUBLIC SOLANA = LAST RESORT ===
         self.providers["public_solana"] = ProviderConfig(
             name="Public Solana",
             http_endpoint="https://api.mainnet-beta.solana.com",
             wss_endpoint="wss://api.mainnet-beta.solana.com",
-            rate_limit_per_second=0.02,
+            rate_limit_per_second=0.05,
             priority=20,
             is_primary=False,
         )
-        logger.info("[RPC] ✓ Public Solana FALLBACK #2: 0.3 req/s")
-        
+        logger.info("[RPC] ✓ PUBLIC SOLANA: priority=20, 0.05 req/s (last resort)")
+
         self._initialized = True
         logger.info(f"[RPC] Initialized {len(self.providers)} providers")
-        logger.info(f"[RPC] Daily budget: Helius {HELIUS_DAILY} + Chainstack {CHAINSTACK_DAILY}")
+        logger.info(f"[RPC] Daily budget: Chainstack {CHAINSTACK_DAILY:,} requests")
+
+        # Start dynamic tester
+        if DYNAMIC_TESTER_AVAILABLE:
+            test_interval = int(os.getenv("RPC_TEST_INTERVAL", "30"))
+            self._dynamic_tester = DynamicRPCTester(self, test_interval=test_interval)
+            asyncio.create_task(self._dynamic_tester.start())
+            logger.info(f"[RPC] Dynamic latency testing enabled (interval: {test_interval}s)")
 
     def _get_cache(self, key: str) -> Any | None:
-        """Get from cache (local first, then Redis)."""
-        # Check local cache first (fastest)
         if key in self._cache:
             value, timestamp, ttl = self._cache[key]
             if time.time() - timestamp < ttl:
@@ -265,144 +216,101 @@ class RPCManager:
                 return value
             else:
                 del self._cache[key]
-        
-        # Check Redis (persistent, shared between bots)
         if REDIS_ENABLED:
             cached = redis_get(f"rpc:{key}")
             if cached is not None:
                 self._metrics["cache_hits"] += 1
-                # Also save to local cache for speed
                 self._cache[key] = (cached, time.time(), 3600)
                 return cached
-        
         self._metrics["cache_misses"] += 1
         return None
 
     def _set_cache(self, key: str, value: Any, ttl: float) -> None:
-        """Set cache (local + Redis for persistence)."""
         self._cache[key] = (value, time.time(), ttl)
-        
-        # Also save to Redis for persistence and cross-bot sharing
         if REDIS_ENABLED:
             redis_set(f"rpc:{key}", value, int(ttl))
-
-        # LRU eviction for local cache
         if len(self._cache) > self._cache_max_size:
             oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])
             del self._cache[oldest_key]
 
-
     def _get_available_provider(self, exclude: set[str] | None = None) -> ProviderConfig | None:
-        """Get best available provider."""
+        """Get best available provider with latency-aware selection."""
         exclude = exclude or set()
         now = time.time()
-        
         available = []
+
         for name, provider in self.providers.items():
             if name in exclude or not provider.enabled:
                 continue
-            if "enhanced" in name.lower():  # Skip enhanced for regular requests
-                continue
-            # Check if provider is temporarily disabled (too many errors)
             if now < provider.disabled_until:
                 continue
             if now < provider.backoff_until:
                 continue
-                
-            # Check rate limit
+
             time_since_last = now - provider.last_request_time
             min_interval = 1.0 / provider.rate_limit_per_second
             if time_since_last < min_interval:
                 continue
-                
-            # Reset daily counter
+
             if now - provider.daily_reset_time > 86400:
                 provider.daily_requests = 0
                 provider.daily_reset_time = now
-                
-            available.append((provider.priority, name, provider))
-            
+
+            base_score = float(provider.priority)
+
+            if self._dynamic_tester:
+                latency_score = self._dynamic_tester.get_latency_score(name)
+                base_score += latency_score
+
+            if provider.consecutive_errors > 0:
+                base_score += provider.consecutive_errors * 2.0
+
+            available.append((base_score, name, provider))
+
         if not available:
             return None
-            
+
         available.sort(key=lambda x: x[0])
         return available[0][2]
 
     async def _wait_for_rate_limit(self, provider: ProviderConfig) -> None:
-        """Wait for rate limit."""
         now = time.time()
         min_interval = 1.0 / provider.rate_limit_per_second
         time_since_last = now - provider.last_request_time
-        
         if time_since_last < min_interval:
             await asyncio.sleep(min_interval - time_since_last)
-            
         provider.last_request_time = time.time()
 
-
     def _check_provider_health(self, provider: ProviderConfig) -> None:
-        """
-        Check if provider should be disabled due to too many errors.
-        Called after each error.
-        """
         if provider.consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
             provider.disabled_until = time.time() + PROVIDER_COOLDOWN_SECONDS
-            logger.warning(
-                f"[RPC] ⚠️ {provider.name} DISABLED for {PROVIDER_COOLDOWN_SECONDS}s "
-                f"(consecutive errors: {provider.consecutive_errors})"
-            )
-            self._metrics["providers_disabled"] = self._metrics.get("providers_disabled", 0) + 1
+            logger.warning(f"[RPC] ⚠️ {provider.name} DISABLED for {PROVIDER_COOLDOWN_SECONDS}s")
 
     def _try_recover_provider(self, provider: ProviderConfig) -> None:
-        """
-        Try to recover a disabled provider after cooldown.
-        Called periodically or on successful request.
-        """
         now = time.time()
         if provider.disabled_until > 0 and now >= provider.disabled_until:
-            logger.info(f"[RPC] ✓ {provider.name} recovered after cooldown")
+            logger.info(f"[RPC] ✓ {provider.name} recovered")
             provider.disabled_until = 0
             provider.consecutive_errors = 0
             provider.backoff_until = 0
 
     def _handle_rate_limit(self, provider: ProviderConfig) -> None:
-        """Handle 429 rate limit."""
         provider.consecutive_errors += 1
         provider.total_errors += 1
         self._metrics["rate_limited"] += 1
-        
         backoff = min(2 ** provider.consecutive_errors, 60)
         provider.backoff_until = time.time() + backoff
-        
         logger.warning(f"[RPC] {provider.name} rate limited (429), backoff {backoff}s")
 
     def _handle_success(self, provider: ProviderConfig) -> None:
-        """Handle successful request."""
         provider.consecutive_errors = 0
-        self._try_recover_provider(provider)  # Reset disabled status if was disabled
+        self._try_recover_provider(provider)
         provider.total_requests += 1
         provider.daily_requests += 1
         self._metrics["total_requests"] += 1
         self._metrics["successful_requests"] += 1
-        
-        if "helius" in provider.name.lower():
-            credits = 50 if "enhanced" in provider.name.lower() else 1
-            self._metrics["helius_credits_used"] += credits
-        elif "chainstack" in provider.name.lower():
+        if "chainstack" in provider.name.lower():
             self._metrics["chainstack_requests"] += 1
-
-    def _log_request(self, method: str, provider: str, cached: bool, duration: float) -> None:
-        """Log request for debugging."""
-        entry = {
-            "time": time.strftime("%H:%M:%S"),
-            "method": method,
-            "provider": provider,
-            "cached": cached,
-            "duration_ms": int(duration * 1000),
-        }
-        self._request_log.append(entry)
-        if len(self._request_log) > self._max_log_entries:
-            self._request_log.pop(0)
 
     async def post_rpc(
         self,
@@ -410,31 +318,28 @@ class RPCManager:
         cache_type: CacheType | None = None,
         cache_key: str | None = None,
     ) -> dict[str, Any] | None:
-        """Send RPC request with caching and fallback."""
         if not self._session:
             await self._initialize()
-            
+
         start_time = time.time()
         method = body.get("method", "unknown")
-        
-        # Check cache
+
         if cache_key and cache_type:
             cached = self._get_cache(cache_key)
             if cached is not None:
-                self._log_request(method, "CACHE", True, time.time() - start_time)
                 return {"result": cached}
-                
+
         tried_providers: set[str] = set()
-        
+
         while True:
             provider = self._get_available_provider(exclude=tried_providers)
             if not provider:
                 logger.warning(f"[RPC] No available providers for {method}")
                 return None
-                
+
             tried_providers.add(provider.name.lower().replace(" ", "_"))
             await self._wait_for_rate_limit(provider)
-            
+
             try:
                 async with self._session.post(
                     provider.http_endpoint,
@@ -444,25 +349,17 @@ class RPCManager:
                     if resp.status == self.HTTP_OK:
                         data = await resp.json()
                         self._handle_success(provider)
-                        
-                        # Cache result
                         if cache_key and cache_type and "result" in data:
                             self._set_cache(cache_key, data["result"], cache_type.value)
-                            
-                        self._log_request(method, provider.name, False, time.time() - start_time)
                         return data
-                        
                     elif resp.status == self.HTTP_RATE_LIMITED:
                         self._handle_rate_limit(provider)
                         self._metrics["fallback_used"] += 1
                         continue
                     else:
-                        logger.debug(f"[RPC] {provider.name} HTTP {resp.status}")
                         provider.consecutive_errors += 1
                         continue
-                        
             except asyncio.TimeoutError:
-                logger.debug(f"[RPC] {provider.name} timeout")
                 provider.consecutive_errors += 1
                 self._check_provider_health(provider)
                 continue
@@ -473,137 +370,73 @@ class RPCManager:
                 continue
 
     async def get_transaction(self, signature: str, use_cache: bool = True) -> dict | None:
-        """Get transaction with caching."""
         cache_key = f"tx:{signature}" if use_cache else None
         cache_type = CacheType.TRANSACTION if use_cache else None
-        
         body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getTransaction",
+            "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
             "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
         }
-        
         result = await self.post_rpc(body, cache_type, cache_key)
         return result.get("result") if result else None
 
     async def get_account_info(self, pubkey: str, use_cache: bool = True) -> dict | None:
-        """Get account info with caching."""
         cache_key = f"acc:{pubkey}" if use_cache else None
         cache_type = CacheType.ACCOUNT_INFO if use_cache else None
-        
-        body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getAccountInfo",
-            "params": [pubkey, {"encoding": "base64"}],
-        }
-        
+        body = {"jsonrpc": "2.0", "id": 1, "method": "getAccountInfo", "params": [pubkey, {"encoding": "base64"}]}
         result = await self.post_rpc(body, cache_type, cache_key)
         return result.get("result") if result else None
 
     async def get_balance(self, pubkey: str) -> int | None:
-        """Get SOL balance (short cache)."""
-        cache_key = f"bal:{pubkey}"
-        
-        body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getBalance",
-            "params": [pubkey],
-        }
-        
-        result = await self.post_rpc(body, CacheType.BALANCE, cache_key)
+        body = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [pubkey]}
+        result = await self.post_rpc(body, CacheType.BALANCE, f"bal:{pubkey}")
         if result and "result" in result:
             return result["result"].get("value")
         return None
 
-
-    # =================================================================
-    # WSS METHODS (for logsSubscribe in snipers)
-    # =================================================================
-    
     def get_wss_provider(self) -> tuple[str, str] | None:
-        """
-        Get best available WSS endpoint for logsSubscribe.
-        Returns: (provider_name, wss_endpoint) or None
-        
-        Priority:
-        1. Chainstack (has WSS, primary)
-        2. dRPC (has WSS, fallback #2)
-        3. Public Solana (has WSS, last resort)
-        """
+        """Get best WSS. Priority: Chainstack > Syndica > dRPC > QuickNode > Public."""
         now = time.time()
+        wss_priority = ["chainstack", "syndica", "drpc", "quicknode", "public_solana"]
         
-        # Prefer Chainstack for WSS (it's our primary with WSS)
-        chainstack = self.providers.get("chainstack")
-        if chainstack and chainstack.wss_endpoint and chainstack.enabled:
-            if now >= chainstack.backoff_until:
-                return ("chainstack", chainstack.wss_endpoint)
-        
-        # Fallback #2: dRPC (decentralized, has WSS)
-        drpc = self.providers.get("drpc")
-        if drpc and drpc.wss_endpoint and drpc.enabled:
-            if now >= drpc.backoff_until:
-                return ("drpc", drpc.wss_endpoint)
+        for name in wss_priority:
+            provider = self.providers.get(name)
+            if provider and provider.wss_endpoint and provider.enabled:
+                if now >= provider.backoff_until and now >= provider.disabled_until:
+                    return (name, provider.wss_endpoint)
 
-        # Fallback #3: Public Solana WSS (last resort)
-        public = self.providers.get("public_solana")
-        if public and public.wss_endpoint and public.enabled:
-            if now >= public.backoff_until:
-                return ("public_solana", public.wss_endpoint)
-        
         logger.warning("[RPC] No WSS providers available!")
         return None
-    
+
     def get_wss_endpoint(self) -> str | None:
-        """Get WSS endpoint string only (convenience method)."""
         result = self.get_wss_provider()
         return result[1] if result else None
-    
+
     def report_wss_error(self, provider_name: str) -> None:
-        """
-        Report WSS connection error for a provider.
-        Call this when WebSocket connection fails.
-        """
         provider = self.providers.get(provider_name)
         if provider:
             provider.consecutive_errors += 1
             provider.total_errors += 1
-            
-            # Backoff if too many errors
             if provider.consecutive_errors >= 3:
                 backoff = min(2 ** provider.consecutive_errors, 120)
                 provider.backoff_until = time.time() + backoff
-                logger.warning(
-                    f"[RPC] WSS {provider.name} backoff {backoff}s "
-                    f"(consecutive errors: {provider.consecutive_errors})"
-                )
-    
+                logger.warning(f"[RPC] WSS {provider.name} backoff {backoff}s")
+
     def report_wss_success(self, provider_name: str) -> None:
-        """Report successful WSS operation."""
         provider = self.providers.get(provider_name)
         if provider:
             provider.consecutive_errors = 0
 
-
     async def get_health(self) -> str | None:
-        """Get node health."""
         body = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
         result = await self.post_rpc(body, CacheType.HEALTH, "health")
         return result.get("result") if result else None
 
     def get_metrics(self) -> dict[str, Any]:
-        """Get current metrics."""
-        helius_used = self._metrics["helius_credits_used"]
         chainstack_used = self._metrics["chainstack_requests"]
-        
         cache_total = self._metrics["cache_hits"] + self._metrics["cache_misses"]
         cache_rate = (self._metrics["cache_hits"] / cache_total * 100) if cache_total > 0 else 0
-        
         return {
             **self._metrics,
-            "helius_daily_remaining": HELIUS_DAILY - helius_used,
             "chainstack_daily_remaining": CHAINSTACK_DAILY - chainstack_used,
             "cache_hit_rate": f"{cache_rate:.1f}%",
             "cache_size": len(self._cache),
@@ -614,78 +447,32 @@ class RPCManager:
                     "daily": p.daily_requests,
                     "in_backoff": time.time() < p.backoff_until,
                     "disabled": time.time() < p.disabled_until,
-                    "disabled_until": p.disabled_until if p.disabled_until > time.time() else 0,
                 }
                 for name, p in self.providers.items()
             },
         }
 
+    def get_latency_stats(self) -> dict:
+        if self._dynamic_tester:
+            return self._dynamic_tester.get_endpoint_stats()
+        return {}
+
     def log_metrics(self) -> None:
-        """Log current metrics."""
         m = self._metrics
-        helius_pct = (m["helius_credits_used"] / HELIUS_DAILY * 100) if HELIUS_DAILY > 0 else 0
         chainstack_pct = (m["chainstack_requests"] / CHAINSTACK_DAILY * 100) if CHAINSTACK_DAILY > 0 else 0
-        
         cache_total = m["cache_hits"] + m["cache_misses"]
         cache_rate = (m["cache_hits"] / cache_total * 100) if cache_total > 0 else 0
-        
-        logger.info(
-            f"[RPC STATS] Requests: {m['total_requests']}, "
-            f"Rate limited: {m['rate_limited']}, Fallbacks: {m['fallback_used']}"
-        )
-        logger.info(
-            f"[RPC BUDGET] Helius: {m['helius_credits_used']}/{HELIUS_DAILY} ({helius_pct:.1f}%), "
-            f"Chainstack: {m['chainstack_requests']}/{CHAINSTACK_DAILY} ({chainstack_pct:.1f}%)"
-        )
-        logger.info(f"[RPC CACHE] Hits: {m['cache_hits']}, Rate: {cache_rate:.1f}%, Size: {len(self._cache)}")
+        logger.info(f"[RPC] Requests: {m['total_requests']}, Rate limited: {m['rate_limited']}")
+        logger.info(f"[RPC] Chainstack: {m['chainstack_requests']}/{CHAINSTACK_DAILY} ({chainstack_pct:.1f}%)")
+        logger.info(f"[RPC] Cache: {cache_rate:.1f}% hit rate")
 
     async def close(self) -> None:
-        """Close session."""
+        if self._dynamic_tester:
+            await self._dynamic_tester.stop()
         if self._session:
             await self._session.close()
             self._session = None
 
 
-    async def get_transaction_helius_enhanced(
-        self,
-        signature: str,
-        use_cache: bool = True,
-    ) -> dict | None:
-        """Get parsed transaction from Helius Enhanced API."""
-        cache_key = f"tx_enhanced:{signature}"
-
-        if use_cache:
-            cached = self._get_cache(cache_key)
-            if cached is not None:
-                return cached
-
-        provider = self.providers.get("helius_enhanced")
-        if not provider:
-            return await self.get_transaction(signature, use_cache)
-
-        await self._wait_for_rate_limit(provider)
-
-        try:
-            async with self._session.post(
-                provider.http_endpoint,
-                json={"transactions": [signature]},
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    self._handle_success(provider)
-                    if data and len(data) > 0:
-                        self._set_cache(cache_key, data[0], 300)
-                        return data[0]
-                elif resp.status == 429:
-                    self._handle_rate_limit(provider)
-                    return await self.get_transaction(signature, use_cache)
-        except Exception as e:
-            logger.debug(f"[RPC] Helius Enhanced error: {e}")
-
-        return await self.get_transaction(signature, use_cache)
-
-
 async def get_rpc_manager() -> RPCManager:
-    """Get global RPC manager."""
     return await RPCManager.get_instance()

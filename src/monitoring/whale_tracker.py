@@ -120,7 +120,7 @@ class WhaleTracker:
     ):
         self.wallets_file = wallets_file
         self.min_buy_amount = min_buy_amount
-        self.helius_api_key = helius_api_key
+        self.helius_api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
         self.rpc_endpoint = rpc_endpoint
         self.wss_endpoint = wss_endpoint
         self.time_window_minutes = time_window_minutes

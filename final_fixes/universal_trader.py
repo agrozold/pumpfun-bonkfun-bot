@@ -99,8 +99,8 @@ class UniversalTrader:
         priority_fee_max: int = 10_000_000,
         # Retry and timeout settings
         max_retries: int = 5,
-        wait_time_after_creation: int = 2,
-        wait_time_after_buy: int = 2,
+        wait_time_after_creation: int = 5,
+        wait_time_after_buy: int = 3,
         wait_time_before_new_token: int = 5,
         max_token_age: int | float = 0.001,
         moon_bag_percentage: float = 0.0,
@@ -294,7 +294,7 @@ class UniversalTrader:
 
         self.enable_whale_copy = enable_whale_copy
         self.whale_tracker: WhaleTracker | None = None
-        self.helius_api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
+        self.helius_api_key = helius_api_key
 
         if enable_whale_copy:
             try:
@@ -343,6 +343,7 @@ class UniversalTrader:
 
         if enable_dev_check:
             self.dev_checker = DevReputationChecker(
+                helius_api_key=helius_api_key,
                 max_tokens_created=dev_max_tokens_created,
                 min_account_age_days=dev_min_account_age_days,
             )
@@ -2313,7 +2314,6 @@ class UniversalTrader:
                 )
 
             try:
-                logger.info(f"[DEBUG] token_info.bonding_curve = {getattr(token_info, 'bonding_curve', None)}")
                 logger.info(f"[BUY] Calling buyer.execute for {token_info.symbol}...")
                 buy_result: TradeResult = await self.buyer.execute(token_info)
                 logger.info(
@@ -2410,18 +2410,18 @@ class UniversalTrader:
         if token_info.token_program_id:
             self.traded_token_programs[mint_str] = token_info.token_program_id
 
-# DISABLED:         # ===== CRITICAL: Save position IMMEDIATELY =====
-# DISABLED:         logger.warning(f"[SAVE] Saving position for {token_info.symbol}")
-# DISABLED:         self.active_positions.append(Position(
-# DISABLED:             mint=token_info.mint,
-# DISABLED:             symbol=token_info.symbol,
-# DISABLED:             entry_price=buy_result.price,
-# DISABLED:             quantity=buy_result.amount,
-# DISABLED:             entry_time=datetime.utcnow(),
-# DISABLED:             platform=self.platform.value,
-# DISABLED:         ))
-# DISABLED:         save_positions(self.active_positions)
-# DISABLED:         logger.warning(f"[SAVED] Position saved to file + Redis")
+        # ===== CRITICAL: Save position IMMEDIATELY =====
+        logger.warning(f"[SAVE] Saving position for {token_info.symbol}")
+        self.active_positions.append(Position(
+            mint=token_info.mint,
+            symbol=token_info.symbol,
+            entry_price=buy_result.price,
+            quantity=buy_result.amount,
+            entry_time=datetime.utcnow(),
+            platform=self.platform.value,
+        ))
+        save_positions(self.active_positions)
+        logger.warning(f"[SAVED] Position saved to file + Redis")
 
         # Choose exit strategy
         if not self.marry_mode:
@@ -2609,7 +2609,7 @@ class UniversalTrader:
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
-        HARD_STOP_LOSS_PCT = 20.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
+        HARD_STOP_LOSS_PCT = 25.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
         EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
 
         # Счётчик неудачных попыток продажи для агрессивного retry

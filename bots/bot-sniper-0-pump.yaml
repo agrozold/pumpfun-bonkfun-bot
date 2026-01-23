@@ -6,7 +6,9 @@ blind_snipe:
   skip_patterns: true
   skip_scoring: true
 dev_check:
-  enabled: false
+  enabled: true
+  max_tokens_created: 50
+  min_account_age_days: 1
 enabled: true
 env_file: .env
 filters:
@@ -22,17 +24,17 @@ platform: pump_fun
 priority_fees:
   enable_dynamic: false
   enable_fixed: true
-  fixed_amount: 100000
-  max_fee: 5000000
+  fixed_amount: 150000
+  max_fee: 2000000
   min_fee: 100000
   strategy: sniper
 private_key: ${SOLANA_PRIVATE_KEY}
 pumpportal:
   url: wss://pumpportal.fun/api/data
 retries:
-  wait_after_buy: 0
-  wait_after_creation: 5
-  wait_before_new_token: 0
+  wait_after_buy: 2
+  wait_after_creation: 3
+  wait_before_new_token: 2
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
 scoring:
   enabled: false
@@ -46,16 +48,16 @@ trade:
   buy_slippage: 0.3
   exit_strategy: tp_sl
   max_hold_time: 60
-  min_sol_balance: 0.05
+  min_sol_balance: 0.03
   moon_bag_percentage: 0
-  price_check_interval: 2
-  sell_slippage: 0.35
-  stop_loss_percentage: 0.20
+  price_check_interval: 1
+  sell_slippage: 0.3
+  stop_loss_percentage: 0.2
   take_profit_percentage: null
-  tsl_activation_pct: 0.0
+  tsl_activation_pct: 0.1
   tsl_enabled: true
-  tsl_sell_pct: 1.0
-  tsl_trail_pct: 0.15
+  tsl_sell_pct: 0.5
+  tsl_trail_pct: 0.1
 trending_scanner:
   enabled: false
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
