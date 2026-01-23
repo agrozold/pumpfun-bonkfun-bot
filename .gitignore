@@ -31,3 +31,5 @@ test_*.py
 # Egg info
 *.egg-info/
 .env.local
+FETCH_HEAD
+*.bak.*
