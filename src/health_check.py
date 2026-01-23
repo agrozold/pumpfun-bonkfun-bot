@@ -295,7 +295,7 @@ async def get_health_checker() -> RPCHealthChecker:
         _health_checker = RPCHealthChecker()
 
         endpoints_config = {
-            "helius": os.getenv("SOLANA_NODE_RPC_ENDPOINT") or os.getenv("HELIUS_RPC_ENDPOINT"),
+            "primary": os.getenv("SOLANA_NODE_RPC_ENDPOINT"),
             "chainstack": os.getenv("CHAINSTACK_RPC_ENDPOINT"),
             "alchemy": os.getenv("ALCHEMY_RPC_ENDPOINT"),
             "drpc": os.getenv("DRPC_RPC_ENDPOINT"),
