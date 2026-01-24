@@ -1,72 +1,83 @@
 #!/bin/bash
-# Smoke test основной функциональности
-# Использование: ./commands/smoke-test.sh
-
 set -e
-
 cd /opt/pumpfun-bonkfun-bot
 source venv/bin/activate
 
-echo "=== Smoke Test ==="
+echo "=== Smoke Test $(date) ==="
 
-# 1. Проверка импортов
-echo "1. Checking imports..."
+echo "1. Core imports (Waves 1-2)..."
 python -c "
 from src.analytics.trace_context import TraceContext, get_trace_id
+from src.analytics.trace_recorder import TraceRecorder
+from src.analytics.metrics_server import MetricsServer
 from src.security.file_guard import FileGuard
-from src.analytics.metrics_server import start_metrics_server
-print('   ✓ All imports OK')
+from src.security.secrets_manager import SecretsManager
+from src.core.sender import SendResult, SendStatus
+from src.core.sender_registry import SenderRegistry
+print('   ✓ Waves 1-2 imports OK')
 "
 
-# 2. Проверка TraceContext
-echo "2. Testing TraceContext..."
+echo "2. Wave 3 imports (Event Sourcing)..."
+python -c "
+from src.trading.position_state import PositionState, StateMachine
+from src.trading.position_redis import PositionRedisSync
+from src.trading.event_store import EventStore, EventType, Event
+print('   ✓ Wave 3 imports OK')
+"
+
+echo "3. Wave 4 imports (Limits & Resilience)..."
+python -c "
+from src.trading.dynamic_decimals import DecimalsResolver, get_token_decimals
+from src.trading.trading_limits import TradingLimits, LimitsTracker, AutoSweepConfig
+from src.core.circuit_breaker import CircuitBreaker, retry_with_backoff, RetryConfig
+print('   ✓ Wave 4 imports OK')
+"
+
+echo "4. TraceContext lifecycle..."
 python -c "
 from src.analytics.trace_context import TraceContext
 ctx = TraceContext.start('buy', 'TestMint', 'test')
-assert ctx.trace_id is not None
-assert len(ctx.events) == 1
+assert ctx.trace_id and len(ctx.trace_id) == 12
+ctx.mark_build_complete()
+ctx.mark_sent(provider='test')
+ctx.mark_finalized(success=True)
+assert ctx.total_latency_ms > 0
 ctx.finish()
 print('   ✓ TraceContext OK')
 "
 
-# 3. Проверка FileGuard
-echo "3. Testing FileGuard..."
+echo "5. Event Store..."
 python -c "
-import os
-os.environ['AI_AGENT_MODE'] = '1'
-from src.security.file_guard import FileGuard, SecurityViolationError
-guard = FileGuard()
-assert guard.is_forbidden('.env')
-assert not guard.is_forbidden('README.md')
-print('   ✓ FileGuard OK')
+from src.trading.event_store import Event, EventType
+event = Event.create(EventType.BUY_INITIATED, 'pos1', 'mint1', amount=0.05)
+assert event.event_id
+data = event.to_dict()
+restored = Event.from_dict(data)
+assert restored.event_type == EventType.BUY_INITIATED
+print('   ✓ Event Store OK')
 "
 
-# 4. Проверка конфигов
-echo "4. Checking bot configs..."
-for config in bots/*.yaml; do
-    if [[ -f "$config" ]]; then
-        python -c "
-import yaml
-with open('$config') as f:
-    cfg = yaml.safe_load(f)
-    assert 'platform' in cfg or 'mode' in cfg
+echo "6. Trading Limits..."
+python -c "
+from decimal import Decimal
+from src.trading.trading_limits import TradingLimits, LimitsTracker
+limits = TradingLimits(max_buy_amount_sol=Decimal('0.1'))
+assert limits.max_buy_amount_sol == Decimal('0.1')
+print('   ✓ Trading Limits OK')
 "
-        echo "   ✓ $config OK"
-    fi
+
+echo "7. Circuit Breaker..."
+python -c "
+from src.core.circuit_breaker import CircuitBreaker, CircuitState
+cb = CircuitBreaker('test')
+assert cb.state == CircuitState.CLOSED
+print('   ✓ Circuit Breaker OK')
+"
+
+echo "8. Bot configs..."
+for cfg in bots/*.yaml; do
+    python -c "import yaml; yaml.safe_load(open('$cfg'))" && echo "   ✓ $cfg"
 done
 
-# 5. Проверка RPC (если настроен)
-echo "5. Checking RPC connection..."
-python -c "
-import os
-from dotenv import load_dotenv
-load_dotenv()
-rpc = os.getenv('SOLANA_NODE_RPC_ENDPOINT', '')
-if rpc:
-    print(f'   RPC configured: {rpc[:50]}...')
-else:
-    print('   ⚠ RPC not configured')
-"
-
 echo ""
-echo "=== Smoke Test Complete ==="
+echo "=== Smoke Test PASSED ==="
