@@ -180,8 +180,13 @@ class TokenScorer:
         min_volume_1h_ok = volume_1h >= 5000
         min_volume_ok = min_volume_5m_ok and min_volume_1h_ok
 
-        # МИНИМУМ: $500 ликвидности
-        min_liquidity_ok = liquidity >= 500
+        # МИНИМУМ: $500 ликвидности (bypass для pump_fun на bonding curve)
+        is_pumpfun_token = mint.endswith("pump")
+        if is_pumpfun_token:
+            min_liquidity_ok = True
+            logger.info(f"[SCORE] {symbol} - pump_fun token on bonding curve, liquidity check bypassed")
+        else:
+            min_liquidity_ok = liquidity >= 500
 
         # ============================================
         # НОВЫЙ ФИЛЬТР: BUY PRESSURE RATIO

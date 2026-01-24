@@ -427,44 +427,97 @@ class WhaleTracker:
         logger.info("Whale tracker stopped")
 
     async def _track_programs(self, wss_url: str, programs: list[str]):
-        """Отслеживание через подписку на логи указанных программ.
-
+        """Распределённое отслеживание whale адресов через несколько WSS соединений.
+        
         Args:
-            wss_url: WebSocket URL для подключения
-            programs: Список program ID для подписки
+            wss_url: Primary WebSocket URL
+            programs: Список program ID (не используется - подписываемся на whale адреса)
         """
+        whale_addresses = list(self.whale_wallets.keys())
+        
+        if not whale_addresses:
+            logger.error("[WHALE] No whale wallets loaded! Cannot subscribe.")
+            return
+        
+        # Получаем все доступные WSS endpoints
+        wss_endpoints = self._get_all_wss_endpoints(wss_url)
+        
+        # Разбиваем адреса на группы (макс 40 на соединение для надёжности)
+        CHUNK_SIZE = 40
+        address_chunks = [
+            whale_addresses[i:i + CHUNK_SIZE] 
+            for i in range(0, len(whale_addresses), CHUNK_SIZE)
+        ]
+        
+        logger.warning(f"[WHALE] Distributed monitoring: {len(whale_addresses)} wallets -> {len(address_chunks)} WSS connections")
+        
+        # Создаём задачи для каждой группы
+        tasks = []
+        for i, chunk in enumerate(address_chunks):
+            # Распределяем по разным WSS endpoints (round-robin)
+            endpoint = wss_endpoints[i % len(wss_endpoints)]
+            task = asyncio.create_task(
+                self._track_whale_group(endpoint, chunk, group_id=i+1)
+            )
+            tasks.append(task)
+        
+        # Ждём все задачи (они работают бесконечно пока self.running)
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            logger.error(f"[WHALE] Distributed tracking error: {e}")
+    
+    def _get_all_wss_endpoints(self, primary_wss: str) -> list[str]:
+        """Получить все доступные WSS endpoints для распределения нагрузки."""
+        import os
+        endpoints = []
+        
+        # Primary (Chainstack)
+        if primary_wss:
+            endpoints.append(primary_wss)
+        
+        # Syndica
+        syndica_wss = os.getenv("SYNDICA_WSS_ENDPOINT")
+        if syndica_wss:
+            endpoints.append(syndica_wss)
+        
+        # dRPC  
+        drpc_wss = os.getenv("DRPC_WSS_ENDPOINT")
+        if drpc_wss:
+            endpoints.append(drpc_wss)
+        
+        # QuickNode
+        quicknode_wss = os.getenv("QUICKNODE_WSS_ENDPOINT")
+        if quicknode_wss:
+            endpoints.append(quicknode_wss)
+        
+        # Public Solana as fallback
+        endpoints.append("wss://api.mainnet-beta.solana.com")
+        
+        logger.info(f"[WHALE] Available WSS endpoints: {len(endpoints)}")
+        return endpoints
+    
+    async def _track_whale_group(self, wss_url: str, whale_addresses: list[str], group_id: int):
+        """Отслеживание группы whale адресов через одно WSS соединение."""
         consecutive_errors = 0
         max_consecutive_errors = 10
-
+        
         while self.running:
             try:
-                logger.info("[WHALE] Connecting to WSS for whale tracking...")
+                logger.info(f"[WHALE-G{group_id}] Connecting to WSS ({len(whale_addresses)} wallets)...")
                 async with self._session.ws_connect(
                     wss_url,
                     heartbeat=30,
                     timeout=aiohttp.ClientTimeout(total=60, sock_connect=30),
-                    receive_timeout=180,  # 3 min timeout for receiving messages
+                    receive_timeout=180,
                 ) as ws:
-                    self._ws = ws
-                    consecutive_errors = 0  # Reset on successful connect
-                    self._connect_time = time.time()  # Track connection time for fast-close detection
-
-                    # OPTIMIZED: Подписываемся на whale адреса напрямую
-                    # Это исключает необходимость RPC-запросов для фильтрации
-                    whale_addresses = list(self.whale_wallets.keys())
+                    consecutive_errors = 0
                     
-                    if not whale_addresses:
-                        logger.error("[WHALE] No whale wallets loaded! Cannot subscribe.")
-                        return
-                    
-                    # Solana RPC обычно поддерживает до 256 подписок на соединение
-                    # Подписываемся на каждого кита + программы для контекста
-                    logger.warning(f"[WHALE] Subscribing to {len(whale_addresses)} whale addresses...")
-                    
+                    # Подписываемся на whale адреса этой группы
                     for i, whale_addr in enumerate(whale_addresses):
                         subscribe_msg = {
                             "jsonrpc": "2.0",
-                            "id": i + 1,
+                            "id": group_id * 1000 + i,
                             "method": "logsSubscribe",
                             "params": [
                                 {"mentions": [whale_addr]},
@@ -472,114 +525,43 @@ class WhaleTracker:
                             ],
                         }
                         await ws.send_json(subscribe_msg)
-                        
-                    logger.warning(f"[WHALE] SUBSCRIBED to {len(whale_addresses)} whale wallets")
-
-                    platform_info = self.target_platform or "ALL platforms"
-                    logger.warning(
-                        f"[WHALE] Filtering {len(self.whale_wallets)} whale wallets on {platform_info}"
-                    )
-
-                    # Message processing loop with timeout protection
-                    last_message_time = time.time()
+                    
+                    logger.warning(f"[WHALE-G{group_id}] SUBSCRIBED to {len(whale_addresses)} wallets")
+                    
+                    # Message processing loop
                     while self.running:
                         try:
-                            # Wait for message with timeout
-                            msg = await asyncio.wait_for(
-                                ws.receive(),
-                                timeout=180,  # 3 min timeout - if no message, reconnect
-                            )
-                            last_message_time = time.time()
-
+                            msg = await asyncio.wait_for(ws.receive(), timeout=180)
+                            
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 try:
                                     data = json.loads(msg.data)
-                                    # Process WITHOUT timeout - RPC Manager handles rate limits
-                                    # and may need to wait longer than any fixed timeout
                                     await self._handle_log(data)
-                                except asyncio.CancelledError:
-                                    # Graceful handling - WebSocket closing or shutdown
-                                    logger.debug("[WHALE] Message handling cancelled")
-                                    raise  # Re-raise to exit loop properly
                                 except json.JSONDecodeError:
                                     pass
                                 except Exception as e:
-                                    # Log but don't crash on individual message errors
-                                    logger.debug(f"[WHALE] Error processing message: {e}")
+                                    logger.debug(f"[WHALE-G{group_id}] Error processing: {e}")
                             elif msg.type == aiohttp.WSMsgType.PING:
                                 await ws.pong(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.PONG:
-                                pass  # Heartbeat response
-                            elif msg.type in (
-                                aiohttp.WSMsgType.ERROR,
-                                aiohttp.WSMsgType.CLOSED,
-                                aiohttp.WSMsgType.CLOSE,
-                            ):
-                                # Check if this was a fast close (< 90 seconds)
-                                connection_duration = time.time() - self._connect_time
-                                if connection_duration < 90:
-                                    self._fast_closes += 1
-                                    logger.warning(
-                                        f"[WHALE] FAST CLOSE #{self._fast_closes} after {connection_duration:.0f}s (type={msg.type})"
-                                    )
-                                    # After 3 fast closes, switch to public Solana WSS
-                                    if self._fast_closes >= 3 and not self._use_fallback_wss:
-                                        self._use_fallback_wss = True
-                                        logger.warning(
-                                            "[WHALE] TOO MANY FAST CLOSES - SWITCHING TO PUBLIC SOLANA WSS!"
-                                        )
-                                else:
-                                    # Reset fast close counter on stable connection
-                                    self._fast_closes = 0
-                                    logger.warning(
-                                        f"[WHALE] WebSocket closed after {connection_duration:.0f}s (type={msg.type}), reconnecting..."
-                                    )
+                            elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
+                                logger.warning(f"[WHALE-G{group_id}] WSS closed, reconnecting...")
                                 break
-
-                        except TimeoutError:
-                            # No message for 2 minutes - connection might be dead
-                            idle_time = time.time() - last_message_time
-                            logger.warning(
-                                f"[WHALE] No messages for {idle_time:.0f}s - reconnecting..."
-                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(f"[WHALE-G{group_id}] No messages for 3 min, reconnecting...")
                             break
-                        except asyncio.CancelledError:
-                            logger.info("[WHALE] Whale tracker cancelled")
-                            raise
-
-                    self._ws = None
-
+                            
             except asyncio.CancelledError:
-                logger.info("[WHALE] Whale tracker task cancelled")
-                raise
-            except TimeoutError as e:
-                consecutive_errors += 1
-                logger.warning(
-                    f"[WHALE] WebSocket timeout: {e} (error {consecutive_errors}/{max_consecutive_errors})"
-                )
-            except aiohttp.ClientError as e:
-                consecutive_errors += 1
-                logger.warning(
-                    f"[WHALE] WebSocket client error: {e} (error {consecutive_errors}/{max_consecutive_errors})"
-                )
+                logger.info(f"[WHALE-G{group_id}] Cancelled")
+                break
             except Exception as e:
                 consecutive_errors += 1
-                logger.exception(
-                    f"[WHALE] Error in log subscription: {e} (error {consecutive_errors}/{max_consecutive_errors})"
-                )
-
-            if self.running:
-                # Exponential backoff with max 30s
+                logger.warning(f"[WHALE-G{group_id}] Error: {e}")
                 if consecutive_errors >= max_consecutive_errors:
-                    logger.error(
-                        f"[WHALE] Too many consecutive errors ({consecutive_errors}), waiting 30s..."
-                    )
-                    await asyncio.sleep(30)
-                    consecutive_errors = 0  # Reset after long wait
-                else:
-                    backoff = min(3 * (2**consecutive_errors), 30)
-                    logger.info(f"[WHALE] Reconnecting in {backoff}s...")
-                    await asyncio.sleep(backoff)
+                    logger.error(f"[WHALE-G{group_id}] Too many errors, stopping")
+                    break
+                backoff = min(2 ** consecutive_errors, 60)
+                await asyncio.sleep(backoff)
+
 
     def _detect_platform_from_logs(self, logs: list[str]) -> str | None:
         """Определить платформу по логам транзакции.
