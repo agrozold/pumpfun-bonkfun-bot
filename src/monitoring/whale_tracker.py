@@ -46,6 +46,10 @@ BAGS_PROGRAM = "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
 # Migrated tokens trade on these DEXes
 PUMPSWAP_PROGRAM = "PSwapMdSai8tjrEXcxFeQth87xC4rRsa4VA5mhGhXkP"
 RAYDIUM_AMM_PROGRAM = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
+# Jupiter Aggregator v6
+JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+# Jupiter Limit Order
+JUPITER_LIMIT_PROGRAM = "jupoNjAxXgZ4rjzxzPMP4oxduvQsQtZzyknqvzYNrNu"
 
 # All programs to monitor (bonding curves + DEXes for migrated)
 ALL_PROGRAMS = [
@@ -54,6 +58,8 @@ ALL_PROGRAMS = [
     BAGS_PROGRAM,
     PUMPSWAP_PROGRAM,
     RAYDIUM_AMM_PROGRAM,
+    JUPITER_PROGRAM,
+    JUPITER_LIMIT_PROGRAM,
 ]
 
 # Program ID to platform mapping
@@ -63,6 +69,8 @@ PROGRAM_TO_PLATFORM: dict[str, str] = {
     BAGS_PROGRAM: "bags",
     PUMPSWAP_PROGRAM: "pumpswap",
     RAYDIUM_AMM_PROGRAM: "raydium",
+    JUPITER_PROGRAM: "jupiter",
+    JUPITER_LIMIT_PROGRAM: "jupiter",
 }
 
 # ============================================
@@ -429,20 +437,31 @@ class WhaleTracker:
                     consecutive_errors = 0  # Reset on successful connect
                     self._connect_time = time.time()  # Track connection time for fast-close detection
 
-                    # Подписываемся на каждую программу
-                    for i, program in enumerate(programs):
+                    # OPTIMIZED: Подписываемся на whale адреса напрямую
+                    # Это исключает необходимость RPC-запросов для фильтрации
+                    whale_addresses = list(self.whale_wallets.keys())
+                    
+                    if not whale_addresses:
+                        logger.error("[WHALE] No whale wallets loaded! Cannot subscribe.")
+                        return
+                    
+                    # Solana RPC обычно поддерживает до 256 подписок на соединение
+                    # Подписываемся на каждого кита + программы для контекста
+                    logger.warning(f"[WHALE] Subscribing to {len(whale_addresses)} whale addresses...")
+                    
+                    for i, whale_addr in enumerate(whale_addresses):
                         subscribe_msg = {
                             "jsonrpc": "2.0",
                             "id": i + 1,
                             "method": "logsSubscribe",
                             "params": [
-                                {"mentions": [program]},
+                                {"mentions": [whale_addr]},
                                 {"commitment": "processed"},
                             ],
                         }
                         await ws.send_json(subscribe_msg)
-                        platform_name = PROGRAM_TO_PLATFORM.get(program, program[:8])
-                        logger.warning(f"[WHALE] SUBSCRIBED to {platform_name} logs")
+                        
+                    logger.warning(f"[WHALE] SUBSCRIBED to {len(whale_addresses)} whale wallets")
 
                     platform_info = self.target_platform or "ALL platforms"
                     logger.warning(
@@ -571,7 +590,7 @@ class WhaleTracker:
         Args:
             data: Сырые данные лог-нотификации от WebSocket
         """
-        logger.warning(f"[WHALE-DBG] _handle_log called, method={data.get('method')}")
+        logger.debug(f"[WHALE-DBG] _handle_log called, method={data.get('method')}")
         if data.get("method") != "logsNotification":
             return
 
@@ -584,7 +603,7 @@ class WhaleTracker:
             logs = value.get("logs", [])
             err = value.get("err")
 
-            logger.warning(f"[WHALE-DBG] sig={signature[:16]}... err={err}, logs_count={len(logs)}")
+            logger.debug(f"[WHALE-DBG] sig={signature[:16]}... err={err}, logs_count={len(logs)}")
             if err or not signature:
                 return
 
@@ -593,7 +612,7 @@ class WhaleTracker:
 
             # Определяем платформу по логам
             platform = self._detect_platform_from_logs(logs)
-            logger.warning(f"[WHALE-DBG] Platform: {platform}, target: {self.target_platform}")
+            logger.debug(f"[WHALE-DBG] Platform: {platform}, target: {self.target_platform}")
             if not platform:
                 return
 
@@ -620,8 +639,12 @@ class WhaleTracker:
                 ):
                     is_buy = True
                     break
+                # Jupiter Aggregator detection
+                if "Program JUP" in log or "Instruction: route" in log.lower() or "Instruction: sharedAccountsRoute" in log.lower():
+                    is_buy = True
+                    break
 
-            logger.warning(f"[WHALE-DBG] is_buy={is_buy} for {signature[:16]}")
+            logger.debug(f"[WHALE-DBG] is_buy={is_buy} for {signature[:16]}")
             if not is_buy:
                 return
 
@@ -641,7 +664,7 @@ class WhaleTracker:
             signature: Сигнатура транзакции
             platform: Платформа ("pump_fun" или "lets_bonk")
         """
-        logger.warning(f"[WHALE-DBG] _check_if_whale_tx CALLED: {signature[:16]}...")
+        logger.debug(f"[WHALE-DBG] _check_if_whale_tx CALLED: {signature[:16]}...")
 
         # Mark as processed to avoid duplicates
         self._processed_txs.add(signature)
@@ -671,7 +694,7 @@ class WhaleTracker:
 
     async def _check_whale_tx_with_manager(self, signature: str, platform: str):
         """Check whale TX using RPC Manager (optimized path)."""
-        logger.warning(f"[WHALE-DBG] _check_whale_tx_with_manager START: {signature[:16]}...")
+        logger.debug(f"[WHALE-DBG] _check_whale_tx_with_manager START: {signature[:16]}...")
         # Initialize RPC Manager lazily
         if self._rpc_manager is None:
             self._rpc_manager = await get_rpc_manager()
@@ -679,9 +702,9 @@ class WhaleTracker:
         self._metrics["rpc_manager_calls"] += 1
 
         # Try Helius Enhanced API first (best for parsed transactions)
-        logger.warning(f"[WHALE-DBG] Calling Helius Enhanced for {signature[:16]}...")
-        tx = await self._rpc_manager.get_transaction_helius_enhanced(signature)
-        logger.warning(f"[WHALE-DBG] Helius result: {bool(tx)} for {signature[:16]}...")
+        logger.debug(f"[WHALE-DBG] Calling Helius Enhanced for {signature[:16]}...")
+        tx = await self._rpc_manager.get_transaction(signature)
+        logger.debug(f"[WHALE-DBG] Helius result: {bool(tx)} for {signature[:16]}...")
         if tx:
             self._metrics["helius_success"] += 1
             self._cache_tx(signature, tx)

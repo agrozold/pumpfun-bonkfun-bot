@@ -126,11 +126,11 @@ class RPCManager:
                 name="Chainstack",
                 http_endpoint=chainstack_http,
                 wss_endpoint=chainstack_wss,
-                rate_limit_per_second=0.5,  # Increased! 3M/month = 1.15/s safe
+                rate_limit_per_second=3.0,  # 3M/month allows burst
                 priority=1,
                 is_primary=True,
             )
-            logger.info("[RPC] ✓ CHAINSTACK PRIMARY: priority=1, 0.5 req/s + WSS (3M/month)")
+            logger.info("[RPC] ✓ CHAINSTACK PRIMARY: priority=1, 3.0 req/s + WSS (3M/month)")
 
         # === dRPC = FALLBACK #1 ===
         drpc_http = os.getenv("DRPC_RPC_ENDPOINT")
@@ -140,11 +140,11 @@ class RPCManager:
                 name="dRPC",
                 http_endpoint=drpc_http,
                 wss_endpoint=drpc_wss,
-                rate_limit_per_second=0.2,
+                rate_limit_per_second=2.0,
                 priority=2,
                 is_primary=False,
             )
-            logger.info("[RPC] ✓ dRPC: priority=2, 0.2 req/s + WSS")
+            logger.info("[RPC] ✓ dRPC: priority=2, 2.0 req/s + WSS")
 
         # === SYNDICA = FALLBACK #2 (NEW!) ===
         syndica_http = os.getenv("SYNDICA_RPC_ENDPOINT")
@@ -154,11 +154,11 @@ class RPCManager:
                 name="Syndica",
                 http_endpoint=syndica_http,
                 wss_endpoint=syndica_wss,
-                rate_limit_per_second=0.2,
+                rate_limit_per_second=2.0,
                 priority=3,
                 is_primary=False,
             )
-            logger.info("[RPC] ✓ SYNDICA: priority=3, 0.2 req/s + WSS")
+            logger.info("[RPC] ✓ SYNDICA: priority=3, 2.0 req/s + WSS")
 
         # === ALCHEMY = FALLBACK #3 ===
         alchemy_http = os.getenv("ALCHEMY_RPC_ENDPOINT")
@@ -166,11 +166,11 @@ class RPCManager:
             self.providers["alchemy"] = ProviderConfig(
                 name="Alchemy",
                 http_endpoint=alchemy_http,
-                rate_limit_per_second=0.1,
+                rate_limit_per_second=1.0,
                 priority=4,
                 is_primary=False,
             )
-            logger.info("[RPC] ✓ ALCHEMY: priority=4, 0.1 req/s")
+            logger.info("[RPC] ✓ ALCHEMY: priority=4, 1.0 req/s")
 
         # === QUICKNODE = FALLBACK #4 (WSS) ===
         quicknode_wss = os.getenv("QUICKNODE_WSS_ENDPOINT")
@@ -180,22 +180,22 @@ class RPCManager:
                 name="QuickNode",
                 http_endpoint=quicknode_http,
                 wss_endpoint=quicknode_wss,
-                rate_limit_per_second=0.15,
+                rate_limit_per_second=1.5,
                 priority=5,
                 is_primary=False,
             )
-            logger.info("[RPC] ✓ QUICKNODE: priority=5, 0.15 req/s + WSS")
+            logger.info("[RPC] ✓ QUICKNODE: priority=5, 1.5 req/s + WSS")
 
         # === PUBLIC SOLANA = LAST RESORT ===
         self.providers["public_solana"] = ProviderConfig(
             name="Public Solana",
             http_endpoint="https://api.mainnet-beta.solana.com",
             wss_endpoint="wss://api.mainnet-beta.solana.com",
-            rate_limit_per_second=0.05,
+            rate_limit_per_second=0.5,
             priority=20,
             is_primary=False,
         )
-        logger.info("[RPC] ✓ PUBLIC SOLANA: priority=20, 0.05 req/s (last resort)")
+        logger.info("[RPC] ✓ PUBLIC SOLANA: priority=20, 0.5 req/s (last resort)")
 
         self._initialized = True
         logger.info(f"[RPC] Initialized {len(self.providers)} providers")
