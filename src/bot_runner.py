@@ -40,7 +40,15 @@ from config_loader import (
 )
 from trading.restore_and_monitor import restore_and_monitor_positions
 from trading.universal_trader import UniversalTrader
-from utils.logger import setup_file_logging
+
+# === Metrics Integration ===
+try:
+    from trading.metrics_integration import patch_universal_trader
+    patch_universal_trader(UniversalTrader)
+except ImportError as e:
+    logging.warning(f"Metrics integration not available: {e}")
+# === End Metrics Integration ===
+from utils.logger import setup_file_logging, setup_trace_logging
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +62,7 @@ def setup_logging(bot_name: str):
     log_filename = log_dir / f"{bot_name}_{timestamp}.log"
 
     setup_file_logging(str(log_filename))
+    setup_trace_logging()  # Enable trace_id in logs
 
 
 async def start_bot(config_path: str):
@@ -273,6 +282,16 @@ async def start_bot(config_path: str):
         
         # Then start listening for new tokens
         logger.warning("[MAIN] Starting new token listener...")
+
+        # === Start Metrics Server ===
+        try:
+            from analytics.metrics_server import start_metrics_server
+            metrics_port = cfg.get("metrics", {}).get("port", 9090)
+            await start_metrics_server(host='0.0.0.0', port=metrics_port)
+            logger.info(f"[METRICS] Server started on port {metrics_port}")
+        except Exception as e:
+            logger.warning(f"[METRICS] Failed to start metrics server: {e}")
+        # === End Metrics Server ===
         await trader.start()
 
     except Exception as e:

@@ -334,3 +334,51 @@ def get_log_stats() -> Dict[str, Any]:
         "total_size_mb": round(total_size / (1024 * 1024), 2),
         "log_dir": str(LOG_DIR.absolute())
     }
+
+
+
+# ============================================================================
+# TRACE ID INTEGRATION
+# ============================================================================
+
+class TraceIdFilter(logging.Filter):
+    """Filter that adds trace_id to log records for request correlation."""
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Always set trace_id, even if empty
+        if not hasattr(record, 'trace_id'):
+            try:
+                from analytics.trace_context import get_trace_id
+                record.trace_id = get_trace_id() or '-'
+            except ImportError:
+                record.trace_id = '-'
+        return True
+
+
+# Format with trace_id support
+LOG_FORMAT_WITH_TRACE = "%(asctime)s | %(levelname)-8s | %(trace_id)s | %(name)s | %(message)s"
+
+# Global filter instance
+_trace_filter = TraceIdFilter()
+
+
+def setup_trace_logging() -> None:
+    """Add trace_id support to all existing and future handlers."""
+    root_logger = logging.getLogger()
+    
+    # Add filter to root logger (applies to all child loggers)
+    if _trace_filter not in root_logger.filters:
+        root_logger.addFilter(_trace_filter)
+    
+    # Update all existing handlers with new format
+    formatter = logging.Formatter(LOG_FORMAT_WITH_TRACE, datefmt=LOG_DATE_FORMAT)
+    for handler in root_logger.handlers:
+        # Add filter to handler too (belt and suspenders)
+        if _trace_filter not in handler.filters:
+            handler.addFilter(_trace_filter)
+        handler.setFormatter(formatter)
+
+
+def enable_global_trace_logging() -> None:
+    """Alias for setup_trace_logging for backward compatibility."""
+    setup_trace_logging()
