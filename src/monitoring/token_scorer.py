@@ -352,6 +352,7 @@ class TokenScorer:
     async def _fetch_dexscreener(self, session: aiohttp.ClientSession, mint: str) -> dict | None:
         """Получить данные токена с Dexscreener."""
         url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+        cache_key = f"dexscreener:{mint}"
 
         try:
             async with session.get(url) as resp:
