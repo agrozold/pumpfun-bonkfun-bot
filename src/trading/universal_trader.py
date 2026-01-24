@@ -2760,6 +2760,7 @@ class UniversalTrader:
             check_count += 1
 
             # Safety check: prevent infinite loops
+            await asyncio.sleep(0.1)  # 100ms sleep между итерациями
             if total_iterations > max_iterations:
                 logger.error(
                     f"[CRITICAL] Monitor exceeded {max_iterations} iterations for {token_info.symbol}! "
