@@ -13,6 +13,16 @@ from solders.pubkey import Pubkey
 
 from utils.logger import get_logger
 
+# === STATE MACHINE INTEGRATION ===
+try:
+    from trading.position_state import StateMachine, PositionState
+    STATE_MACHINE_AVAILABLE = True
+except ImportError:
+    STATE_MACHINE_AVAILABLE = False
+    StateMachine = None
+    PositionState = None
+# === END STATE MACHINE ===
+
 # Session 9: Atomic file writes
 from utils.safe_file_writer import SafeFileWriter
 _positions_writer = SafeFileWriter(backup_count=10, backup_dir="backups/positions", enable_backups=True)
@@ -67,6 +77,9 @@ class Position:
     # Status
     is_active: bool = True
     exit_reason: ExitReason | None = None
+    
+    # === STATE MACHINE (optional, for new positions) ===
+    _state_machine: object = None  # StateMachine instance, lazy init
     exit_price: float | None = None
     exit_time: datetime | None = None
 
@@ -78,6 +91,23 @@ class Position:
         """Initialize high water mark to entry price."""
         if self.high_water_mark == 0.0:
             self.high_water_mark = self.entry_price
+
+    # === STATE MACHINE PROPERTY ===
+    @property
+    def state(self) -> str:
+        """Get current state as string (for compatibility)."""
+        if self._state_machine is not None and STATE_MACHINE_AVAILABLE:
+            return self._state_machine.current_state.value
+        return "open" if self.is_active else "closed"
+    
+    @property
+    def state_machine(self):
+        """Lazy init state machine for new code."""
+        if self._state_machine is None and STATE_MACHINE_AVAILABLE:
+            initial = PositionState.OPEN if self.is_active else PositionState.CLOSED
+            self._state_machine = StateMachine(current_state=initial)
+        return self._state_machine
+    # === END STATE MACHINE PROPERTY ===
 
     def to_dict(self) -> dict:
         """Convert position to dictionary for JSON serialization."""
@@ -100,6 +130,7 @@ class Position:
             "tsl_sell_pct": self.tsl_sell_pct,
             # Status
             "is_active": self.is_active,
+            "state": self.state,  # === NEW: state for future compatibility ===
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
         }
