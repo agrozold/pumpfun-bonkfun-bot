@@ -1,10 +1,25 @@
-"""Analytics modules for token analysis."""
-from analytics.holder_analysis import HolderAnalyzer, get_holder_analyzer
-from analytics.creator_history import CreatorHistoryTracker, get_creator_tracker
+"""Analytics module for tracing and metrics"""
+
+from .trace_context import (
+    TraceContext,
+    TraceEvent,
+    get_current_trace,
+    get_trace_id
+)
+from .trace_recorder import (
+    TraceRecorder,
+    init_trace_recorder,
+    record_trace,
+    shutdown_trace_recorder
+)
 
 __all__ = [
-    "HolderAnalyzer",
-    "get_holder_analyzer",
-    "CreatorHistoryTracker",
-    "get_creator_tracker",
+    'TraceContext',
+    'TraceEvent', 
+    'get_current_trace',
+    'get_trace_id',
+    'TraceRecorder',
+    'init_trace_recorder',
+    'record_trace',
+    'shutdown_trace_recorder'
 ]

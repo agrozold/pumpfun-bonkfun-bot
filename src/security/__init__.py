@@ -1,11 +1,5 @@
-from .rugcheck_client import RugcheckClient, RugcheckResult, RiskLevel
-from .token_vetter import TokenVetter, TokenVetReport, VetResult
+"""Security module for agent restrictions and secrets management"""
 
-__all__ = [
-    "RugcheckClient",
-    "RugcheckResult",
-    "RiskLevel",
-    "TokenVetter",
-    "TokenVetReport",
-    "VetResult",
-]
+from .file_guard import FileGuard, SecurityViolationError
+
+__all__ = ['FileGuard', 'SecurityViolationError']
