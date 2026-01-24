@@ -20,6 +20,7 @@ from solders.transaction import VersionedTransaction
 from spl.token.instructions import get_associated_token_address
 
 from utils.logger import get_logger
+from utils.retry import calculate_delay, classify_error, ErrorCategory
 
 if TYPE_CHECKING:
     from core.client import SolanaClient
@@ -170,7 +171,7 @@ class FallbackSeller:
                     if "429" in error_str or not error_str:
                         logger.warning(f"[MARKET] RPC rate limited, retry {retry + 1}/3...")
                         import asyncio
-                        await asyncio.sleep(0.5 * (retry + 1))
+                        await asyncio.sleep(calculate_delay(retry, base_delay=0.5, max_delay=10.0))
                         continue
                     logger.error(f"[MARKET] get_account_info failed for market {market}: {e}")
                     return False, None, f"Failed to fetch market data: {e}", 0.0, 0.0
@@ -263,7 +264,7 @@ class FallbackSeller:
                 except Exception as e:
                     if balance_retry < 2:
                         logger.warning(f"[POOL] Pool balance fetch failed, retry {balance_retry + 1}/3: {e}")
-                        await asyncio.sleep(0.5 * (balance_retry + 1))
+                        await asyncio.sleep(calculate_delay(balance_retry, base_delay=0.5, max_delay=10.0))
                     else:
                         logger.error(f"[POOL] Failed to get pool balances: {e}")
                         return False, None, f"Failed to get pool balances: {e}", 0.0, 0.0
