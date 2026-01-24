@@ -1524,6 +1524,13 @@ class UniversalTrader:
 
     async def _on_volume_opportunity(self, analysis: TokenVolumeAnalysis):
         """Callback when volume pattern analyzer finds an opportunity."""
+        # ============================================
+        # CRITICAL BALANCE CHECK - STOP BOT
+        # ============================================
+        if self._critical_low_balance:
+            logger.warning("[VOLUME] Bot stopped due to critical low balance, ignoring signal")
+            return
+
         mint_str = analysis.mint
 
         # Anti-duplicate check
@@ -1604,6 +1611,13 @@ class UniversalTrader:
         ANTI-DUPLICATE: Uses unified _buy_lock and _buying_tokens/_bought_tokens
         to prevent ANY duplicate purchases across ALL buy paths.
         """
+        # ============================================
+        # CRITICAL BALANCE CHECK - STOP BOT
+        # ============================================
+        if self._critical_low_balance:
+            logger.warning("[TRENDING] Bot stopped due to critical low balance, ignoring signal")
+            return
+
         mint_str = token.mint
 
         # ============================================
@@ -1989,8 +2003,12 @@ class UniversalTrader:
                         # Non-sniper mode (whale-copy, volume-sniper)
                         # Don't listen for new tokens, just keep running for whale/trending/volume
                         logger.warning("[MODE] Sniper DISABLED - running in whale/trending/volume only mode")
-                        # Keep running forever until interrupted
+                        # Keep running forever until interrupted (with balance check)
                         while True:
+                            if self._critical_low_balance:
+                                logger.error("🛑 Bot stopped due to critical low balance (≤ 0.02 SOL)")
+                                logger.error("🛑 Please top up your wallet and restart the bot.")
+                                break
                             await asyncio.sleep(60)
                 except Exception:
                     logger.exception("Token listening stopped due to error")
