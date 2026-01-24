@@ -50,6 +50,12 @@ RAYDIUM_AMM_PROGRAM = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 # Jupiter Limit Order
 JUPITER_LIMIT_PROGRAM = "jupoNjAxXgZ4rjzxzPMP4oxduvQsQtZzyknqvzYNrNu"
+# Orca Whirlpool
+ORCA_WHIRLPOOL_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+# Meteora DLMM
+METEORA_DLMM_PROGRAM = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+# Raydium CLMM (Concentrated Liquidity)
+RAYDIUM_CLMM_PROGRAM = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
 
 # All programs to monitor (bonding curves + DEXes for migrated)
 ALL_PROGRAMS = [
@@ -60,6 +66,9 @@ ALL_PROGRAMS = [
     RAYDIUM_AMM_PROGRAM,
     JUPITER_PROGRAM,
     JUPITER_LIMIT_PROGRAM,
+    ORCA_WHIRLPOOL_PROGRAM,
+    METEORA_DLMM_PROGRAM,
+    RAYDIUM_CLMM_PROGRAM,
 ]
 
 # Program ID to platform mapping
@@ -71,6 +80,9 @@ PROGRAM_TO_PLATFORM: dict[str, str] = {
     RAYDIUM_AMM_PROGRAM: "raydium",
     JUPITER_PROGRAM: "jupiter",
     JUPITER_LIMIT_PROGRAM: "jupiter",
+    ORCA_WHIRLPOOL_PROGRAM: "orca",
+    METEORA_DLMM_PROGRAM: "meteora",
+    RAYDIUM_CLMM_PROGRAM: "raydium",
 }
 
 # ============================================
@@ -640,6 +652,14 @@ class WhaleTracker:
                     is_buy = True
                     break
                 # Jupiter Aggregator detection
+                # Orca Whirlpool detection
+                if "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc" in log or "Program whir" in log:
+                    is_buy = True
+                    break
+                # Meteora DLMM detection
+                if "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log or "Program LBU" in log:
+                    is_buy = True
+                    break
                 if "Program JUP" in log or "Instruction: route" in log.lower() or "Instruction: sharedAccountsRoute" in log.lower():
                     is_buy = True
                     break
