@@ -21,7 +21,7 @@ TRACE_LOG_FORMAT = '%(asctime)s | %(levelname)-8s | %(trace_id)s | %(name)s | %(
 def patch_logger(logger_name: str = None) -> None:
     """
     Добавить TraceIdFilter к логгеру.
-    
+
     Args:
         logger_name: Имя логгера (None = root logger)
     """

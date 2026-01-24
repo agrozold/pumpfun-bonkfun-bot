@@ -22,11 +22,11 @@ class SecurityViolationError(Exception):
 class FileGuard:
     """
     Защита от чтения секретов AI-агентами.
-    
+
     Использование:
         guard = FileGuard()
         guard.install()  # Патчит builtins.open
-        
+
     При попытке открыть запрещённый файл:
         - Логируется security warning
         - Выбрасывается SecurityViolationError

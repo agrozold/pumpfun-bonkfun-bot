@@ -58,7 +58,7 @@ class TokenInfo:
 class DecimalsResolver:
     """
     Resolver для определения decimals токена.
-    
+
     Использование:
         resolver = DecimalsResolver(rpc_client)
         decimals = await resolver.get_decimals(mint)
@@ -72,7 +72,7 @@ class DecimalsResolver:
     async def get_decimals(self, mint: str, platform: str = None) -> int:
         """
         Получить decimals для токена.
-        
+
         Приоритет:
         1. Кеш
         2. Известные токены

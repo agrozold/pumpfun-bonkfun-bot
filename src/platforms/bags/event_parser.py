@@ -59,10 +59,10 @@ class BagsEventParser(EventParser):
 
     def _compute_discriminator(self, instruction_name: str) -> bytes:
         """Compute instruction discriminator using Anchor convention.
-        
+
         Args:
             instruction_name: Name of the instruction (snake_case)
-            
+
         Returns:
             8-byte discriminator
         """
@@ -112,7 +112,7 @@ class BagsEventParser(EventParser):
 
     def _parse_initialize_event(self, data: bytes, signature: str) -> TokenInfo | None:
         """Parse EvtInitializeVirtualPoolWithSplToken event data.
-        
+
         Event structure from IDL:
         - name: string
         - symbol: string
@@ -123,11 +123,11 @@ class BagsEventParser(EventParser):
         - quoteMint: publicKey
         - baseVault: publicKey
         - quoteVault: publicKey
-        
+
         Args:
             data: Decoded event data
             signature: Transaction signature
-            
+
         Returns:
             TokenInfo if valid event, None otherwise
         """

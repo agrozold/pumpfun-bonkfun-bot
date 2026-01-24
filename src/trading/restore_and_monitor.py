@@ -16,7 +16,7 @@ async def restore_and_monitor_positions(
 ):
     """
     CRITICAL: Restore all positions from file and monitor them immediately.
-    
+
     This runs BEFORE listening for new tokens.
     """
     logger.warning("=" * 70)
@@ -58,7 +58,7 @@ async def restore_and_monitor_positions(
         if position.bonding_curve:
             try:
                 token_info.bonding_curve = Pubkey.from_string(position.bonding_curve)
-            except:
+            except Exception:
                 pass
 
         logger.warning(f"[RESTORE MONITOR] Starting monitor for {position.symbol} (SL: {position.stop_loss_price:.2e})")

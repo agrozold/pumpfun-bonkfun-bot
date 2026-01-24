@@ -402,16 +402,16 @@ class BagsAddressProvider(AddressProvider):
 
 def is_bags_token(mint_address: str) -> bool:
     """Check if token might be a BAGS token by address suffix.
-    
+
     Note: This is a HEURISTIC only. bags.fm tokens are properly identified
     by being created via Meteora DBC program (dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN),
     NOT by mint address suffix. Some bags.fm tokens end with "bags" but many don't.
-    
+
     For proper detection, use logsSubscribe on Meteora DBC program.
-    
+
     Args:
         mint_address: Token mint address as string
-        
+
     Returns:
         True if token might be a BAGS platform token (heuristic)
     """

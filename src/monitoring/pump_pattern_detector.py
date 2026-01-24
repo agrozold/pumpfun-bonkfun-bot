@@ -342,7 +342,7 @@ class PumpPatternDetector:
 
     async def _fetch_from_dexscreener(self, mint: str) -> dict | None:
         """Получить данные из DexScreener API (FREE, no API key needed!).
-        
+
         DexScreener is the PRIMARY fallback because:
         - No API key required
         - No strict rate limits
@@ -606,11 +606,11 @@ class PumpPatternDetector:
 
     async def _check_high_volume_sideways(self, mint: str, metrics: TokenMetrics):
         """Проверить паттерн High Volume Sideways.
-        
+
         Условия срабатывания:
         1. BUY >= 300 за 1 час И SELL >= 200 за 1 час (активная торговля)
         2. ИЛИ: BUY > 100 за 1 час И SELL <= 100 (накопление)
-        
+
         Это указывает на токен с высокой активностью но без резкого роста цены -
         потенциальный кандидат на пробой.
         """
@@ -647,11 +647,11 @@ class PumpPatternDetector:
 
     async def _check_extreme_buy_pressure_5m(self, mint: str, metrics: TokenMetrics):
         """Проверить EXTREME BUY PRESSURE за 5 минут.
-        
+
         Условия срабатывания:
         - Покупок (buys_5m) >= 500
         - Продаж (sells_5m) <= 200
-        
+
         Это сильный сигнал на покупку - много покупателей, мало продавцов.
         """
         buys = metrics.buys_5m

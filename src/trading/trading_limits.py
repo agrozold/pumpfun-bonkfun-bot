@@ -72,7 +72,7 @@ class TradeRecord:
 class LimitsTracker:
     """
     Трекер лимитов торговли.
-    
+
     Использование:
         tracker = LimitsTracker(limits)
         can_trade, reason = await tracker.can_execute_trade('buy', 0.05, mint)
@@ -171,7 +171,7 @@ class LimitsTracker:
     ) -> tuple[bool, str]:
         """
         Проверить, можно ли выполнить сделку.
-        
+
         Returns:
             (can_trade, reason)
         """
@@ -286,7 +286,7 @@ class LimitsTracker:
 class AutoSweeper:
     """
     Автоматический вывод прибыли.
-    
+
     Использование:
         sweeper = AutoSweeper(config, rpc_client, keypair)
         await sweeper.check_and_sweep(current_balance)
@@ -307,7 +307,7 @@ class AutoSweeper:
     async def check_and_sweep(self, current_balance_sol: Decimal) -> Optional[Dict]:
         """
         Проверить и выполнить sweep при необходимости.
-        
+
         Returns:
             Dict с информацией о sweep или None
         """

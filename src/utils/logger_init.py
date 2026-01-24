@@ -18,7 +18,7 @@ def setup_logging(
 ) -> logging.Logger:
     """
     Setup logging with trace_id support and rotation.
-    
+
     Returns:
         Root logger configured with trace support
     """

@@ -338,7 +338,7 @@ class ParallelTransactionSender:
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Отправляет транзакцию параллельно и ждёт подтверждения.
-        
+
         Returns:
             (success, signature, error)
         """
@@ -395,7 +395,7 @@ async def send_transaction_parallel(
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Удобная функция для отправки транзакции.
-    
+
     Returns:
         (success, signature, error)
     """

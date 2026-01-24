@@ -54,7 +54,7 @@ def cache_creator_status(address: str, is_risky: bool, risk_score: float = 0.0, 
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute('''
-            INSERT OR REPLACE INTO creator_cache 
+            INSERT OR REPLACE INTO creator_cache
             (address, is_risky, risk_score, tokens_created, tokens_sold, last_checked, details)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (address, 1 if is_risky else 0, risk_score, tokens_created, tokens_sold, time.time(), details))

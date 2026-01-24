@@ -51,7 +51,7 @@ class MigrationInfo:
 @dataclass
 class BagsMigrationTracker:
     """Tracks BAGS token migrations from DBC to DAMM v2.
-    
+
     When a BAGS token's bonding curve reaches its threshold, Meteora's
     migration keepers automatically migrate it to DAMM v2. This tracker
     monitors these migrations and maintains a mapping for fallback trading.
@@ -77,7 +77,7 @@ class BagsMigrationTracker:
 
     def add_pool_to_monitor(self, pool_address: str, base_mint: str) -> None:
         """Add a DBC pool to monitor for migration.
-        
+
         Args:
             pool_address: DBC virtual pool address
             base_mint: Base token mint address
@@ -87,10 +87,10 @@ class BagsMigrationTracker:
 
     def is_token_migrated(self, base_mint: str) -> bool:
         """Check if a token has been migrated.
-        
+
         Args:
             base_mint: Base token mint address
-            
+
         Returns:
             True if token has migrated to DAMM v2
         """
@@ -98,10 +98,10 @@ class BagsMigrationTracker:
 
     def get_migration_info(self, base_mint: str) -> MigrationInfo | None:
         """Get migration info for a token.
-        
+
         Args:
             base_mint: Base token mint address
-            
+
         Returns:
             MigrationInfo if migrated, None otherwise
         """
@@ -109,10 +109,10 @@ class BagsMigrationTracker:
 
     def get_new_pool_address(self, base_mint: str) -> Pubkey | None:
         """Get the new DAMM v2 pool address for a migrated token.
-        
+
         Args:
             base_mint: Base token mint address
-            
+
         Returns:
             New pool address if migrated, None otherwise
         """
@@ -186,7 +186,7 @@ class BagsMigrationTracker:
 
     async def _process_log_notification(self, data: dict) -> None:
         """Process a log notification for migration events.
-        
+
         Args:
             data: WebSocket notification data
         """
@@ -218,7 +218,7 @@ class BagsMigrationTracker:
 
     async def _parse_migration_event(self, log: str, signature: str) -> None:
         """Parse migration event from Program data log.
-        
+
         Args:
             log: Log line containing Program data
             signature: Transaction signature
@@ -286,10 +286,10 @@ class BagsMigrationTracker:
 
     async def check_pool_status(self, pool_address: str) -> dict | None:
         """Check if a DBC pool has migrated by fetching its status.
-        
+
         Args:
             pool_address: DBC virtual pool address
-            
+
         Returns:
             Pool status dict or None if error
         """

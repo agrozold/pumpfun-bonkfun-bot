@@ -208,7 +208,7 @@ class SolanaClient:
 
     async def get_multiple_accounts(self, pubkeys: list[Pubkey]) -> list[dict[str, Any] | None]:
         """Get multiple accounts in a single RPC call (batch).
-        
+
         Much more efficient than calling get_account_info multiple times.
         Solana supports up to 100 accounts per call.
 
@@ -447,7 +447,7 @@ class SolanaClient:
         self, signature: str, commitment: str = "confirmed", timeout: float = 45.0
     ) -> bool:
         """Wait for transaction confirmation with timeout.
-        
+
         IMPROVED: If timeout occurs, check transaction status directly.
         Transactions may be confirmed even if wait times out.
 

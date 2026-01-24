@@ -48,7 +48,7 @@ def _lazy_import_trace():
 def patch_universal_trader(trader_class):
     """
     Патчит UniversalTrader для записи метрик.
-    
+
     Использование:
         from trading.universal_trader import UniversalTrader
         from trading.metrics_integration import patch_universal_trader

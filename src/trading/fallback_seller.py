@@ -78,7 +78,7 @@ class FallbackSeller:
 
     async def _get_rpc_client(self):
         """Get RPC client, preferring alternative endpoint if available.
-        
+
         Priority:
         1. ALCHEMY_RPC_ENDPOINT (if set) - fast, high limits
         2. Public Solana RPC - official, reliable
@@ -112,13 +112,13 @@ class FallbackSeller:
         market_address: Pubkey | None = None,  # Optional - skip lookup if provided
     ) -> tuple[bool, str | None, str | None, float, float]:
         """Buy token via PumpSwap AMM - for migrated tokens.
-        
+
         Args:
             mint: Token mint address
             sol_amount: Amount of SOL to spend
             symbol: Token symbol for logging
             market_address: Optional pool address (skip lookup if provided)
-            
+
         Returns:
             Tuple of (success, tx_signature, error_message, token_amount, price)
         """
@@ -462,12 +462,12 @@ class FallbackSeller:
         symbol: str = "TOKEN",
     ) -> tuple[bool, str | None, str | None]:
         """Buy token via Jupiter aggregator - works for any token with liquidity.
-        
+
         Args:
             mint: Token mint address
             sol_amount: Amount of SOL to spend
             symbol: Token symbol for logging
-            
+
         Returns:
             Tuple of (success, tx_signature, error_message)
         """

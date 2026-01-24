@@ -22,7 +22,7 @@ def _ensure_data_dir():
 
 def load_purchase_history() -> set[str]:
     """Load all previously purchased token mints from disk.
-    
+
     Returns:
         Set of token mint addresses that were ever purchased.
     """
@@ -49,10 +49,10 @@ def load_purchase_history() -> set[str]:
 
 def was_token_purchased(mint: str) -> bool:
     """Check if token was ever purchased.
-    
+
     Args:
         mint: Token mint address
-        
+
     Returns:
         True if token was purchased before, False otherwise.
     """
@@ -69,7 +69,7 @@ def add_to_purchase_history(
     amount: float = 0.0,
 ) -> bool:
     """Add token to purchase history.
-    
+
     Args:
         mint: Token mint address
         symbol: Token symbol
@@ -77,7 +77,7 @@ def add_to_purchase_history(
         platform: Platform where token was bought
         price: Entry price
         amount: Amount of tokens bought
-        
+
     Returns:
         True if added successfully, False otherwise.
     """

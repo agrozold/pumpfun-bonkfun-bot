@@ -614,12 +614,12 @@ class PlatformAwareSeller(Trader):
         token_price: float,
     ) -> TradeResult:
         """Try to sell via PumpSwap or Jupiter when bonding curve unavailable.
-        
+
         Args:
             token_info: Token information
             token_amount: Amount of tokens to sell
             token_price: Price per token in SOL
-            
+
         Returns:
             TradeResult with success/failure status
         """

@@ -71,11 +71,11 @@ class JSONFormatter(logging.Formatter):
 
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """Get or create a logger with the given name.
-    
+
     Args:
         name: Logger name, typically __name__
         level: Logging level
-        
+
     Returns:
         Configured logger
     """
@@ -97,7 +97,7 @@ def setup_file_logging(
     use_rotation: bool = True
 ) -> None:
     """Set up file logging with optional rotation.
-    
+
     Args:
         filename: Log file path
         level: Logging level for file handler
@@ -141,7 +141,7 @@ def setup_file_logging(
 
 def setup_console_logging(level: int = logging.INFO) -> None:
     """Set up console logging with colored output indicator.
-    
+
     Args:
         level: Logging level for console
     """
@@ -161,10 +161,10 @@ def setup_console_logging(level: int = logging.INFO) -> None:
 
 def setup_json_logging(filename: str = "critical_events.jsonl") -> logging.Logger:
     """Set up JSON logging for critical trading events.
-    
+
     Args:
         filename: JSON log file path
-        
+
     Returns:
         Logger configured for JSON output
     """
@@ -206,7 +206,7 @@ def log_trade_event(
     extra: Optional[Dict[str, Any]] = None
 ) -> None:
     """Log a structured trading event to JSON log.
-    
+
     Args:
         event_type: Type of event (BUY, SELL, DETECTED, ERROR, etc.)
         token_mint: Token mint address
@@ -250,7 +250,7 @@ def log_critical_error(
     extra: Optional[Dict[str, Any]] = None
 ) -> None:
     """Log a critical error that may need immediate attention.
-    
+
     Args:
         error_code: Error code for categorization (RPC_FAIL, TX_FAIL, etc.)
         message: Error message
@@ -291,10 +291,10 @@ def log_critical_error(
 
 def cleanup_old_logs(days: int = 7) -> int:
     """Remove log files older than specified days.
-    
+
     Args:
         days: Number of days to keep logs
-        
+
     Returns:
         Number of files deleted
     """
@@ -319,7 +319,7 @@ def cleanup_old_logs(days: int = 7) -> int:
 
 def get_log_stats() -> Dict[str, Any]:
     """Get statistics about current log files.
-    
+
     Returns:
         Dictionary with log statistics
     """

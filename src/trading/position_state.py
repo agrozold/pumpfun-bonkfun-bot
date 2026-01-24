@@ -78,7 +78,7 @@ class StateTransition:
 class StateMachine:
     """
     State Machine для управления состоянием позиции.
-    
+
     Использование:
         sm = StateMachine(initial_state=PositionState.PENDING_BUY)
         sm.transition_to(PositionState.OPENING, reason="buy confirmed")
@@ -110,13 +110,13 @@ class StateMachine:
     ) -> None:
         """
         Выполнить переход в новое состояние.
-        
+
         Args:
             new_state: Целевое состояние
             reason: Причина перехода
             trace_id: ID трейса
             force: Принудительный переход (без валидации)
-            
+
         Raises:
             InvalidStateTransitionError: При недопустимом переходе
         """

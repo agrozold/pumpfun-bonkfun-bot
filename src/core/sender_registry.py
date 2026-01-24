@@ -24,12 +24,12 @@ class SendStrategy(Enum):
 class SenderRegistry:
     """
     Реестр провайдеров отправки.
-    
+
     Использование:
         registry = SenderRegistry()
         registry.register(HeliusSender(...))
         registry.register(JitoSender(...))
-        
+
         result = await registry.send(tx_bytes, strategy=SendStrategy.RACE)
     """
 

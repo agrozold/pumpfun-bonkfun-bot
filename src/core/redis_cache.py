@@ -83,7 +83,7 @@ def cache_keys(pattern: str) -> list[str]:
         return []
     try:
         return r.keys(pattern)
-    except:
+    except Exception:
         return []
 
 

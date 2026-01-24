@@ -6,7 +6,7 @@ update loop. Critical for sniper bots where every millisecond counts.
 
 Usage:
     from core.blockhash_cache import get_blockhash_cache
-    
+
     cache = await get_blockhash_cache()
     blockhash = await cache.get_blockhash()  # Returns cached or fresh
 """
@@ -44,7 +44,7 @@ class CachedBlockhash:
 class BlockhashCache:
     """
     High-performance blockhash cache with background updates.
-    
+
     Features:
     - Background update every 1-2 seconds
     - Automatic fallback to fresh fetch if cache is stale
@@ -164,10 +164,10 @@ class BlockhashCache:
     async def get_blockhash(self, max_age: float = None) -> Hash:
         """
         Get blockhash - from cache if fresh, otherwise fetch new one.
-        
+
         Args:
             max_age: Maximum acceptable cache age in seconds (default: MAX_CACHE_AGE)
-            
+
         Returns:
             Valid blockhash Hash object
         """

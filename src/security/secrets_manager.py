@@ -104,18 +104,18 @@ class VaultSecretsProvider:
             return False
         try:
             return self._client.is_authenticated()
-        except:
+        except Exception:
             return False
 
 
 class SecretsManager:
     """
     Менеджер секретов с поддержкой нескольких провайдеров.
-    
+
     Использование:
         manager = SecretsManager()
         manager.add_provider(EnvSecretsProvider())
-        
+
         private_key = manager.get_secret('SOLANA_PRIVATE_KEY')
         keypair = manager.get_keypair('SOLANA_PRIVATE_KEY')
     """
@@ -175,7 +175,7 @@ class SecretsManager:
 def create_secrets_manager(config: dict = None) -> SecretsManager:
     """
     Фабрика для создания SecretsManager из конфига.
-    
+
     config example:
     {
         'secrets_provider': 'env',  # или 'file', 'vault'

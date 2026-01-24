@@ -55,7 +55,7 @@ class SafeFileWriter:
         for old in backups[self.backup_count:]:
             try:
                 old.unlink()
-            except:
+            except Exception:
                 pass
 
     def write_json(self, filepath, data, indent=2, ensure_ascii=False):
@@ -79,7 +79,7 @@ class SafeFileWriter:
             logger.error(f"Write error: {e}")
             try:
                 os.unlink(temp_path)
-            except:
+            except Exception:
                 pass
             return False
 
@@ -116,7 +116,7 @@ class SafeFileWriter:
                     data = json.load(f)
                 self.write_json(filepath, data)
                 return data
-            except:
+            except Exception:
                 continue
         return None
 
@@ -143,9 +143,9 @@ def safe_open_write(filepath, mode='w'):
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp_path, filepath)
-    except:
+    except Exception:
         try:
             os.unlink(temp_path)
-        except:
+        except Exception:
             pass
         raise

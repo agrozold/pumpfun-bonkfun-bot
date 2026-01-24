@@ -37,7 +37,7 @@ class BagsPumpPortalProcessor:
 
         Returns:
             True if this processor can handle the token data
-            
+
         Note:
             PumpPortal does NOT currently support bags.fm tokens directly.
             bags.fm tokens should be detected via logsSubscribe on Meteora DBC program.

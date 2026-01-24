@@ -208,14 +208,14 @@ async def get_dynamic_fee_standalone(
 ) -> int:
     """
     Standalone function to get dynamic priority fee.
-    
+
     For use in buy.py/sell.py without full PriorityFeeManager.
-    
+
     Args:
         rpc_endpoint: Solana RPC endpoint URL.
         strategy: Fee strategy - "conservative", "aggressive", or "sniper".
         accounts: Optional list of account addresses (strings).
-    
+
     Returns:
         int: Priority fee in microlamports.
     """

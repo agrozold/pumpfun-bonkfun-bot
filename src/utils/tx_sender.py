@@ -30,7 +30,7 @@ async def send_transaction_with_jito(
 ) -> tuple[bool, str | None]:
     """
     Send transaction with JITO support and automatic fallback.
-    
+
     Args:
         client: AsyncClient for fallback RPC
         tx: Transaction or VersionedTransaction to send
@@ -38,7 +38,7 @@ async def send_transaction_with_jito(
         max_retries: Number of retry attempts
         confirm: Whether to wait for confirmation
         confirm_timeout: Confirmation timeout in seconds
-        
+
     Returns:
         Tuple of (success: bool, signature: str | None)
     """

@@ -56,3 +56,7 @@ htmlcov/
 .env
 .env.local
 .env.*.local
+test_dev_reputation.py
+test_dynamic_rpc.py
+test_full_setup.py
+test_stop_loss.py

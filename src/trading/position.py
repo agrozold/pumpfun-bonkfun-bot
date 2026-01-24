@@ -212,7 +212,7 @@ class Position:
         """
         Update position with new price - handles TSL logic.
         Call this BEFORE should_exit() for TSL to work correctly.
-        
+
         Args:
             current_price: Current token price
         """
@@ -245,7 +245,7 @@ class Position:
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
-        
+
         IMPORTANT: Call update_price() before this for TSL to work!
 
         Args:
@@ -353,7 +353,7 @@ class Position:
 
 def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -> None:
     """Save active positions to file.
-    
+
     Args:
         positions: List of positions to save
         filepath: Path to save file
@@ -386,10 +386,10 @@ def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -
 
 def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
     """Load positions from file.
-    
+
     Args:
         filepath: Path to positions file
-        
+
     Returns:
         List of Position objects
     """
@@ -411,7 +411,7 @@ def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
 
 def remove_position(mint: str, filepath: Path = POSITIONS_FILE) -> None:
     """Remove a position from the saved file.
-    
+
     Args:
         mint: Mint address of position to remove
         filepath: Path to positions file

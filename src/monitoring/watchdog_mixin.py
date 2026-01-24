@@ -13,7 +13,7 @@ from abc import abstractmethod
 class WatchdogMixin:
     """
     Mixin для добавления watchdog функциональности к listeners.
-    
+
     Требует от класса:
     - метод _reconnect() -> None
     - атрибут logger: logging.Logger

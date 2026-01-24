@@ -373,14 +373,14 @@ class BagsCurveManager(CurveManager):
 
     async def is_pool_migrated(self, pool_address: Pubkey) -> bool:
         """Check if pool has migrated to DAMM v2.
-        
+
         Status values:
         - 0: Active (trading on DBC)
         - 1+: Migrated or closed
-        
+
         Args:
             pool_address: Address of the VirtualPool
-            
+
         Returns:
             True if pool has migrated
         """
@@ -393,10 +393,10 @@ class BagsCurveManager(CurveManager):
 
     async def get_migration_threshold(self, pool_address: Pubkey) -> int:
         """Get the migration threshold for a pool.
-        
+
         Args:
             pool_address: Address of the VirtualPool
-            
+
         Returns:
             Migration threshold in quote token units (lamports)
         """

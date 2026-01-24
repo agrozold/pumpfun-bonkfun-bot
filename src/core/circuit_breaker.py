@@ -48,14 +48,14 @@ class CircuitBreakerStats:
 class CircuitBreaker:
     """
     Circuit Breaker pattern implementation.
-    
+
     Использование:
         cb = CircuitBreaker("rpc_client")
-        
+
         @cb.protect
         async def call_rpc():
             ...
-        
+
         # или
         result = await cb.call(call_rpc)
     """
@@ -220,7 +220,7 @@ async def retry_with_backoff(
 ) -> T:
     """
     Выполнить функцию с retry и exponential backoff.
-    
+
     Использование:
         result = await retry_with_backoff(
             call_api,
@@ -271,12 +271,12 @@ def with_retry(config: RetryConfig = None):
 class ServiceHealthChecker:
     """
     Проверка здоровья сервисов.
-    
+
     Использование:
         checker = ServiceHealthChecker()
         checker.register("rpc", check_rpc_health)
         checker.register("redis", check_redis_health)
-        
+
         status = await checker.check_all()
     """
 

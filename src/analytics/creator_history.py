@@ -199,12 +199,12 @@ class CreatorHistoryTracker:
     ) -> dict[str, Any]:
         """
         Get comprehensive creator statistics.
-        
+
         Returns:
             Dict with:
             - total_tokens_found: int
             - recent_tokens_7d: int
-            - recent_tokens_24h: int  
+            - recent_tokens_24h: int
             - reputation_score: int (0-100)
             - risk_level: str ("low"/"medium"/"high"/"critical")
             - tokens: list of found tokens
@@ -299,13 +299,13 @@ class CreatorHistoryTracker:
     ) -> tuple[bool, dict]:
         """
         Check if creator is safe to buy from.
-        
+
         Args:
             creator_wallet: Creator's wallet address
             max_total_tokens: Max allowed tokens created ever
             max_tokens_24h: Max tokens in last 24h
             min_score: Minimum reputation score required
-            
+
         Returns:
             Tuple of (is_safe, stats)
         """

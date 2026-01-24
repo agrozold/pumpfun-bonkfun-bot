@@ -166,7 +166,7 @@ class DevReputationChecker:
                 self._cache_hits += 1
                 return {"is_safe": bool(row["is_safe"]), "risk_score": row["risk_score"],
                         "tokens_created": row["tokens_created"], "reason": row["reason"] or "cache"}
-        except:
+        except Exception:
             pass
         return None
 
@@ -179,7 +179,7 @@ class DevReputationChecker:
                  result.get("tokens_created", 0), result.get("reason", ""), time.time()))
             conn.commit()
             conn.close()
-        except:
+        except Exception:
             pass
 
     async def check_dev(self, creator_address: str) -> dict:
@@ -321,7 +321,7 @@ class DevReputationChecker:
     async def _get_tx_pump_tokens(self, signature: str) -> list[str]:
         """
         Extract pump.fun token mints from transaction.
-        
+
         v4: Check token addresses ending with 'pump' suffix
         (pump.fun token addresses end with 'pump')
         """
@@ -388,7 +388,7 @@ class DevReputationChecker:
                 if pair.get("pairCreatedAt"):
                     try:
                         created = datetime.fromtimestamp(pair["pairCreatedAt"] / 1000)
-                    except:
+                    except Exception:
                         pass
 
                 lifetime = (datetime.now() - created).total_seconds() / 3600
@@ -503,7 +503,7 @@ class DevReputationChecker:
                     last_analyzed=datetime.fromtimestamp(row["last_analyzed"]), tokens=tokens
                 )
             conn.close()
-        except:
+        except Exception:
             pass
         return None
 
@@ -523,7 +523,7 @@ class DevReputationChecker:
                     total_volume_usd=row["total_volume_usd"] or 0, lifetime_hours=row["lifetime_hours"] or 0,
                     final_status=row["final_status"] or "?", creator_sold_pct=row["creator_sold_pct"] or 0
                 )
-        except:
+        except Exception:
             pass
         return None
 
@@ -531,7 +531,7 @@ class DevReputationChecker:
         try:
             conn = sqlite3.connect(str(DB_FILE), timeout=5.0)
             c = conn.cursor()
-            c.execute('''INSERT OR REPLACE INTO creator_tokens 
+            c.execute('''INSERT OR REPLACE INTO creator_tokens
                 (creator_wallet,mint,symbol,name,created_at,reached_raydium,max_market_cap_usd,
                  total_volume_usd,lifetime_hours,final_status,creator_sold_pct,last_updated)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
@@ -540,7 +540,7 @@ class DevReputationChecker:
                  t.lifetime_hours, t.final_status, t.creator_sold_pct, time.time()))
             conn.commit()
             conn.close()
-        except:
+        except Exception:
             pass
 
     def _save_reputation(self, r: CreatorReputation):
@@ -554,7 +554,7 @@ class DevReputationChecker:
             conn.commit()
             conn.close()
             logger.info(f"[DEV] Saved: {r.wallet[:8]} score={r.reputation_score} tokens={r.total_tokens_created}")
-        except:
+        except Exception:
             pass
 
     def get_stats(self) -> dict:

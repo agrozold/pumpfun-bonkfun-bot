@@ -526,7 +526,7 @@ class UniversalTrader:
         self, mint: str, symbol: str, patterns: list, strength: float
     ):
         """Callback when pump pattern is detected - trigger buy if in pattern_only_mode.
-        
+
         CRITICAL: This now performs MANDATORY scoring check before buying!
         """
         logger.warning(
@@ -623,15 +623,15 @@ class UniversalTrader:
 
     def _detect_token_platform(self, token: TrendingToken) -> Platform | None:
         """Detect platform from token mint address or dex_id.
-        
+
         Platform detection rules:
         - Mint ending with 'pump' -> pump_fun
-        - Mint ending with 'bonk' -> lets_bonk  
+        - Mint ending with 'bonk' -> lets_bonk
         - Mint ending with 'bags' -> bags
         - dex_id 'pumpfun' or 'pump.fun' -> pump_fun
         - dex_id 'letsbonk' or 'bonk.fun' -> lets_bonk
         - dex_id 'bags' -> bags
-        
+
         Returns None if platform cannot be determined.
         """
         mint_str = token.mint.lower()
@@ -658,20 +658,20 @@ class UniversalTrader:
 
     async def _on_whale_buy(self, whale_buy: WhaleBuy):
         """Callback when whale buys a token - copy the trade on ANY available DEX.
-        
+
         UNIVERSAL WHALE COPY: Покупаем токен там где есть ликвидность!
         Порядок попыток:
         1. Pump.Fun bonding curve (если не мигрировал)
         2. PumpSwap (для мигрированных токенов)
         3. Jupiter (универсальный fallback)
-        
+
         RETRY LOGIC: Для свежих токенов (< 10 секунд) делаем до 3 попыток
         с задержкой 2 секунды между ними, т.к. RPC может не успеть
         проиндексировать bonding curve.
-        
+
         SCORING CHECK: Whale copy теперь проверяет scoring если включен!
         Это предотвращает покупку мусорных токенов даже если кит их купил.
-        
+
         ANTI-DUPLICATE: Uses unified _buy_lock and _buying_tokens/_bought_tokens
         to prevent ANY duplicate purchases across ALL buy paths.
         """
@@ -917,10 +917,10 @@ class UniversalTrader:
         dex_used: str
     ) -> None:
         """Monitor whale copy position for TP/SL exit.
-        
+
         This is a wrapper around _monitor_position_until_exit that handles
         whale-specific monitoring with Jupiter fallback for selling.
-        
+
         Args:
             token_info: Token information
             position: Position to monitor
@@ -971,18 +971,18 @@ class UniversalTrader:
         sol_amount: float,
     ) -> tuple[bool, str | None, str, float, float]:
         """Buy token on ANY available DEX - universal liquidity finder.
-        
+
         Порядок попыток:
         1. Pump.Fun bonding curve (если бот на pump_fun)
         2. LetsBonk bonding curve (если бот на lets_bonk)
         3. PumpSwap (для мигрированных pump.fun токенов)
         4. Jupiter (универсальный aggregator - найдет любую ликвидность)
-        
+
         Args:
             mint_str: Token mint address as string
             symbol: Token symbol for logging
             sol_amount: Amount of SOL to spend
-            
+
         Returns:
             Tuple of (success, tx_signature, dex_used, token_amount, price)
         """
@@ -1188,13 +1188,13 @@ class UniversalTrader:
         pool_state: dict,
     ) -> "TokenInfo | None":
         """Create TokenInfo for pump.fun from mint address (for universal buy).
-        
+
         Args:
             mint_str: Token mint address as string
             symbol: Token symbol
             bonding_curve: Derived bonding curve address
             pool_state: Pool state from curve manager
-            
+
         Returns:
             TokenInfo or None if creation fails
         """
@@ -1257,13 +1257,13 @@ class UniversalTrader:
         pool_state: dict,
     ) -> "TokenInfo | None":
         """Create TokenInfo for LetsBonk from mint address (for universal buy).
-        
+
         Args:
             mint_str: Token mint address as string
             symbol: Token symbol
             pool_address: Derived pool address
             pool_state: Pool state from curve manager
-            
+
         Returns:
             TokenInfo or None if creation fails
         """
@@ -1332,13 +1332,13 @@ class UniversalTrader:
         pool_state: dict,
     ) -> "TokenInfo | None":
         """Create TokenInfo for BAGS from mint address (for universal buy).
-        
+
         Args:
             mint_str: Token mint address as string
             symbol: Token symbol
             pool_address: Derived pool address
             pool_state: Pool state from curve manager
-            
+
         Returns:
             TokenInfo or None if creation fails
         """
@@ -1394,10 +1394,10 @@ class UniversalTrader:
 
     def _extract_creator(self, pool_state: dict) -> Pubkey | None:
         """Extract creator pubkey from pool state.
-        
+
         Args:
             pool_state: Pool state dictionary
-            
+
         Returns:
             Creator Pubkey or None
         """
@@ -1413,11 +1413,11 @@ class UniversalTrader:
 
     async def _check_dev_reputation(self, creator: Pubkey | None, symbol: str) -> bool:
         """Check if creator passes dev reputation check.
-        
+
         Args:
             creator: Creator pubkey
             symbol: Token symbol for logging
-            
+
         Returns:
             True if safe to trade, False if should skip
         """
@@ -1517,10 +1517,10 @@ class UniversalTrader:
 
     async def _on_trending_token(self, token: TrendingToken):
         """Callback when trending scanner finds a hot token.
-        
+
         Supports all platforms: pump_fun, lets_bonk, bags.
         For existing/migrated tokens, uses Jupiter/PumpSwap for trading.
-        
+
         ANTI-DUPLICATE: Uses unified _buy_lock and _buying_tokens/_bought_tokens
         to prevent ANY duplicate purchases across ALL buy paths.
         """
@@ -2017,7 +2017,7 @@ class UniversalTrader:
 
     async def _queue_token(self, token_info: TokenInfo) -> None:
         """Queue a token for processing if not already processed.
-        
+
         ANTI-DUPLICATE: Also checks _bought_tokens and _buying_tokens
         to prevent queueing tokens that are already being bought via
         whale copy or trending scanner.
@@ -2137,7 +2137,7 @@ class UniversalTrader:
 
     async def _handle_token(self, token_info: TokenInfo, skip_checks: bool = False) -> bool:
         """Handle a new token creation event.
-        
+
         Args:
             token_info: Token information
             skip_checks: If True, skip scoring and dev checks (used for whale copy trades)
@@ -2346,10 +2346,10 @@ class UniversalTrader:
 
     async def _check_balance_before_buy(self) -> bool:
         """Check if wallet has enough SOL to continue trading.
-        
+
         Returns:
             True if balance is sufficient, False if bot should stop buying.
-            
+
         CRITICAL STOP: If balance <= 0.02 SOL, sets self._critical_low_balance = True
         which signals the bot to stop completely (not just skip buys).
         """
@@ -2569,17 +2569,17 @@ class UniversalTrader:
         self, token_info: TokenInfo, position: Position
     ) -> None:
         """Monitor a position until exit conditions are met.
-        
+
         UNIFIED STOP-LOSS for all platforms (PUMP, BONK, BAGS):
         1. Get price from platform-specific curve_manager
         2. Check TP/SL conditions
         3. If price unavailable (migrated) - fallback to Jupiter/PumpSwap
-        
-        AGGRESSIVE STOP-LOSS: 
+
+        AGGRESSIVE STOP-LOSS:
         - Reduced MAX_PRICE_ERRORS from 5 to 2 for faster fallback
         - Emergency sell if price drops > 50% regardless of SL setting
         - Log every price check when loss > 20%
-        
+
         If price cannot be fetched (e.g., token migrated), will attempt
         fallback sell via PumpSwap/Jupiter after MAX_PRICE_ERRORS consecutive failures.
         """
@@ -2920,16 +2920,16 @@ class UniversalTrader:
 
     async def _check_if_migrated(self, token_info: TokenInfo, error_msg: str) -> bool:
         """Check if token has migrated based on platform and error message.
-        
+
         UNIFIED migration check for all platforms:
         - PUMP_FUN: bonding curve complete=True or account not found
-        - LETS_BONK: status != 0 or account not found  
+        - LETS_BONK: status != 0 or account not found
         - BAGS: status != 0 or account not found
-        
+
         Args:
             token_info: Token information
             error_msg: Error message from price fetch
-            
+
         Returns:
             True if token appears to be migrated
         """
@@ -2978,12 +2978,12 @@ class UniversalTrader:
         self, token_info: TokenInfo, position: Position, last_price: float
     ) -> bool:
         """Emergency sell via PumpSwap/Jupiter when bonding curve unavailable.
-        
+
         Args:
             token_info: Token information
             position: Active position to close
             last_price: Last known price for logging
-            
+
         Returns:
             True if sell was successful, False otherwise
         """
@@ -3102,7 +3102,7 @@ class UniversalTrader:
         extra: str | None = None,
     ) -> None:
         """Log trade information.
-        
+
         Args:
             action: Trade action (buy/sell)
             token_info: Token information (can be None for universal buys)

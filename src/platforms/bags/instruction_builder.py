@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 class BagsInstructionBuilder(InstructionBuilder):
     """BAGS implementation of InstructionBuilder interface using Meteora DBC swap.
-    
+
     Meteora DBC uses a single 'swap' instruction for both buy and sell operations.
     The direction is determined by which token accounts are source vs destination.
     """
@@ -61,10 +61,10 @@ class BagsInstructionBuilder(InstructionBuilder):
 
     def _compute_discriminator(self, instruction_name: str) -> bytes:
         """Compute instruction discriminator using Anchor convention.
-        
+
         Args:
             instruction_name: Name of the instruction
-            
+
         Returns:
             8-byte discriminator
         """
@@ -89,7 +89,7 @@ class BagsInstructionBuilder(InstructionBuilder):
         """Build buy instruction(s) for BAGS using Meteora DBC swap.
 
         For BUY: source = WSOL (quote), destination = base token
-        
+
         Args:
             token_info: Token information
             user: User's wallet address
@@ -225,7 +225,7 @@ class BagsInstructionBuilder(InstructionBuilder):
         """Build sell instruction(s) for BAGS using Meteora DBC swap.
 
         For SELL: source = base token, destination = WSOL (quote)
-        
+
         Args:
             token_info: Token information
             user: User's wallet address

@@ -97,7 +97,7 @@ class Event:
 class EventStore:
     """
     Хранилище событий с JSONL persistence.
-    
+
     Использование:
         store = EventStore('data/events')
         await store.append(event)
