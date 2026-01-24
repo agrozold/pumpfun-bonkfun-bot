@@ -5,35 +5,39 @@ source venv/bin/activate
 
 echo "=== Smoke Test $(date) ==="
 
-echo "1. Core imports (Waves 1-2)..."
+echo "1. Analytics imports (Wave 1)..."
 python -c "
 from src.analytics.trace_context import TraceContext, get_trace_id
 from src.analytics.trace_recorder import TraceRecorder
 from src.analytics.metrics_server import MetricsServer
+print('   ✓ Analytics OK')
+"
+
+echo "2. Security imports (Wave 1)..."
+python -c "
 from src.security.file_guard import FileGuard
 from src.security.secrets_manager import SecretsManager
-from src.core.sender import SendResult, SendStatus
-from src.core.sender_registry import SenderRegistry
-print('   ✓ Waves 1-2 imports OK')
+print('   ✓ Security OK')
 "
 
-echo "2. Wave 3 imports (Event Sourcing)..."
+echo "3. Core imports (Wave 2)..."
+python -c "
+from src.core.sender import SendResult, SendStatus
+from src.core.sender_registry import SenderRegistry, SendStrategy
+from src.core.circuit_breaker import CircuitBreaker, CircuitState, retry_with_backoff, RetryConfig
+print('   ✓ Core OK')
+"
+
+echo "4. Trading imports (Waves 3-4)..."
 python -c "
 from src.trading.position_state import PositionState, StateMachine
-from src.trading.position_redis import PositionRedisSync
 from src.trading.event_store import EventStore, EventType, Event
-print('   ✓ Wave 3 imports OK')
-"
-
-echo "3. Wave 4 imports (Limits & Resilience)..."
-python -c "
-from src.trading.dynamic_decimals import DecimalsResolver, get_token_decimals
+from src.trading.dynamic_decimals import DecimalsResolver, TokenInfo
 from src.trading.trading_limits import TradingLimits, LimitsTracker, AutoSweepConfig
-from src.core.circuit_breaker import CircuitBreaker, retry_with_backoff, RetryConfig
-print('   ✓ Wave 4 imports OK')
+print('   ✓ Trading OK')
 "
 
-echo "4. TraceContext lifecycle..."
+echo "5. TraceContext lifecycle..."
 python -c "
 from src.analytics.trace_context import TraceContext
 ctx = TraceContext.start('buy', 'TestMint', 'test')
@@ -43,10 +47,10 @@ ctx.mark_sent(provider='test')
 ctx.mark_finalized(success=True)
 assert ctx.total_latency_ms > 0
 ctx.finish()
-print('   ✓ TraceContext OK')
+print('   ✓ TraceContext lifecycle OK')
 "
 
-echo "5. Event Store..."
+echo "6. Event Store..."
 python -c "
 from src.trading.event_store import Event, EventType
 event = Event.create(EventType.BUY_INITIATED, 'pos1', 'mint1', amount=0.05)
@@ -57,16 +61,16 @@ assert restored.event_type == EventType.BUY_INITIATED
 print('   ✓ Event Store OK')
 "
 
-echo "6. Trading Limits..."
+echo "7. Trading Limits..."
 python -c "
 from decimal import Decimal
-from src.trading.trading_limits import TradingLimits, LimitsTracker
+from src.trading.trading_limits import TradingLimits
 limits = TradingLimits(max_buy_amount_sol=Decimal('0.1'))
 assert limits.max_buy_amount_sol == Decimal('0.1')
 print('   ✓ Trading Limits OK')
 "
 
-echo "7. Circuit Breaker..."
+echo "8. Circuit Breaker..."
 python -c "
 from src.core.circuit_breaker import CircuitBreaker, CircuitState
 cb = CircuitBreaker('test')
@@ -74,7 +78,17 @@ assert cb.state == CircuitState.CLOSED
 print('   ✓ Circuit Breaker OK')
 "
 
-echo "8. Bot configs..."
+echo "9. Dynamic Decimals..."
+python -c "
+from src.trading.dynamic_decimals import TokenInfo, KNOWN_DECIMALS
+from decimal import Decimal
+ti = TokenInfo(mint='test', decimals=6)
+assert ti.decimal_factor == 1000000
+assert ti.to_ui_amount(1000000) == Decimal('1')
+print('   ✓ Dynamic Decimals OK')
+"
+
+echo "10. Bot configs..."
 for cfg in bots/*.yaml; do
     python -c "import yaml; yaml.safe_load(open('$cfg'))" && echo "   ✓ $cfg"
 done
