@@ -75,7 +75,7 @@ class FallbackSeller:
         self.alt_rpc_endpoint = alt_rpc_endpoint
         self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_API_KEY")
         self._alt_client = None
-    
+
     async def _get_rpc_client(self):
         """Get RPC client, preferring alternative endpoint if available.
         
@@ -85,7 +85,7 @@ class FallbackSeller:
         3. Main client (Helius) - last resort, may be rate limited
         """
         import os
-        
+
         # Try alternative RPC first (Alchemy) to avoid rate limits on main RPC
         alt_endpoint = self.alt_rpc_endpoint or os.getenv("HELIUS_RPC_ENDPOINT")
         if alt_endpoint:
@@ -94,7 +94,7 @@ class FallbackSeller:
                 self._alt_client = AsyncClient(alt_endpoint)
                 logger.info(f"[FALLBACK] Using Helius RPC (for get_program_accounts): {alt_endpoint[:40]}...")
             return self._alt_client
-        
+
         # Fallback to public Solana RPC (official, reliable)
         # This avoids consuming Helius quota for PumpSwap operations
         public_rpc = "https://api.mainnet-beta.solana.com"
@@ -128,20 +128,20 @@ class FallbackSeller:
             create_idempotent_associated_token_account,
             sync_native,
         )
-        
+
         logger.info(f"[PUMPSWAP] PumpSwap BUY starting for {symbol} ({mint})")
         logger.info(f"[PUMPSWAP] Amount: {sol_amount} SOL, market_address provided: {market_address is not None}")
-        
+
         try:
             rpc_client = await self._get_rpc_client()
-            
+
             # Use provided market or find it
             if market_address:
                 market = market_address
                 logger.info(f"[MARKET] Using provided PumpSwap market: {market}")
             else:
                 # Find market via get_program_accounts (expensive!)
-                logger.info(f"[MARKET] Looking up PumpSwap market via get_program_accounts...")
+                logger.info("[MARKET] Looking up PumpSwap market via get_program_accounts...")
                 filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
                 try:
                     response = await rpc_client.get_program_accounts(
@@ -150,16 +150,16 @@ class FallbackSeller:
                 except Exception as e:
                     logger.error(f"[MARKET] get_program_accounts failed: {e}")
                     return False, None, f"RPC error looking up market: {e}", 0.0, 0.0
-                
+
                 if not response.value:
                     logger.warning(f"[MARKET] No PumpSwap market found for {symbol}")
                     return False, None, f"PumpSwap market not found for {mint}", 0.0, 0.0
-                
+
                 market = response.value[0].pubkey
                 logger.info(f"[MARKET] Found PumpSwap market: {market}")
-            
+
             # Get market data
-            logger.info(f"[MARKET] Fetching market account data...")
+            logger.info("[MARKET] Fetching market account data...")
             market_response = None
             for retry in range(3):
                 try:
@@ -174,11 +174,11 @@ class FallbackSeller:
                         continue
                     logger.error(f"[MARKET] get_account_info failed for market {market}: {e}")
                     return False, None, f"Failed to fetch market data: {e}", 0.0, 0.0
-            
+
             if not market_response or not market_response.value:
                 logger.error(f"[MARKET] Market account {market} not found on chain")
                 return False, None, f"Market account {market} not found on chain", 0.0, 0.0
-            
+
             data = market_response.value.data
             # Handle both bytes and tuple (base64 encoded)
             if isinstance(data, tuple):
@@ -187,7 +187,7 @@ class FallbackSeller:
             elif isinstance(data, str):
                 import base64
                 data = base64.b64decode(data)
-            
+
             logger.info(f"[MARKET] Parsing market data ({len(data)} bytes)...")
             try:
                 market_data = self._parse_market_data(data)
@@ -195,7 +195,7 @@ class FallbackSeller:
             except Exception as e:
                 logger.error(f"[MARKET] Failed to parse market data: {e}")
                 return False, None, f"Failed to parse market data: {e}", 0.0, 0.0
-            
+
             try:
                 token_program_id = await self._get_token_program_id(mint)
                 logger.info(f"[TOKEN] Token program: {token_program_id}")
@@ -210,7 +210,7 @@ class FallbackSeller:
                 except Exception as e2:
                     logger.error(f"[TOKEN] Failed to get token program: {e2}")
                     return False, None, f"Failed to get token program: {e2}", 0.0, 0.0
-            
+
             # Get user token accounts
             user_base_ata = get_associated_token_address(
                 self.wallet.pubkey, mint, token_program_id
@@ -218,11 +218,11 @@ class FallbackSeller:
             user_quote_ata = get_associated_token_address(
                 self.wallet.pubkey, SOL_MINT, SYSTEM_TOKEN_PROGRAM
             )
-            
+
             # Get pool accounts
             pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
             pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
-            
+
             # Get pool balances - use batch call to save RPC requests
             import asyncio
             for balance_retry in range(3):
@@ -230,14 +230,14 @@ class FallbackSeller:
                     # Single batch call for both accounts - use rpc_client (alt RPC) not self.client!
                     response = await rpc_client.get_multiple_accounts([pool_base_ata, pool_quote_ata], encoding="base64")
                     accounts = response.value if response.value else []
-                    
+
                     if len(accounts) < 2 or not accounts[0] or not accounts[1]:
                         raise ValueError("Pool vault accounts not found")
-                    
+
                     # Parse token account data (offset 64 for amount in SPL token account)
                     base_data = accounts[0].data
                     quote_data = accounts[1].data
-                    
+
                     # Handle base64 encoded data
                     if isinstance(base_data, tuple):
                         import base64 as b64
@@ -245,17 +245,17 @@ class FallbackSeller:
                     if isinstance(quote_data, tuple):
                         import base64 as b64
                         quote_data = b64.b64decode(quote_data[0])
-                    
+
                     # Token account layout: amount is at offset 64, 8 bytes little-endian
                     base_amount_raw = struct.unpack("<Q", base_data[64:72])[0]
                     quote_amount_raw = struct.unpack("<Q", quote_data[64:72])[0]
-                    
+
                     base_amount = base_amount_raw / (10 ** TOKEN_DECIMALS)
                     quote_amount = quote_amount_raw / (10 ** 9)  # SOL has 9 decimals
-                    
+
                     if base_amount == 0:
                         raise ValueError("Pool has zero base tokens")
-                    
+
                     price = quote_amount / base_amount
                     logger.info(f"[POOL] Pool reserves: {base_amount:,.2f} tokens, {quote_amount:.4f} SOL")
                     logger.info(f"[POOL] Pool price: {price:.10f} SOL per token")
@@ -267,21 +267,21 @@ class FallbackSeller:
                     else:
                         logger.error(f"[POOL] Failed to get pool balances: {e}")
                         return False, None, f"Failed to get pool balances: {e}", 0.0, 0.0
-            
+
             # Calculate expected tokens
             expected_tokens = sol_amount / price
             min_tokens_output = int(expected_tokens * (1 - self.slippage) * 10**TOKEN_DECIMALS)
             buy_amount_lamports = int(sol_amount * LAMPORTS_PER_SOL)
-            
+
             logger.info(f"[BUY] PumpSwap BUY: {sol_amount} SOL ({buy_amount_lamports} lamports) -> ~{expected_tokens:,.2f} {symbol}")
             logger.info(f"[BUY] Min tokens out: {min_tokens_output} (with {self.slippage*100}% slippage)")
-            
+
             # Get fee recipients
             fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
             fee_recipient_ata = get_associated_token_address(
                 fee_recipient, SOL_MINT, SYSTEM_TOKEN_PROGRAM
             )
-            
+
             # Get creator vault
             coin_creator = Pubkey.from_string(market_data["coin_creator"])
             coin_creator_vault, _ = Pubkey.find_program_address(
@@ -290,12 +290,12 @@ class FallbackSeller:
             coin_creator_vault_ata = get_associated_token_address(
                 coin_creator_vault, SOL_MINT, SYSTEM_TOKEN_PROGRAM
             )
-            
+
             # Fee config PDA
             fee_config, _ = Pubkey.find_program_address(
                 [b"fee_config", bytes(PUMP_AMM_PROGRAM_ID)], PUMP_FEE_PROGRAM
             )
-            
+
             # Volume accumulator PDAs (required by IDL)
             global_volume_accumulator, _ = Pubkey.find_program_address(
                 [b"global_volume_accumulator"], PUMP_AMM_PROGRAM_ID
@@ -303,7 +303,7 @@ class FallbackSeller:
             user_volume_accumulator, _ = Pubkey.find_program_address(
                 [b"user_volume_accumulator", bytes(self.wallet.pubkey)], PUMP_AMM_PROGRAM_ID
             )
-            
+
             # Build accounts for BUY (SOL -> Token) - ORDER MUST MATCH IDL!
             accounts = [
                 AccountMeta(pubkey=market, is_signer=False, is_writable=True),  # 0: pool
@@ -330,27 +330,27 @@ class FallbackSeller:
                 AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),  # 21: fee_config
                 AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),  # 22: fee_program
             ]
-            
+
             # Log accounts list for debugging
             logger.info("=== PumpSwap BUY Accounts ===")
             for i, acc in enumerate(accounts):
                 logger.info(f"  #{i}: {acc.pubkey} (signer={acc.is_signer}, writable={acc.is_writable})")
             logger.info(f"  Quote token program (SOL): {SYSTEM_TOKEN_PROGRAM}")
             logger.info(f"  Base token program: {token_program_id}")
-            
+
             # Build instruction data: discriminator + spendable_quote_in + min_base_amount_out
             # Using buy_exact_quote_in: spend X SOL, get at least Y tokens
             ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output) + bytes([0])  # track_volume = false
-            
+
             # Instructions - use idempotent ATA creation like buy.py (always include, won't fail if exists)
             compute_limit_ix = set_compute_unit_limit(200_000)
             compute_price_ix = set_compute_unit_price(self.priority_fee)
-            
+
             # Create WSOL ATA (idempotent - won't fail if exists)
             create_wsol_ata_ix = create_idempotent_associated_token_account(
                 self.wallet.pubkey, self.wallet.pubkey, SOL_MINT, SYSTEM_TOKEN_PROGRAM
             )
-            
+
             # Wrap SOL (transfer + sync) - add 10% buffer for fees like buy.py
             wrap_amount = int(sol_amount * 1.1 * LAMPORTS_PER_SOL)
             transfer_ix = transfer(
@@ -360,18 +360,18 @@ class FallbackSeller:
                     lamports=wrap_amount,
                 )
             )
-            
+
             # Sync native (update wrapped SOL balance) - MUST use SYSTEM_TOKEN_PROGRAM
             sync_ix = sync_native(SyncNativeParams(SYSTEM_TOKEN_PROGRAM, user_quote_ata))
-            
+
             # Create token ATA (idempotent - won't fail if exists)
             create_token_ata_ix = create_idempotent_associated_token_account(
                 self.wallet.pubkey, self.wallet.pubkey, mint, token_program_id
             )
-            
+
             # Buy instruction
             buy_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
-            
+
             # Order matches buy.py: wsol_ata, transfer, sync, token_ata, buy
             instructions = [
                 compute_limit_ix,
@@ -382,31 +382,31 @@ class FallbackSeller:
                 create_token_ata_ix,
                 buy_ix,
             ]
-            
+
             logger.info(f"[TX] Total instructions: {len(instructions)} (using idempotent ATA creation)")
-            
+
             # Send transaction ONCE, then retry confirmation
             try:
                 blockhash = await self.client.get_cached_blockhash()
             except RuntimeError:
                 blockhash_resp = await rpc_client.get_latest_blockhash()
                 blockhash = blockhash_resp.value.blockhash
-            
+
             msg = Message.new_with_blockhash(
                 instructions,
                 self.wallet.pubkey,
                 blockhash,
             )
             tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
-            
-            logger.info(f"[TX] Sending PumpSwap BUY transaction...")
+
+            logger.info("[TX] Sending PumpSwap BUY transaction...")
             result = await rpc_client.send_transaction(
                 tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             )
             sig = str(result.value)
             logger.info(f"PumpSwap BUY signature: {sig}")
             logger.info(f"https://solscan.io/tx/{sig}")
-            
+
             # Quick status check - don't block too long on rate limits
             import asyncio
             for attempt in range(min(self.max_retries, 3)):  # Max 3 attempts for status
@@ -414,43 +414,43 @@ class FallbackSeller:
                     backoff = 2.0 * (attempt + 1)  # 2, 4, 6 seconds
                     logger.info(f"Checking tx status (attempt {attempt + 1}/3, wait {backoff}s)...")
                     await asyncio.sleep(backoff)
-                    
+
                     tx_response = await rpc_client.get_transaction(
                         Signature.from_string(sig),
                         encoding="json",
                         max_supported_transaction_version=0,
                     )
-                    
+
                     if tx_response.value is None:
-                        logger.warning(f"Transaction not found yet...")
+                        logger.warning("Transaction not found yet...")
                         continue
-                    
+
                     meta = tx_response.value.transaction.meta
                     if meta and meta.err is not None:
                         error_msg = f"Transaction FAILED on-chain: {meta.err}"
                         logger.error(f"FAILED: {error_msg}")
                         return False, sig, error_msg, 0.0, 0.0
-                    
+
                     logger.info(f"PumpSwap BUY SUCCESS! Got ~{expected_tokens:,.2f} {symbol}")
                     return True, sig, None, expected_tokens, price
-                    
+
                 except Exception as e:
                     error_str = str(e).lower()
                     # If rate limited, return signature - user can check on solscan
                     if "429" in error_str or "rate" in error_str or "too many" in error_str:
                         logger.warning(f"RPC rate limited - check tx on solscan: {sig}")
                         return True, sig, None, expected_tokens, price  # Return calculated amounts
-                    
+
                     error_msg = str(e) if str(e) else f"{type(e).__name__}"
                     logger.warning(f"Status check failed: {error_msg}")
                     if attempt == 2:  # Last attempt
                         logger.warning(f"Could not verify - check solscan: {sig}")
                         return True, sig, None, expected_tokens, price  # Return calculated amounts
-            
+
             # If we get here, tx was sent but status unknown
             logger.warning(f"Status unknown - check solscan: {sig}")
             return True, sig, None, expected_tokens, price  # Return calculated amounts
-            
+
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
             return False, None, str(e), 0.0, 0.0
@@ -472,13 +472,13 @@ class FallbackSeller:
             Tuple of (success, tx_signature, error_message)
         """
         import base64
-        
+
         try:
             logger.info(f"[JUPITER] Jupiter BUY for {symbol} with {sol_amount} SOL...")
-            
+
             buy_amount_lamports = int(sol_amount * LAMPORTS_PER_SOL)
             slippage_bps = int(self.slippage * 10000)
-            
+
             # Use Ultra API if key available, otherwise fallback to v6
             if self.jupiter_api_key:
                 jupiter_url = "https://api.jup.ag/ultra/v1/order"
@@ -489,10 +489,10 @@ class FallbackSeller:
                 jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
                 headers = {}
                 logger.info("[JUPITER] Using Jupiter Lite API (no Ultra key)")
-            
+
             async with aiohttp.ClientSession() as session:
                 rpc_client = await self._get_rpc_client()
-                
+
                 if self.jupiter_api_key:
                     # Jupiter Ultra API - single request for order
                     order_body = {
@@ -502,12 +502,12 @@ class FallbackSeller:
                         "taker": str(self.wallet.pubkey),
                         "slippageBps": slippage_bps,
                     }
-                    
+
                     for attempt in range(self.max_retries):
                         try:
                             async with session.post(
-                                jupiter_url, 
-                                json=order_body, 
+                                jupiter_url,
+                                json=order_body,
                                 headers=headers
                             ) as resp:
                                 if resp.status != 200:
@@ -515,40 +515,40 @@ class FallbackSeller:
                                     logger.warning(f"Jupiter Ultra order failed: {error_text}")
                                     continue
                                 order_data = await resp.json()
-                            
+
                             # Ultra returns transaction directly
                             tx_base64 = order_data.get("transaction")
                             if not tx_base64:
                                 logger.warning("No transaction in Jupiter Ultra response")
                                 continue
-                            
+
                             out_amount = int(order_data.get("outAmount", 0))
                             out_amount_tokens = out_amount / (10 ** TOKEN_DECIMALS)
                             logger.info(f"[JUPITER] Jupiter Ultra expected: ~{out_amount_tokens:,.2f} {symbol}")
-                            
+
                             tx_bytes = base64.b64decode(tx_base64)
                             tx = VersionedTransaction.from_bytes(tx_bytes)
                             signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
-                            
+
                             logger.info(f"[TX] Jupiter Ultra BUY attempt {attempt + 1}/{self.max_retries}...")
                             result = await rpc_client.send_transaction(
                                 signed_tx,
                                 opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
                             )
                             sig = str(result.value)
-                            
+
                             logger.info(f"[SIG] Jupiter Ultra BUY signature: {sig}")
                             logger.info(f"[OK] Jupiter Ultra BUY sent! Expected ~{out_amount_tokens:,.2f} {symbol}")
                             return True, sig, None
-                            
+
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
                             logger.warning(f"Jupiter Ultra BUY attempt {attempt + 1} failed: {error_msg}")
                             if attempt == self.max_retries - 1:
                                 return False, None, error_msg
-                    
+
                     return False, None, "All Jupiter Ultra BUY attempts failed"
-                
+
                 else:
                     # Fallback to v6 API
                     quote_params = {
@@ -557,24 +557,24 @@ class FallbackSeller:
                         "amount": str(buy_amount_lamports),
                         "slippageBps": slippage_bps,
                     }
-                    
+
                     async with session.get(jupiter_quote_url, params=quote_params) as resp:
                         if resp.status != 200:
                             error_text = await resp.text()
                             return False, None, f"Jupiter quote failed: {error_text}"
                         quote = await resp.json()
-                    
+
                     out_amount = int(quote.get("outAmount", 0))
                     out_amount_tokens = out_amount / (10 ** TOKEN_DECIMALS)
                     logger.info(f"[JUPITER] Jupiter expected: ~{out_amount_tokens:,.2f} {symbol}")
-                    
+
                     swap_body = {
                         "quoteResponse": quote,
                         "userPublicKey": str(self.wallet.pubkey),
                         "wrapAndUnwrapSol": True,
                         "prioritizationFeeLamports": self.priority_fee,
                     }
-                    
+
                     for attempt in range(self.max_retries):
                         try:
                             async with session.post(jupiter_swap_url, json=swap_body) as resp:
@@ -583,36 +583,36 @@ class FallbackSeller:
                                     logger.warning(f"Jupiter swap request failed: {error_text}")
                                     continue
                                 swap_data = await resp.json()
-                            
+
                             swap_tx_base64 = swap_data.get("swapTransaction")
                             if not swap_tx_base64:
                                 return False, None, "No swap transaction in Jupiter response"
-                            
+
                             tx_bytes = base64.b64decode(swap_tx_base64)
                             tx = VersionedTransaction.from_bytes(tx_bytes)
                             signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
-                            
+
                             logger.info(f"[TX] Jupiter BUY attempt {attempt + 1}/{self.max_retries}...")
                             result = await rpc_client.send_transaction(
                                 signed_tx,
                                 opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
                             )
                             sig = str(result.value)
-                            
+
                             logger.info(f"[SIG] Jupiter BUY signature: {sig}")
-                            
+
                             await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                             logger.info(f"[OK] Jupiter BUY confirmed! Got ~{out_amount_tokens:,.2f} {symbol}")
                             return True, sig, None
-                            
+
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
                             logger.warning(f"Jupiter BUY attempt {attempt + 1} failed: {error_msg}")
                             if attempt == self.max_retries - 1:
                                 return False, None, error_msg
-                    
+
                     return False, None, "All Jupiter BUY attempts failed"
-                
+
         except Exception as e:
             return False, None, str(e)
 
@@ -672,26 +672,26 @@ class FallbackSeller:
         """Sell via PumpSwap AMM."""
         try:
             rpc_client = await self._get_rpc_client()
-            
+
             # Find market
             filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
             response = await rpc_client.get_program_accounts(
                 PUMP_AMM_PROGRAM_ID, encoding="base64", filters=filters
             )
-            
+
             if not response.value:
                 return False, None, "PumpSwap market not found"
-            
+
             market = response.value[0].pubkey
             logger.info(f"[MARKET] Found PumpSwap market: {market}")
-            
+
             # Get market data
             market_response = await rpc_client.get_account_info(market, encoding="base64")
             data = market_response.value.data
             market_data = self._parse_market_data(data)
-            
+
             token_program_id = await self._get_token_program_id(mint)
-            
+
             # Get user token accounts
             user_base_ata = get_associated_token_address(
                 self.wallet.pubkey, mint, token_program_id
@@ -699,50 +699,50 @@ class FallbackSeller:
             user_quote_ata = get_associated_token_address(
                 self.wallet.pubkey, SOL_MINT, SYSTEM_TOKEN_PROGRAM
             )
-            
+
             # Calculate sell amount
             sell_amount = int(token_amount * 10**TOKEN_DECIMALS)
-            
+
             # Get pool accounts
             pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
             pool_quote_ata = Pubkey.from_string(market_data["pool_quote_token_account"])
-            
+
             # Get pool balances - use batch call to save RPC requests (use rpc_client not self.client!)
             response = await rpc_client.get_multiple_accounts([pool_base_ata, pool_quote_ata], encoding="base64")
             accounts = response.value if response.value else []
-            
+
             if len(accounts) < 2 or not accounts[0] or not accounts[1]:
                 return False, None, "Pool vault accounts not found"
-            
+
             # Parse token account data
             base_data = accounts[0].data
             quote_data = accounts[1].data
-            
+
             if isinstance(base_data, tuple):
                 import base64 as b64
                 base_data = b64.b64decode(base_data[0])
             if isinstance(quote_data, tuple):
                 import base64 as b64
                 quote_data = b64.b64decode(quote_data[0])
-            
+
             base_amount_raw = struct.unpack("<Q", base_data[64:72])[0]
             quote_amount_raw = struct.unpack("<Q", quote_data[64:72])[0]
-            
+
             base_amount = base_amount_raw / (10 ** TOKEN_DECIMALS)
             quote_amount = quote_amount_raw / (10 ** 9)
             price = quote_amount / base_amount
-            
+
             sol_value = token_amount * price
             min_sol_output = int(sol_value * (1 - self.slippage) * LAMPORTS_PER_SOL)
-            
+
             logger.info(f"[SELL] PumpSwap price: {price:.10f} SOL, expected: ~{sol_value:.6f} SOL")
-            
+
             # Get fee recipients
             fee_recipient = STANDARD_PUMPSWAP_FEE_RECIPIENT
             fee_recipient_ata = get_associated_token_address(
                 fee_recipient, SOL_MINT, SYSTEM_TOKEN_PROGRAM
             )
-            
+
             # Get creator vault
             coin_creator = Pubkey.from_string(market_data["coin_creator"])
             coin_creator_vault, _ = Pubkey.find_program_address(
@@ -751,12 +751,12 @@ class FallbackSeller:
             coin_creator_vault_ata = get_associated_token_address(
                 coin_creator_vault, SOL_MINT, SYSTEM_TOKEN_PROGRAM
             )
-            
+
             # Fee config PDA
             fee_config, _ = Pubkey.find_program_address(
                 [b"fee_config", bytes(PUMP_AMM_PROGRAM_ID)], PUMP_FEE_PROGRAM
             )
-            
+
             # Build accounts
             accounts = [
                 AccountMeta(pubkey=market, is_signer=False, is_writable=True),
@@ -781,10 +781,10 @@ class FallbackSeller:
                 AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
                 AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
             ]
-            
+
             # Build instruction
             ix_data = SELL_DISCRIMINATOR + struct.pack("<Q", sell_amount) + struct.pack("<Q", min_sol_output)
-            
+
             # Create ATA instruction (idempotent)
             create_ata_accounts = [
                 AccountMeta(pubkey=self.wallet.pubkey, is_signer=True, is_writable=True),
@@ -795,33 +795,33 @@ class FallbackSeller:
                 AccountMeta(pubkey=SYSTEM_TOKEN_PROGRAM, is_signer=False, is_writable=False),
             ]
             create_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_ata_accounts)
-            
+
             compute_limit_ix = set_compute_unit_limit(150_000)
             compute_price_ix = set_compute_unit_price(self.priority_fee)
             sell_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
-            
+
             # Send transaction ONCE, then retry confirmation
             try:
                 blockhash = await self.client.get_cached_blockhash()
             except RuntimeError:
                 blockhash_resp = await rpc_client.get_latest_blockhash()
                 blockhash = blockhash_resp.value.blockhash
-            
+
             msg = Message.new_with_blockhash(
                 [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
                 self.wallet.pubkey,
                 blockhash,
             )
             tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
-            
-            logger.info(f"Sending PumpSwap SELL transaction...")
+
+            logger.info("Sending PumpSwap SELL transaction...")
             result = await rpc_client.send_transaction(
                 tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             )
             sig = str(result.value)
             logger.info(f"PumpSwap SELL signature: {sig}")
             logger.info(f"https://solscan.io/tx/{sig}")
-            
+
             # Quick status check - don't block too long on rate limits
             import asyncio
             for attempt in range(min(self.max_retries, 3)):
@@ -829,41 +829,41 @@ class FallbackSeller:
                     backoff = 2.0 * (attempt + 1)
                     logger.info(f"Checking tx status (attempt {attempt + 1}/3, wait {backoff}s)...")
                     await asyncio.sleep(backoff)
-                    
+
                     tx_response = await rpc_client.get_transaction(
                         Signature.from_string(sig),
                         encoding="json",
                         max_supported_transaction_version=0,
                     )
-                    
+
                     if tx_response.value is None:
-                        logger.warning(f"Transaction not found yet...")
+                        logger.warning("Transaction not found yet...")
                         continue
-                    
+
                     meta = tx_response.value.transaction.meta
                     if meta and meta.err is not None:
                         error_msg = f"Transaction FAILED on-chain: {meta.err}"
                         logger.error(f"FAILED: {error_msg}")
                         return False, sig, error_msg
-                    
+
                     logger.info("PumpSwap SELL SUCCESS!")
                     return True, sig, None
-                    
+
                 except Exception as e:
                     error_str = str(e).lower()
                     if "429" in error_str or "rate" in error_str or "too many" in error_str:
                         logger.warning(f"RPC rate limited - check tx on solscan: {sig}")
                         return True, sig, None
-                    
+
                     error_msg = str(e) if str(e) else f"{type(e).__name__}"
                     logger.warning(f"Status check failed: {error_msg}")
                     if attempt == 2:
                         logger.warning(f"Could not verify - check solscan: {sig}")
                         return True, sig, None
-            
+
             logger.warning(f"Status unknown - check solscan: {sig}")
             return True, sig, None
-            
+
         except Exception as e:
             return False, None, str(e)
 
@@ -871,14 +871,14 @@ class FallbackSeller:
         """Parse PumpSwap pool account data."""
         parsed_data = {}
         offset = 8  # Skip discriminator
-        
+
         fields = [
             ("pool_bump", "u8"), ("index", "u16"), ("creator", "pubkey"),
             ("base_mint", "pubkey"), ("quote_mint", "pubkey"), ("lp_mint", "pubkey"),
             ("pool_base_token_account", "pubkey"), ("pool_quote_token_account", "pubkey"),
             ("lp_supply", "u64"), ("coin_creator", "pubkey"),
         ]
-        
+
         for field_name, field_type in fields:
             if field_type == "pubkey":
                 parsed_data[field_name] = base58.b58encode(data[offset:offset + 32]).decode("utf-8")
@@ -892,7 +892,7 @@ class FallbackSeller:
             elif field_type == "u8":
                 parsed_data[field_name] = data[offset]
                 offset += 1
-        
+
         return parsed_data
 
     async def _sell_via_jupiter(
@@ -903,13 +903,13 @@ class FallbackSeller:
     ) -> tuple[bool, str | None, str | None]:
         """Sell via Jupiter aggregator (Ultra API if key available)."""
         import base64
-        
+
         try:
             logger.info(f"[JUPITER] Jupiter SELL for {symbol}...")
-            
+
             sell_amount = int(token_amount * 10**TOKEN_DECIMALS)
             slippage_bps = int(self.slippage * 10000)
-            
+
             # Use Ultra API if key available
             if self.jupiter_api_key:
                 jupiter_url = "https://api.jup.ag/ultra/v1/order"
@@ -920,10 +920,10 @@ class FallbackSeller:
                 jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
                 headers = {}
                 logger.info("[JUPITER] Using Jupiter Lite API for SELL (no Ultra key)")
-            
+
             async with aiohttp.ClientSession() as session:
                 rpc_client = await self._get_rpc_client()
-                
+
                 if self.jupiter_api_key:
                     # Jupiter Ultra API - single request
                     order_body = {
@@ -933,7 +933,7 @@ class FallbackSeller:
                         "taker": str(self.wallet.pubkey),
                         "slippageBps": slippage_bps,
                     }
-                    
+
                     for attempt in range(self.max_retries):
                         try:
                             async with session.post(
@@ -946,39 +946,39 @@ class FallbackSeller:
                                     logger.warning(f"Jupiter Ultra SELL order failed: {error_text}")
                                     continue
                                 order_data = await resp.json()
-                            
+
                             tx_base64 = order_data.get("transaction")
                             if not tx_base64:
                                 logger.warning("No transaction in Jupiter Ultra SELL response")
                                 continue
-                            
+
                             out_amount = int(order_data.get("outAmount", 0))
                             out_amount_sol = out_amount / LAMPORTS_PER_SOL
                             logger.info(f"[JUPITER] Jupiter Ultra SELL expected: ~{out_amount_sol:.6f} SOL")
-                            
+
                             tx_bytes = base64.b64decode(tx_base64)
                             tx = VersionedTransaction.from_bytes(tx_bytes)
                             signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
-                            
+
                             logger.info(f"[TX] Jupiter Ultra SELL attempt {attempt + 1}/{self.max_retries}...")
                             result = await rpc_client.send_transaction(
                                 signed_tx,
                                 opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
                             )
                             sig = str(result.value)
-                            
+
                             logger.info(f"[SIG] Jupiter Ultra SELL signature: {sig}")
                             logger.info(f"[OK] Jupiter Ultra SELL sent! Expected ~{out_amount_sol:.6f} SOL")
                             return True, sig, None
-                            
+
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
                             logger.warning(f"Jupiter Ultra SELL attempt {attempt + 1} failed: {error_msg}")
                             if attempt == self.max_retries - 1:
                                 return False, None, error_msg
-                    
+
                     return False, None, "All Jupiter Ultra SELL attempts failed"
-                
+
                 else:
                     # Fallback to v6 API
                     quote_params = {
@@ -987,24 +987,24 @@ class FallbackSeller:
                         "amount": str(sell_amount),
                         "slippageBps": slippage_bps,
                     }
-                    
+
                     async with session.get(jupiter_quote_url, params=quote_params) as resp:
                         if resp.status != 200:
                             error_text = await resp.text()
                             return False, None, f"Jupiter quote failed: {error_text}"
                         quote = await resp.json()
-                    
+
                     out_amount = int(quote.get("outAmount", 0))
                     out_amount_sol = out_amount / LAMPORTS_PER_SOL
                     logger.info(f"[JUPITER] Jupiter expected output: ~{out_amount_sol:.6f} SOL")
-                    
+
                     swap_body = {
                         "quoteResponse": quote,
                         "userPublicKey": str(self.wallet.pubkey),
                         "wrapAndUnwrapSol": True,
                         "prioritizationFeeLamports": self.priority_fee,
                     }
-                    
+
                     for attempt in range(self.max_retries):
                         try:
                             async with session.post(jupiter_swap_url, json=swap_body) as resp:
@@ -1013,36 +1013,36 @@ class FallbackSeller:
                                     logger.warning(f"Jupiter swap request failed: {error_text}")
                                     continue
                                 swap_data = await resp.json()
-                            
+
                             swap_tx_base64 = swap_data.get("swapTransaction")
                             if not swap_tx_base64:
                                 return False, None, "No swap transaction in Jupiter response"
-                            
+
                             tx_bytes = base64.b64decode(swap_tx_base64)
                             tx = VersionedTransaction.from_bytes(tx_bytes)
                             signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
-                            
+
                             logger.info(f"[TX] Jupiter sell attempt {attempt + 1}/{self.max_retries}...")
                             result = await rpc_client.send_transaction(
                                 signed_tx,
                                 opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
                             )
                             sig = str(result.value)
-                            
+
                             logger.info(f"[SIG] Jupiter signature: {sig}")
-                            
+
                             await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
                             logger.info("[OK] Jupiter sell confirmed!")
                             return True, sig, None
-                            
+
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
                             logger.warning(f"Jupiter attempt {attempt + 1} failed: {error_msg}")
                             if attempt == self.max_retries - 1:
                                 return False, None, error_msg
-                    
+
                     return False, None, "All Jupiter attempts failed"
-                
+
         except Exception as e:
             return False, None, str(e)
 
@@ -1058,9 +1058,9 @@ class FallbackSeller:
         from solders.commitment_config import CommitmentLevel
         from solders.rpc.requests import SendVersionedTransaction
         from solders.rpc.config import RpcSendTransactionConfig
-        
+
         logger.info(f"[PUMPPORTAL] Attempting PumpPortal sell for {symbol} ({mint})")
-        
+
         try:
             # Get unsigned TX from PumpPortal
             response = requests.post(
@@ -1077,30 +1077,30 @@ class FallbackSeller:
                 },
                 timeout=30
             )
-            
+
             if response.status_code != 200:
                 return False, None, f"PumpPortal error: {response.text}"
-            
+
             # Sign TX
             tx = VersionedTransaction(
                 VersionedTransaction.from_bytes(response.content).message,
                 [self.wallet.keypair]
             )
-            
+
             # Send via RPC
             rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
             commitment = CommitmentLevel.Confirmed
             config = RpcSendTransactionConfig(preflight_commitment=commitment)
-            
+
             send_response = requests.post(
                 url=rpc_endpoint,
                 headers={"Content-Type": "application/json"},
                 data=SendVersionedTransaction(tx, config).to_json(),
                 timeout=30
             )
-            
+
             result = send_response.json()
-            
+
             if "result" in result:
                 sig = result["result"]
                 logger.info(f"[PUMPPORTAL] Sell TX: {sig}")
@@ -1109,6 +1109,6 @@ class FallbackSeller:
                 return False, None, str(result["error"])
             else:
                 return False, None, str(result)
-                
+
         except Exception as e:
             return False, None, str(e)

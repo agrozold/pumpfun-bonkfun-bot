@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 
 class SecretsProvider(Protocol):
     """Протокол провайдера секретов"""
-    
+
     def get_secret(self, key: str) -> Optional[str]:
         """Получить секрет по ключу"""
         ...
-    
+
     def is_available(self) -> bool:
         """Проверка доступности провайдера"""
         ...
@@ -26,56 +26,56 @@ class SecretsProvider(Protocol):
 
 class EnvSecretsProvider:
     """Провайдер секретов из переменных окружения"""
-    
+
     def __init__(self, prefix: str = ''):
         self.prefix = prefix
-    
+
     def get_secret(self, key: str) -> Optional[str]:
         full_key = f"{self.prefix}{key}" if self.prefix else key
         return os.environ.get(full_key)
-    
+
     def is_available(self) -> bool:
         return True
 
 
 class FileSecretsProvider:
     """Провайдер секретов из файла"""
-    
+
     def __init__(self, filepath: str):
         self.filepath = Path(filepath)
         self._secrets = {}
         self._load()
-    
+
     def _load(self) -> None:
         """Загрузить секреты из файла"""
         if not self.filepath.exists():
             logger.warning(f"Secrets file not found: {self.filepath}")
             return
-        
+
         try:
             import json
             with open(self.filepath, 'r') as f:
                 self._secrets = json.load(f)
         except Exception as e:
             logger.error(f"Failed to load secrets: {e}")
-    
+
     def get_secret(self, key: str) -> Optional[str]:
         return self._secrets.get(key)
-    
+
     def is_available(self) -> bool:
         return self.filepath.exists()
 
 
 class VaultSecretsProvider:
     """Провайдер секретов из HashiCorp Vault (опционально)"""
-    
+
     def __init__(self, url: str, token: str, mount_point: str = 'secret'):
         self.url = url
         self.token = token
         self.mount_point = mount_point
         self._client = None
         self._init_client()
-    
+
     def _init_client(self) -> None:
         """Инициализация Vault клиента"""
         try:
@@ -85,7 +85,7 @@ class VaultSecretsProvider:
             logger.warning("hvac not installed, Vault provider unavailable")
         except Exception as e:
             logger.error(f"Vault init failed: {e}")
-    
+
     def get_secret(self, key: str) -> Optional[str]:
         if not self._client:
             return None
@@ -98,7 +98,7 @@ class VaultSecretsProvider:
         except Exception as e:
             logger.error(f"Vault read failed for {key}: {e}")
             return None
-    
+
     def is_available(self) -> bool:
         if not self._client:
             return False
@@ -119,10 +119,10 @@ class SecretsManager:
         private_key = manager.get_secret('SOLANA_PRIVATE_KEY')
         keypair = manager.get_keypair('SOLANA_PRIVATE_KEY')
     """
-    
+
     def __init__(self):
         self._providers: list[SecretsProvider] = []
-    
+
     def add_provider(self, provider: SecretsProvider) -> None:
         """Добавить провайдер секретов"""
         if provider.is_available():
@@ -130,7 +130,7 @@ class SecretsManager:
             logger.info(f"Added secrets provider: {type(provider).__name__}")
         else:
             logger.warning(f"Provider unavailable: {type(provider).__name__}")
-    
+
     def get_secret(self, key: str) -> Optional[str]:
         """
         Получить секрет (пробует всех провайдеров по порядку)
@@ -139,10 +139,10 @@ class SecretsManager:
             value = provider.get_secret(key)
             if value is not None:
                 return value
-        
+
         logger.warning(f"Secret not found: {key}")
         return None
-    
+
     def get_keypair(self, key: str):
         """
         Получить Solana Keypair из секрета.
@@ -150,23 +150,23 @@ class SecretsManager:
         """
         from solders.keypair import Keypair
         import base58
-        
+
         secret_str = self.get_secret(key)
         if not secret_str:
             raise ValueError(f"Secret not found: {key}")
-        
+
         try:
             # Декодирование и создание Keypair
             secret_bytes = base58.b58decode(secret_str)
             keypair = Keypair.from_bytes(secret_bytes)
-            
+
             # Очистка секрета из памяти (best effort)
             # Примечание: Python не гарантирует немедленную очистку
             secret_str = '0' * len(secret_str)
             del secret_str
-            
+
             return keypair
-            
+
         except Exception as e:
             logger.error(f"Failed to create Keypair: {e}")
             raise
@@ -185,21 +185,21 @@ def create_secrets_manager(config: dict = None) -> SecretsManager:
     }
     """
     manager = SecretsManager()
-    
+
     if config is None:
         config = {}
-    
+
     provider_type = config.get('secrets_provider', 'env')
-    
+
     if provider_type == 'env':
         manager.add_provider(EnvSecretsProvider())
-    
+
     elif provider_type == 'file':
         filepath = config.get('secrets_file', '~/.config/pumpbot/secrets.json')
         manager.add_provider(FileSecretsProvider(os.path.expanduser(filepath)))
         # Fallback на env
         manager.add_provider(EnvSecretsProvider())
-    
+
     elif provider_type == 'vault':
         vault_url = config.get('vault_url')
         vault_token = config.get('vault_token')
@@ -207,11 +207,11 @@ def create_secrets_manager(config: dict = None) -> SecretsManager:
             manager.add_provider(VaultSecretsProvider(vault_url, vault_token))
         # Fallback на env
         manager.add_provider(EnvSecretsProvider())
-    
+
     else:
         # Default: env provider
         manager.add_provider(EnvSecretsProvider())
-    
+
     return manager
 
 

@@ -397,7 +397,7 @@ class RPCManager:
         """Get best WSS. Priority: Chainstack > Syndica > dRPC > QuickNode > Public."""
         now = time.time()
         wss_priority = ["chainstack", "syndica", "drpc", "quicknode", "public_solana"]
-        
+
         for name in wss_priority:
             provider = self.providers.get(name)
             if provider and provider.wss_endpoint and provider.enabled:

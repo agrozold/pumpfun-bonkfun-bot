@@ -22,11 +22,11 @@ class RPCHolderProvider(HolderProvider):
     Uses getTokenLargestAccounts - returns top 20 holders.
     No external API needed!
     """
-    
+
     def __init__(self):
         self._rpc_manager = None
         self._initialized = False
-    
+
     async def _get_rpc(self):
         if not self._initialized:
             try:
@@ -36,21 +36,21 @@ class RPCHolderProvider(HolderProvider):
             except Exception as e:
                 logger.error(f"Failed to get RPC manager: {e}")
         return self._rpc_manager
-    
+
     @property
     def provider_type(self) -> ProviderType:
         return ProviderType.RPC
-    
+
     @property
     def is_available(self) -> bool:
         return True  # RPC is always available
-    
+
     async def get_holders(self, mint: str, limit: int = 20) -> Optional[HolderAnalysis]:
         """Get top holders using getTokenLargestAccounts RPC method."""
         rpc = await self._get_rpc()
         if not rpc:
             return None
-        
+
         try:
             body = {
                 "jsonrpc": "2.0",
@@ -58,15 +58,15 @@ class RPCHolderProvider(HolderProvider):
                 "method": "getTokenLargestAccounts",
                 "params": [mint]
             }
-            
+
             result = await rpc.post_rpc(body)
-            
+
             if not result or "result" not in result:
                 logger.debug(f"No holder data for {mint[:8]}...")
                 return None
-            
+
             accounts = result["result"].get("value", [])
-            
+
             if not accounts:
                 return HolderAnalysis(
                     mint=mint,
@@ -78,10 +78,10 @@ class RPCHolderProvider(HolderProvider):
                     holders=[],
                     source="rpc"
                 )
-            
+
             # Calculate total from top accounts
             total_amount = sum(int(acc.get("amount", 0)) for acc in accounts)
-            
+
             holders = []
             for acc in accounts[:limit]:
                 amount = int(acc.get("amount", 0))
@@ -91,12 +91,12 @@ class RPCHolderProvider(HolderProvider):
                     "amount": amount,
                     "percentage": pct
                 })
-            
+
             holders.sort(key=lambda x: x["amount"], reverse=True)
-            
+
             top_10_pct = sum(h["percentage"] for h in holders[:10])
             top_holder_pct = holders[0]["percentage"] if holders else 0
-            
+
             return HolderAnalysis(
                 mint=mint,
                 total_holders=len(accounts),  # Note: only top 20 from RPC
@@ -107,11 +107,11 @@ class RPCHolderProvider(HolderProvider):
                 holders=holders,
                 source="rpc"
             )
-            
+
         except Exception as e:
             logger.error(f"RPC holder analysis error: {e}")
             return None
-    
+
     async def get_security(self, mint: str) -> Optional[TokenSecurityInfo]:
         """
         Basic security check via RPC.
@@ -120,7 +120,7 @@ class RPCHolderProvider(HolderProvider):
         rpc = await self._get_rpc()
         if not rpc:
             return None
-        
+
         try:
             # Get mint account info
             body = {
@@ -129,16 +129,16 @@ class RPCHolderProvider(HolderProvider):
                 "method": "getAccountInfo",
                 "params": [mint, {"encoding": "jsonParsed"}]
             }
-            
+
             result = await rpc.post_rpc(body)
-            
+
             if not result or "result" not in result:
                 return None
-            
+
             account = result["result"]
             if not account or "value" not in account:
                 return None
-            
+
             data = account["value"].get("data", {})
             if isinstance(data, dict):
                 parsed = data.get("parsed", {})
@@ -153,22 +153,22 @@ class RPCHolderProvider(HolderProvider):
                     details={},
                     source="rpc"
                 )
-            
+
             warnings = []
             risk_score = 0
-            
+
             # Check mint authority
             mint_authority = info.get("mintAuthority")
             if mint_authority:
                 warnings.append("Mint authority active")
                 risk_score += 15
-            
+
             # Check freeze authority
             freeze_authority = info.get("freezeAuthority")
             if freeze_authority:
                 warnings.append("Freeze authority active")
                 risk_score += 20
-            
+
             return TokenSecurityInfo(
                 mint=mint,
                 is_safe=risk_score < 30,
@@ -182,10 +182,10 @@ class RPCHolderProvider(HolderProvider):
                 },
                 source="rpc"
             )
-            
+
         except Exception as e:
             logger.error(f"RPC security check error: {e}")
             return None
-    
+
     async def close(self) -> None:
         pass  # RPC manager handles its own cleanup

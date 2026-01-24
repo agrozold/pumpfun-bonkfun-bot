@@ -57,66 +57,66 @@ class ParallelTransactionSender:
     """
     Параллельная отправка и подтверждение транзакций.
     """
-    
+
     def __init__(self, timeout: float = 15.0):
         self.timeout = timeout
         self._session: Optional[aiohttp.ClientSession] = None
         self._endpoints: List[str] = []
         self._initialized = False
-    
+
     async def initialize(self) -> None:
         """Инициализация с получением эндпоинтов из RPC Manager."""
         if self._initialized:
             return
-        
+
         try:
             from core.rpc_manager import RPCManager
             rpc_manager = await RPCManager.get_instance()
-            
+
             self._endpoints = []
             for name, provider in rpc_manager.providers.items():
                 if provider.http_endpoint and provider.enabled:
                     self._endpoints.append(provider.http_endpoint)
-            
+
             logger.info(f"[ParallelSender] Initialized with {len(self._endpoints)} endpoints")
-            
+
         except Exception as e:
             logger.warning(f"[ParallelSender] Failed to get RPC Manager: {e}")
             self._load_endpoints_from_env()
-        
+
         self._session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.timeout),
             connector=aiohttp.TCPConnector(limit=50, limit_per_host=10)
         )
         self._initialized = True
-    
+
     def _load_endpoints_from_env(self) -> None:
         """Загрузка эндпоинтов из переменных окружения."""
         import os
-        
+
         env_keys = [
             "CHAINSTACK_RPC_ENDPOINT",
-            "DRPC_RPC_ENDPOINT", 
+            "DRPC_RPC_ENDPOINT",
             "SYNDICA_RPC_ENDPOINT",
             "ALCHEMY_RPC_ENDPOINT",
         ]
-        
+
         self._endpoints = []
         for key in env_keys:
             url = os.getenv(key)
             if url:
                 self._endpoints.append(url)
-        
+
         if not self._endpoints:
             self._endpoints = ["https://api.mainnet-beta.solana.com"]
-    
+
     async def close(self) -> None:
         """Закрытие сессии."""
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
         self._initialized = False
-    
+
     async def send_parallel(
         self,
         serialized_tx: bytes,
@@ -127,9 +127,9 @@ class ParallelTransactionSender:
         """
         if not self._initialized:
             await self.initialize()
-        
+
         tx_base64 = base64.b64encode(serialized_tx).decode('utf-8')
-        
+
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -144,7 +144,7 @@ class ParallelTransactionSender:
                 }
             ]
         }
-        
+
         async def send_to_endpoint(endpoint: str) -> SendResult:
             start = time.time()
             try:
@@ -155,7 +155,7 @@ class ParallelTransactionSender:
                 ) as resp:
                     data = await resp.json()
                     latency = (time.time() - start) * 1000
-                    
+
                     if "result" in data:
                         sig = data["result"]
                         logger.debug(f"[ParallelSender] ✓ {endpoint[:35]}... ({latency:.0f}ms)")
@@ -175,27 +175,27 @@ class ParallelTransactionSender:
                             latency_ms=latency,
                             error=error_msg
                         )
-                        
+
             except asyncio.TimeoutError:
                 return SendResult(success=False, endpoint=endpoint, error="Timeout")
             except Exception as e:
                 return SendResult(success=False, endpoint=endpoint, error=str(e)[:50])
-        
+
         tasks = [send_to_endpoint(ep) for ep in self._endpoints]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         send_results = []
         for r in results:
             if isinstance(r, SendResult):
                 send_results.append(r)
             elif isinstance(r, Exception):
                 send_results.append(SendResult(success=False, error=str(r)[:50]))
-        
+
         successful = sum(1 for r in send_results if r.success)
         logger.info(f"[ParallelSender] Sent to {successful}/{len(self._endpoints)} RPC endpoints")
-        
+
         return send_results
-    
+
     async def confirm_parallel(
         self,
         signature: str,
@@ -207,20 +207,20 @@ class ParallelTransactionSender:
         """
         if not self._initialized:
             await self.initialize()
-        
+
         confirmed_event = asyncio.Event()
         result_holder = {"result": None}
-        
+
         async def poll_endpoint(endpoint: str) -> None:
             start_time = time.time()
             poll_count = 0
-            
+
             while not confirmed_event.is_set():
                 if (time.time() - start_time) > timeout:
                     return
-                
+
                 poll_count += 1
-                
+
                 try:
                     payload = {
                         "jsonrpc": "2.0",
@@ -228,7 +228,7 @@ class ParallelTransactionSender:
                         "method": "getSignatureStatuses",
                         "params": [[signature], {"searchTransactionHistory": False}]
                     }
-                    
+
                     async with self._session.post(
                         endpoint,
                         json=payload,
@@ -236,18 +236,18 @@ class ParallelTransactionSender:
                         timeout=aiohttp.ClientTimeout(total=5)
                     ) as resp:
                         data = await resp.json()
-                        
+
                         if "result" not in data:
                             continue
-                            
+
                         value = data["result"].get("value", [])
                         if not value or value[0] is None:
                             # Транзакция ещё не найдена - продолжаем опрос
                             await asyncio.sleep(0.3)
                             continue
-                        
+
                         status = value[0]
-                        
+
                         # Проверяем на ошибку транзакции
                         if status.get("err"):
                             result_holder["result"] = ConfirmResult(
@@ -258,11 +258,11 @@ class ParallelTransactionSender:
                             )
                             confirmed_event.set()
                             return
-                        
+
                         confirmation_status = status.get("confirmationStatus", "")
                         slot = status.get("slot")
                         confirmations = status.get("confirmations")
-                        
+
                         # Finalized - всегда успех
                         if confirmation_status == "finalized":
                             result_holder["result"] = ConfirmResult(
@@ -274,7 +274,7 @@ class ParallelTransactionSender:
                             )
                             confirmed_event.set()
                             return
-                        
+
                         # Confirmed
                         if confirmation_status == "confirmed":
                             if target_commitment in ["confirmed", "processed"]:
@@ -287,7 +287,7 @@ class ParallelTransactionSender:
                                 )
                                 confirmed_event.set()
                                 return
-                        
+
                         # Processed
                         if confirmation_status == "processed":
                             if target_commitment == "processed":
@@ -299,18 +299,18 @@ class ParallelTransactionSender:
                                 )
                                 confirmed_event.set()
                                 return
-                                    
+
                 except asyncio.CancelledError:
                     return
                 except asyncio.TimeoutError:
                     pass
                 except Exception as e:
                     logger.debug(f"[ParallelSender] Poll error: {e}")
-                
+
                 await asyncio.sleep(0.5)
-        
+
         tasks = [asyncio.create_task(poll_endpoint(ep)) for ep in self._endpoints]
-        
+
         try:
             await asyncio.wait_for(confirmed_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
@@ -319,16 +319,16 @@ class ParallelTransactionSender:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         if result_holder["result"]:
             return result_holder["result"]
-        
+
         return ConfirmResult(
             success=False,
             status=ConfirmationStatus.EXPIRED,
             error=f"Timeout after {timeout}s"
         )
-    
+
     async def send_and_confirm(
         self,
         serialized_tx: bytes,
@@ -344,26 +344,26 @@ class ParallelTransactionSender:
         """
         # 1. Параллельная отправка
         send_results = await self.send_parallel(serialized_tx, skip_preflight)
-        
+
         signature = None
         for r in send_results:
             if r.success and r.signature:
                 signature = r.signature
                 break
-        
+
         if not signature:
             errors = [r.error for r in send_results if r.error][:3]
             return False, None, f"All sends failed: {errors}"
-        
+
         logger.info(f"[ParallelSender] TX sent: {signature[:20]}... Confirming...")
-        
+
         # 2. Параллельное подтверждение
         confirm_result = await self.confirm_parallel(
             signature,
             timeout=timeout,
             target_commitment=target_commitment
         )
-        
+
         if confirm_result.success:
             logger.info(f"[ParallelSender] ✓ {confirm_result.status.value.upper()} in slot {confirm_result.slot}")
             return True, signature, None
@@ -400,7 +400,7 @@ async def send_transaction_parallel(
         (success, signature, error)
     """
     sender = await get_parallel_sender()
-    
+
     if confirm:
         return await sender.send_and_confirm(serialized_tx, timeout)
     else:

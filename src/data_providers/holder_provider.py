@@ -28,7 +28,7 @@ class HolderAnalysis:
     source: str  # Which provider returned this
 
 
-@dataclass 
+@dataclass
 class TokenSecurityInfo:
     """Token security information."""
     mint: str
@@ -41,29 +41,29 @@ class TokenSecurityInfo:
 
 class HolderProvider(ABC):
     """Abstract base class for holder data providers."""
-    
+
     @property
     @abstractmethod
     def provider_type(self) -> ProviderType:
         """Return provider type."""
         pass
-    
+
     @property
     @abstractmethod
     def is_available(self) -> bool:
         """Check if provider is available/configured."""
         pass
-    
+
     @abstractmethod
     async def get_holders(self, mint: str, limit: int = 20) -> Optional[HolderAnalysis]:
         """Get holder distribution for a token."""
         pass
-    
+
     @abstractmethod
     async def get_security(self, mint: str) -> Optional[TokenSecurityInfo]:
         """Get security info for a token."""
         pass
-    
+
     @abstractmethod
     async def close(self) -> None:
         """Cleanup resources."""

@@ -40,24 +40,24 @@ class TokenValidator:
         self.min_liquidity_usd = min_liquidity_usd
         self.max_holder_concentration = max_holder_concentration
         self.max_rugcheck_score = max_rugcheck_score
-        
+
         self.rugcheck = RugcheckClient() if enable_rugcheck else None
-        
+
     async def validate_token(self, mint: str, timeout: float = 5.0) -> TokenValidation:
         """Validate token using multiple sources."""
         start = time.time()
         validation = TokenValidation(mint=mint, is_safe=True)
-        
+
         tasks = []
-        
+
         # Rugcheck validation
         if self.enable_rugcheck and self.rugcheck:
             tasks.append(self._check_rugcheck(mint, validation))
-        
+
         # Holder analysis
         if self.enable_holder_check:
             tasks.append(self._check_holders(mint, validation))
-        
+
         if tasks:
             try:
                 await asyncio.wait_for(
@@ -66,16 +66,16 @@ class TokenValidator:
                 )
             except asyncio.TimeoutError:
                 logger.warning(f"[TokenValidator] Timeout for {mint[:8]}...")
-        
+
         validation.validation_time_ms = (time.time() - start) * 1000
         return validation
-    
+
     async def _check_rugcheck(self, mint: str, validation: TokenValidation):
         """Check token with Rugcheck."""
         try:
             result = await self.rugcheck.check_token(mint)
             validation.rugcheck = result
-            
+
             if result and result.score > self.max_rugcheck_score:
                 validation.is_safe = False
                 validation.rejection_reasons.append(
@@ -83,17 +83,17 @@ class TokenValidator:
                 )
         except Exception as e:
             logger.debug(f"[TokenValidator] Rugcheck error: {e}")
-    
+
     async def _check_holders(self, mint: str, validation: TokenValidation):
         """Check holder distribution."""
         try:
             provider = get_holder_provider()
             analysis = await provider.get_holders(mint, limit=10)
-            
+
             if analysis:
                 validation.holder_analysis = analysis
                 validation.data_source = analysis.source
-                
+
                 if analysis.top_holder_pct > self.max_holder_concentration:
                     validation.is_safe = False
                     validation.rejection_reasons.append(

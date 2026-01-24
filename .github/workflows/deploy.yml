@@ -1,0 +1,52 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/pumpfun-bonkfun-bot
+            
+            # Backup current version
+            ./commands/backup.sh
+            
+            # Pull latest
+            git fetch --all
+            git checkout ${{ github.ref_name }}
+            
+            # Install dependencies
+            source venv/bin/activate
+            pip install -e .
+            
+            # Run smoke test
+            ./commands/smoke-test.sh
+            
+            # Restart services
+            systemctl restart pumpfun-bot@bot-sniper-0-pump
+            
+            echo "Deployed: ${{ github.ref_name }}"

@@ -35,7 +35,7 @@ _initialized = False
 
 class JSONFormatter(logging.Formatter):
     """Formatter that outputs JSON for structured logging of critical events."""
-    
+
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -43,7 +43,7 @@ class JSONFormatter(logging.Formatter):
             "module": record.name,
             "message": record.getMessage(),
         }
-        
+
         # Add extra fields if present
         if hasattr(record, "event_type"):
             log_data["event_type"] = record.event_type
@@ -57,11 +57,11 @@ class JSONFormatter(logging.Formatter):
             log_data["platform"] = record.platform
         if hasattr(record, "error_code"):
             log_data["error_code"] = record.error_code
-            
+
         # Add exception info if present
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
-            
+
         return json.dumps(log_data)
 
 
@@ -80,13 +80,13 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
         Configured logger
     """
     global _loggers
-    
+
     if name in _loggers:
         return _loggers[name]
-    
+
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    
+
     _loggers[name] = logger
     return logger
 
@@ -105,24 +105,24 @@ def setup_file_logging(
     """
     # Ensure logs directory exists
     LOG_DIR.mkdir(exist_ok=True)
-    
+
     # Ensure filename is in logs directory
     log_path = Path(filename)
     if not str(log_path).startswith("logs"):
         log_path = LOG_DIR / log_path.name
-    
+
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
-    
+
     # Check if handler with same filename already exists
     for handler in root_logger.handlers:
         if isinstance(handler, (logging.FileHandler, logging.handlers.RotatingFileHandler)):
             if hasattr(handler, 'baseFilename') and handler.baseFilename.endswith(log_path.name):
                 return  # Handler already exists
-    
+
     # Create formatter
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-    
+
     # Create file handler (with or without rotation)
     if use_rotation:
         file_handler = logging.handlers.RotatingFileHandler(
@@ -133,7 +133,7 @@ def setup_file_logging(
         )
     else:
         file_handler = logging.FileHandler(str(log_path), encoding='utf-8')
-    
+
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
@@ -146,12 +146,12 @@ def setup_console_logging(level: int = logging.INFO) -> None:
         level: Logging level for console
     """
     root_logger = logging.getLogger()
-    
+
     # Check if console handler already exists
     for handler in root_logger.handlers:
         if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
             return
-    
+
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
@@ -170,16 +170,16 @@ def setup_json_logging(filename: str = "critical_events.jsonl") -> logging.Logge
     """
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / filename
-    
+
     json_logger = logging.getLogger("trading.events")
     json_logger.setLevel(logging.INFO)
     json_logger.propagate = False  # Don't propagate to root logger
-    
+
     # Check if handler already exists
     for handler in json_logger.handlers:
         if isinstance(handler, logging.FileHandler):
             return json_logger
-    
+
     # Rotating handler for JSON events
     json_handler = logging.handlers.RotatingFileHandler(
         str(log_path),
@@ -189,7 +189,7 @@ def setup_json_logging(filename: str = "critical_events.jsonl") -> logging.Logge
     )
     json_handler.setFormatter(JSONFormatter())
     json_logger.addHandler(json_handler)
-    
+
     return json_logger
 
 
@@ -216,7 +216,7 @@ def log_trade_event(
         extra: Additional data to include (optional)
     """
     json_logger = setup_json_logging()
-    
+
     record = json_logger.makeRecord(
         name="trading.events",
         level=logging.INFO,
@@ -226,11 +226,11 @@ def log_trade_event(
         args=(),
         exc_info=None
     )
-    
+
     record.event_type = event_type
     record.token_mint = token_mint
     record.platform = platform
-    
+
     if amount_sol is not None:
         record.amount_sol = amount_sol
     if tx_signature is not None:
@@ -238,7 +238,7 @@ def log_trade_event(
     if extra:
         for key, value in extra.items():
             setattr(record, key, value)
-    
+
     json_logger.handle(record)
 
 
@@ -259,7 +259,7 @@ def log_critical_error(
         extra: Additional context (optional)
     """
     json_logger = setup_json_logging("critical_errors.jsonl")
-    
+
     record = json_logger.makeRecord(
         name="trading.errors",
         level=logging.ERROR,
@@ -269,17 +269,17 @@ def log_critical_error(
         args=(),
         exc_info=(type(exception), exception, exception.__traceback__) if exception else None
     )
-    
+
     record.event_type = "CRITICAL_ERROR"
     record.error_code = error_code
     record.module = module
-    
+
     if extra:
         for key, value in extra.items():
             setattr(record, key, value)
-    
+
     json_logger.handle(record)
-    
+
     # Also log to regular logger
     logger = get_logger(module)
     logger.error(f"[{error_code}] {message}")
@@ -299,13 +299,13 @@ def cleanup_old_logs(days: int = 7) -> int:
         Number of files deleted
     """
     import time
-    
+
     if not LOG_DIR.exists():
         return 0
-    
+
     cutoff_time = time.time() - (days * 24 * 60 * 60)
     deleted = 0
-    
+
     for log_file in LOG_DIR.glob("*.log*"):
         if log_file.stat().st_mtime < cutoff_time:
             try:
@@ -313,7 +313,7 @@ def cleanup_old_logs(days: int = 7) -> int:
                 deleted += 1
             except OSError:
                 pass
-    
+
     return deleted
 
 
@@ -325,10 +325,10 @@ def get_log_stats() -> Dict[str, Any]:
     """
     if not LOG_DIR.exists():
         return {"total_files": 0, "total_size_mb": 0}
-    
+
     files = list(LOG_DIR.glob("*.log*"))
     total_size = sum(f.stat().st_size for f in files)
-    
+
     return {
         "total_files": len(files),
         "total_size_mb": round(total_size / (1024 * 1024), 2),
@@ -343,7 +343,7 @@ def get_log_stats() -> Dict[str, Any]:
 
 class TraceIdFilter(logging.Filter):
     """Filter that adds trace_id to log records for request correlation."""
-    
+
     def filter(self, record: logging.LogRecord) -> bool:
         # Always set trace_id, even if empty
         if not hasattr(record, 'trace_id'):
@@ -365,11 +365,11 @@ _trace_filter = TraceIdFilter()
 def setup_trace_logging() -> None:
     """Add trace_id support to all existing and future handlers."""
     root_logger = logging.getLogger()
-    
+
     # Add filter to root logger (applies to all child loggers)
     if _trace_filter not in root_logger.filters:
         root_logger.addFilter(_trace_filter)
-    
+
     # Update all existing handlers with new format
     formatter = logging.Formatter(LOG_FORMAT_WITH_TRACE, datefmt=LOG_DATE_FORMAT)
     for handler in root_logger.handlers:

@@ -54,11 +54,11 @@ class TokenScorer:
         self.momentum_weight = momentum_weight
         self.liquidity_weight = liquidity_weight
         self.request_timeout = request_timeout
-        
+
         self._session: aiohttp.ClientSession | None = None
         self._cache: dict[str, TokenScore] = {}
         self._cache_ttl = 30  # секунд
-        
+
         logger.info(
             f"TokenScorer initialized: min_score={min_score}, "
             f"weights=[vol:{volume_weight}, bp:{buy_pressure_weight}, "
@@ -86,7 +86,7 @@ class TokenScorer:
             age = (datetime.utcnow() - cached.timestamp).seconds
             if age < self._cache_ttl:
                 return cached
-        
+
         # SNIPER MODE: НЕ покупаем сразу - ждём паттерны!
         # Пусть pattern_detector решает
         if is_sniper_mode:
@@ -106,12 +106,12 @@ class TokenScorer:
             )
             self._cache[mint] = score
             return score
-        
+
         session = await self._get_session()
-        
+
         # Получить данные с Dexscreener
         dex_data = await self._fetch_dexscreener(session, mint)
-        
+
         if not dex_data:
             # Нет данных на Dexscreener
             if is_sniper_mode:
@@ -145,7 +145,7 @@ class TokenScorer:
                     timestamp=datetime.utcnow(),
                     recommendation="SKIP",
                 )
-        
+
         # ============================================
         # МИНИМАЛЬНЫЕ ТРЕБОВАНИЯ - ЖЁСТКИЙ ФИЛЬТР!
         # Токены с минимальной активностью = SKIP
@@ -157,10 +157,10 @@ class TokenScorer:
         volume_5m = dex_data.get("volume_5m", 0)
         volume_1h = dex_data.get("volume_1h", 0)
         liquidity = dex_data.get("liquidity_usd", 0)
-        
+
         total_trades_5m = buys_5m + sells_5m
         total_trades_1h = buys_1h + sells_1h
-        
+
         # МИНИМУМ трейдов - РАЗНЫЙ для снайпера и Volume Analyzer
         # Снайпер (свежие токены на bonding curve): 15 trades
         # Volume Analyzer (мигрированные): 50 trades
@@ -169,20 +169,20 @@ class TokenScorer:
             logger.info(f"[SNIPER] {symbol} - using relaxed min_trades=15")
         else:
             min_trades_threshold = 50
-        
+
         min_trades_5m_ok = total_trades_5m >= min_trades_threshold
         min_trades_1h_ok = total_trades_1h >= 200
         min_trades_ok = min_trades_5m_ok or min_trades_1h_ok
-        
+
         # МИНИМУМ: $500 объём за 5 мин И $5000 за час
         # УЖЕСТОЧЕНО: Теперь требуем ОБА условия!
         min_volume_5m_ok = volume_5m >= 500
         min_volume_1h_ok = volume_1h >= 5000
         min_volume_ok = min_volume_5m_ok and min_volume_1h_ok
-        
+
         # МИНИМУМ: $500 ликвидности
         min_liquidity_ok = liquidity >= 500
-        
+
         # ============================================
         # НОВЫЙ ФИЛЬТР: BUY PRESSURE RATIO
         # Если покупок примерно столько же сколько продаж = МУСОР!
@@ -190,11 +190,11 @@ class TokenScorer:
         # ============================================
         buy_pressure_5m = buys_5m / total_trades_5m if total_trades_5m > 0 else 0
         buy_pressure_1h = buys_1h / total_trades_1h if total_trades_1h > 0 else 0
-        
+
         # Берём лучший из двух периодов
         best_buy_pressure = max(buy_pressure_5m, buy_pressure_1h)
         min_buy_pressure_ok = best_buy_pressure >= 0.65  # Минимум 65% покупок
-        
+
         if not min_trades_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO FEW TRADES: "
@@ -216,7 +216,7 @@ class TokenScorer:
                 timestamp=datetime.utcnow(),
                 recommendation="SKIP",
             )
-        
+
         if not min_volume_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO LOW VOLUME: "
@@ -240,7 +240,7 @@ class TokenScorer:
                 timestamp=datetime.utcnow(),
                 recommendation="SKIP",
             )
-        
+
         if not min_liquidity_ok:
             logger.warning(
                 f"[SKIP] {symbol} - TOO LOW LIQUIDITY: ${liquidity:.2f} (need $500)"
@@ -260,7 +260,7 @@ class TokenScorer:
                 timestamp=datetime.utcnow(),
                 recommendation="SKIP",
             )
-        
+
         # ============================================
         # НОВЫЙ ФИЛЬТР: BUY PRESSURE CHECK
         # Токен с 55 покупок / 43 продажи = 56% = МУСОР!
@@ -291,13 +291,13 @@ class TokenScorer:
                 timestamp=datetime.utcnow(),
                 recommendation="SKIP",
             )
-        
+
         # Рассчитать отдельные scores
         volume_score = self._calc_volume_score(dex_data)
         buy_pressure_score = self._calc_buy_pressure_score(dex_data)
         momentum_score = self._calc_momentum_score(dex_data)
         liquidity_score = self._calc_liquidity_score(dex_data)
-        
+
         # Взвешенный total score
         total_score = (
             volume_score * self.volume_weight +
@@ -305,7 +305,7 @@ class TokenScorer:
             momentum_score * self.momentum_weight +
             liquidity_score * self.liquidity_weight
         ) // 100
-        
+
         # Определить рекомендацию
         if total_score >= 85:
             recommendation = "STRONG_BUY"
@@ -315,7 +315,7 @@ class TokenScorer:
             recommendation = "HOLD"
         else:
             recommendation = "SKIP"
-        
+
         score = TokenScore(
             mint=mint,
             symbol=dex_data.get("symbol", symbol),
@@ -337,37 +337,37 @@ class TokenScorer:
             timestamp=datetime.utcnow(),
             recommendation=recommendation,
         )
-        
+
         # Кэшировать
         self._cache[cache_key] = score
-        
+
         logger.info(
             f"Token score for {score.symbol}: {total_score}/100 "
             f"[vol:{volume_score}, bp:{buy_pressure_score}, "
             f"mom:{momentum_score}, liq:{liquidity_score}] → {recommendation}"
         )
-        
+
         return score
 
     async def _fetch_dexscreener(self, session: aiohttp.ClientSession, mint: str) -> dict | None:
         """Получить данные токена с Dexscreener."""
         url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
-        
+
         try:
             async with session.get(url) as resp:
                 if resp.status != 200:
                     logger.debug(f"Dexscreener returned {resp.status} for {mint[:8]}...")
                     return None
-                
+
                 data = await resp.json()
                 pairs = data.get("pairs", [])
-                
+
                 if not pairs:
                     return None
-                
+
                 # Взять пару с наибольшей ликвидностью
                 pair = max(pairs, key=lambda p: p.get("liquidity", {}).get("usd", 0) or 0)
-                
+
                 result = {
                     "symbol": pair.get("baseToken", {}).get("symbol", "UNKNOWN"),
                     "price_usd": float(pair.get("priceUsd", 0) or 0),
@@ -389,7 +389,7 @@ class TokenScorer:
                 if REDIS_AVAILABLE:
                     cache_set(cache_key, result, 30)
                 return result
-                
+
         except asyncio.TimeoutError:
             logger.debug(f"Dexscreener timeout for {mint[:8]}...")
             return None
@@ -401,10 +401,10 @@ class TokenScorer:
         """Рассчитать score по объёму (0-100)."""
         vol_5m = data.get("volume_5m", 0)
         vol_1h = data.get("volume_1h", 0)
-        
+
         # Средний 5-минутный объём за час
         avg_5m = vol_1h / 12 if vol_1h > 0 else 0
-        
+
         if avg_5m == 0:
             # Новый токен без истории - нейтральный score
             if vol_5m > 1000:
@@ -412,10 +412,10 @@ class TokenScorer:
             elif vol_5m > 100:
                 return 50
             return 30
-        
+
         # Volume spike ratio
         spike_ratio = vol_5m / avg_5m if avg_5m > 0 else 1
-        
+
         if spike_ratio >= 5:
             return 100
         elif spike_ratio >= 3:
@@ -434,18 +434,18 @@ class TokenScorer:
         buys = data.get("buys_5m", 0)
         sells = data.get("sells_5m", 0)
         total = buys + sells
-        
+
         if total == 0:
             # Нет транзакций - проверить 1h
             buys = data.get("buys_1h", 0)
             sells = data.get("sells_1h", 0)
             total = buys + sells
-        
+
         if total == 0:
             return 50  # Нейтральный
-        
+
         buy_ratio = buys / total
-        
+
         if buy_ratio >= 0.9:
             return 100
         elif buy_ratio >= 0.8:
@@ -465,10 +465,10 @@ class TokenScorer:
         """Рассчитать score по моментуму цены (0-100)."""
         change_5m = data.get("price_change_5m", 0)
         change_1h = data.get("price_change_1h", 0)
-        
+
         # Комбинированный momentum
         # Положительный 5m важнее чем 1h
-        
+
         if change_5m >= 20:
             base_score = 95
         elif change_5m >= 10:
@@ -483,23 +483,23 @@ class TokenScorer:
             base_score = 30
         else:
             base_score = 15
-        
+
         # Бонус за положительный 1h тренд
         if change_1h > 0:
             base_score = min(100, base_score + 10)
         elif change_1h < -20:
             base_score = max(0, base_score - 15)
-        
+
         return base_score
 
     def _calc_liquidity_score(self, data: dict) -> int:
         """Рассчитать score по ликвидности (0-100)."""
         liquidity = data.get("liquidity_usd", 0)
-        
+
         # Для pump.fun токенов ликвидность обычно низкая
         # Слишком высокая = уже поздно входить
         # Слишком низкая = рискованно
-        
+
         if liquidity >= 100000:
             return 60  # Уже большой - меньше потенциал
         elif liquidity >= 50000:

@@ -212,7 +212,7 @@ class BagsLogsListener(BaseTokenListener):
         """Keep connection alive with graceful timeout handling."""
         ping_failures = 0
         max_ping_failures = 3  # Allow 3 failed pings before closing
-        
+
         try:
             while True:
                 await asyncio.sleep(self.ping_interval)
@@ -292,7 +292,7 @@ class BagsLogsListener(BaseTokenListener):
             async with AsyncClient(self.rpc_endpoint) as client:
                 # Convert string signature to Signature object
                 sig = Signature.from_string(signature)
-                
+
                 # Fetch transaction with full encoding
                 response = await client.get_transaction(
                     sig,

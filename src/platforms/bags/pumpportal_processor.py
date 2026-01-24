@@ -47,12 +47,12 @@ class BagsPumpPortalProcessor:
         pool = token_data.get("pool", "").lower()
         if pool in self.supported_pool_names:
             return True
-        
+
         # Check mint suffix as fallback (some bags tokens end with "bags")
         mint = token_data.get("mint", "").lower()
         if mint.endswith("bags"):
             return True
-        
+
         return False
 
     def process_token_data(self, token_data: dict) -> TokenInfo | None:

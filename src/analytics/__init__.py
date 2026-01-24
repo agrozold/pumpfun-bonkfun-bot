@@ -15,7 +15,7 @@ from .trace_recorder import (
 
 __all__ = [
     'TraceContext',
-    'TraceEvent', 
+    'TraceEvent',
     'get_current_trace',
     'get_trace_id',
     'TraceRecorder',

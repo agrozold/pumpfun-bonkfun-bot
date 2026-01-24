@@ -13,7 +13,7 @@ from .logger import (
 
 __all__ = [
     "get_logger",
-    "setup_file_logging", 
+    "setup_file_logging",
     "setup_console_logging",
     "setup_json_logging",
     "log_trade_event",

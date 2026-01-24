@@ -21,7 +21,7 @@ class TraceEvent:
     timestamp_mono: float         # time.monotonic() для расчёта длительностей
     timestamp_wall: str           # ISO8601 для записи
     data: Dict[str, Any] = field(default_factory=dict)
-    
+
     @classmethod
     def now(cls, stage: str, **data) -> 'TraceEvent':
         return cls(
@@ -41,21 +41,21 @@ class TraceContext:
     source: str                   # 'pumpportal' | 'shredstream' | 'logs'
     slot_detected: Optional[int] = None
     events: list = field(default_factory=list)
-    
+
     # Временные метки (monotonic)
     t0: Optional[float] = None    # Сигнал получен
     t1: Optional[float] = None    # Построение TX завершено
     t2: Optional[float] = None    # TX отправлена
     t3: Optional[float] = None    # Первое появление в сети
     t4: Optional[float] = None    # Финализация
-    
+
     # Результат
     signature: Optional[str] = None
     slot_landed: Optional[int] = None
     tx_index: Optional[int] = None
     outcome: Optional[str] = None  # 'success' | 'fail'
     fail_reason: Optional[str] = None
-    
+
     @classmethod
     def start(cls, trade_type: str, mint: str, source: str, slot_detected: int = None) -> 'TraceContext':
         """Создать новый контекст трассировки"""
@@ -70,27 +70,27 @@ class TraceContext:
         ctx.add_event('t0_signal', source=source, slot=slot_detected)
         _current_trace.set(ctx)
         return ctx
-    
+
     def add_event(self, stage: str, **data) -> None:
         """Добавить событие в трейс"""
         self.events.append(TraceEvent.now(stage, **data))
-    
+
     def mark_build_complete(self, **details) -> None:
         """Отметить завершение построения TX"""
         self.t1 = time.monotonic()
         self.add_event('t1_build_complete', **details)
-    
+
     def mark_sent(self, provider: str, signature: str = None) -> None:
         """Отметить отправку TX"""
         self.t2 = time.monotonic()
         self.signature = signature
         self.add_event('t2_send', provider=provider, signature=signature)
-    
+
     def mark_first_seen(self, slot: int = None) -> None:
         """Отметить первое появление в сети"""
         self.t3 = time.monotonic()
         self.add_event('t3_first_seen', slot=slot)
-    
+
     def mark_finalized(self, slot_landed: int = None, tx_index: int = None, success: bool = True, fail_reason: str = None) -> None:
         """Отметить финализацию"""
         self.t4 = time.monotonic()
@@ -98,44 +98,44 @@ class TraceContext:
         self.tx_index = tx_index
         self.outcome = 'success' if success else 'fail'
         self.fail_reason = fail_reason
-        self.add_event('t4_finalized', 
-                      slot_landed=slot_landed, 
+        self.add_event('t4_finalized',
+                      slot_landed=slot_landed,
                       tx_index=tx_index,
                       success=success,
                       fail_reason=fail_reason)
-    
+
     def finish(self) -> None:
         """Завершить трейс и очистить контекст"""
         _current_trace.set(None)
-    
+
     @property
     def total_latency_ms(self) -> Optional[float]:
         """Общая задержка t4-t0 в миллисекундах"""
         if self.t0 and self.t4:
             return (self.t4 - self.t0) * 1000
         return None
-    
+
     @property
     def build_latency_ms(self) -> Optional[float]:
         """Задержка построения t1-t0"""
         if self.t0 and self.t1:
             return (self.t1 - self.t0) * 1000
         return None
-    
+
     @property
     def send_latency_ms(self) -> Optional[float]:
         """Задержка отправки t2-t1"""
         if self.t1 and self.t2:
             return (self.t2 - self.t1) * 1000
         return None
-    
+
     @property
     def confirm_latency_ms(self) -> Optional[float]:
         """Задержка подтверждения t4-t2"""
         if self.t2 and self.t4:
             return (self.t4 - self.t2) * 1000
         return None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Сериализация для JSONL"""
         return {

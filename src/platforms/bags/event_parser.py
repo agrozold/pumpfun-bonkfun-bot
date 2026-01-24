@@ -89,25 +89,25 @@ class BagsEventParser(EventParser):
             TokenInfo if token creation found, None otherwise
         """
         bags_program_str = str(BagsAddresses.PROGRAM)
-        
+
         for log in logs:
             # Check for DBC program invocation
             if bags_program_str in log:
                 logger.debug(f"BAGS program activity detected: {signature}")
-                
+
             # Look for Program data (event emission)
             if "Program data:" in log:
                 try:
                     encoded_data = log.split("Program data: ")[1].strip()
                     decoded_data = base64.b64decode(encoded_data)
-                    
+
                     # Try to parse as EvtInitializeVirtualPoolWithSplToken
                     token_info = self._parse_initialize_event(decoded_data, signature)
                     if token_info:
                         return token_info
                 except Exception as e:
                     logger.debug(f"Failed to parse Program data: {e}")
-                    
+
         return None
 
     def _parse_initialize_event(self, data: bytes, signature: str) -> TokenInfo | None:
@@ -134,7 +134,7 @@ class BagsEventParser(EventParser):
         try:
             # Skip 8-byte event discriminator
             offset = 8
-            
+
             # Read name (string: 4-byte length + data)
             if offset + 4 > len(data):
                 return None
@@ -144,7 +144,7 @@ class BagsEventParser(EventParser):
                 return None
             name = data[offset:offset + name_len].decode("utf-8", errors="ignore")
             offset += name_len
-            
+
             # Read symbol
             if offset + 4 > len(data):
                 return None
@@ -154,7 +154,7 @@ class BagsEventParser(EventParser):
                 return None
             symbol = data[offset:offset + symbol_len].decode("utf-8", errors="ignore")
             offset += symbol_len
-            
+
             # Read uri
             if offset + 4 > len(data):
                 return None
@@ -164,46 +164,46 @@ class BagsEventParser(EventParser):
                 return None
             uri = data[offset:offset + uri_len].decode("utf-8", errors="ignore")
             offset += uri_len
-            
+
             # Read creator (publicKey - 32 bytes)
             if offset + 32 > len(data):
                 return None
             creator = Pubkey.from_bytes(data[offset:offset + 32])
             offset += 32
-            
+
             # Read mint (publicKey - 32 bytes)
             if offset + 32 > len(data):
                 return None
             mint = Pubkey.from_bytes(data[offset:offset + 32])
             offset += 32
-            
+
             # Read pool (publicKey - 32 bytes)
             if offset + 32 > len(data):
                 return None
             pool = Pubkey.from_bytes(data[offset:offset + 32])
             offset += 32
-            
+
             # Read quoteMint (publicKey - 32 bytes)
             if offset + 32 > len(data):
                 return None
             quote_mint = Pubkey.from_bytes(data[offset:offset + 32])
             offset += 32
-            
+
             # Read baseVault (publicKey - 32 bytes)
             if offset + 32 > len(data):
                 return None
             base_vault = Pubkey.from_bytes(data[offset:offset + 32])
             offset += 32
-            
+
             # Read quoteVault (publicKey - 32 bytes)
             if offset + 32 > len(data):
                 return None
             quote_vault = Pubkey.from_bytes(data[offset:offset + 32])
-            
+
             # Note: bags.fm tokens are identified by being created via Meteora DBC program,
             # NOT by mint address suffix. The "bags" suffix is just a common pattern but not required.
             logger.info(f"🎒 BAGS token created: {name} ({symbol}) - {mint}")
-            
+
             return TokenInfo(
                 name=name,
                 symbol=symbol,
@@ -218,7 +218,7 @@ class BagsEventParser(EventParser):
                 token_program_id=SystemAddresses.TOKEN_2022_PROGRAM,  # BAGS uses Token-2022
                 creation_timestamp=monotonic(),
             )
-            
+
         except Exception as e:
             logger.debug(f"Failed to parse initialize event: {e}")
             return None
@@ -239,7 +239,7 @@ class BagsEventParser(EventParser):
         # Check if instruction starts with initialize discriminator
         if len(instruction_data) < 8:
             return None
-            
+
         discriminator = struct.unpack("<Q", instruction_data[:8])[0]
         if discriminator != self._initialize_discriminator_int:
             return None
@@ -257,7 +257,7 @@ class BagsEventParser(EventParser):
             # Parse InitializeVirtualPoolParams from instruction data
             # Skip 8-byte discriminator
             offset = 8
-            
+
             # Read name
             if offset + 4 > len(instruction_data):
                 return None
@@ -267,7 +267,7 @@ class BagsEventParser(EventParser):
                 return None
             name = instruction_data[offset:offset + name_len].decode("utf-8", errors="ignore")
             offset += name_len
-            
+
             # Read symbol
             if offset + 4 > len(instruction_data):
                 return None
@@ -277,7 +277,7 @@ class BagsEventParser(EventParser):
                 return None
             symbol = instruction_data[offset:offset + symbol_len].decode("utf-8", errors="ignore")
             offset += symbol_len
-            
+
             # Read uri
             if offset + 4 > len(instruction_data):
                 return None

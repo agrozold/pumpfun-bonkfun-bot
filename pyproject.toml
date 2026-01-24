@@ -20,11 +20,21 @@ dependencies = [
     "protobuf>=5.29.4",
     "pyyaml>=6.0.2",
     "uvloop>=0.21.0; sys_platform != 'win32'",
+    "prometheus_client>=0.20.0",
+    "aiofiles>=23.2.1",
+    "tenacity>=8.2.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "ruff>=0.10.0"
+    "ruff>=0.3.0",
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pre-commit>=3.6.0",
 ]
 
 [project.scripts]
@@ -39,58 +49,47 @@ py-modules = ["buy", "sell", "bot_runner"]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
 [tool.ruff]
 exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
     ".git",
-    ".git-rewrite",
-    ".hg",
-    ".ipynb_checkpoints",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pyenv",
     ".pytest_cache",
-    ".pytype",
     ".ruff_cache",
-    ".svn",
-    ".tox",
     ".venv",
-    ".vscode",
-    "__pypackages__",
-    "_build",
-    "buck-out",
+    "__pycache__",
+    "venv",
     "build",
     "dist",
-    "node_modules",
-    "site-packages",
-    "venv",
+    "learning-examples",
+    "idl",
 ]
-
-line-length = 88
+line-length = 100
 indent-width = 4
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
-select = [
-    "E", "F", "I", "UP", "N", "B", "A", "C4", "T10", "ARG", "PTH",
-    "ANN",  # type annotations
-    "S",    # security best practices
-    "BLE",  # blind except statements
-    "FBT",  # boolean trap parameters
-    "C90",  # complexity metrics
-    "TRY",  # exception handling best practices
-    "SLF",  # private member access
-    "TCH",  # type checking issues
-    "RUF",  # Ruff-specific rules
-    "ERA",  # eradicate commented-out code
-    "PL",   # pylint conventions
+select = ["E", "F", "W"]
+ignore = [
+    "E501",
+    "E402",
+    "F401",
+    "F841",
 ]
-ignore = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-line-ending = "auto"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 100

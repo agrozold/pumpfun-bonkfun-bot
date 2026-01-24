@@ -195,7 +195,7 @@ class BonkLogsListener(BaseTokenListener):
         """Keep connection alive with graceful timeout handling."""
         ping_failures = 0
         max_ping_failures = 3  # Allow 3 failed pings before closing
-        
+
         try:
             while True:
                 await asyncio.sleep(self.ping_interval)
@@ -228,7 +228,7 @@ class BonkLogsListener(BaseTokenListener):
             log_data = data["params"]["result"]["value"]
             logs = log_data.get("logs", [])
             signature = log_data.get("signature", "")
-            
+
             # DEBUG: Log all incoming transactions
             logger.debug(f"[BONK-DEBUG] Got log notification, sig={signature[:20]}..., logs_count={len(logs)}")
             # Check if initialize exists
@@ -248,7 +248,7 @@ class BonkLogsListener(BaseTokenListener):
             # Look for pool/token creation indicators in logs
             # Must have program invoke AND not just InitializeAccount3
             logs_text = " ".join(logs)
-            
+
             # LaunchLab pool creation - look for InitializeV2/InitializeMint (not just InitializeAccount)
             is_real_token_creation = any(
                 "Instruction: InitializeV2" in log or
@@ -256,28 +256,28 @@ class BonkLogsListener(BaseTokenListener):
                 for log in logs
             )
             is_pool_create = is_real_token_creation
-            
+
             if not is_real_token_creation:
                 # Skip buy/swap transactions (InitializeAccount3 only)
                 return None
-            
+
             if not is_pool_create:
                 return None
-            
+
             logger.info(f"[BONK] Potential pool creation detected: {signature[:20]}... (logs={len(logs)})")
-            logger.info(f"[BONK] Calling _fetch_and_parse_transaction...")
-            
+            logger.info("[BONK] Calling _fetch_and_parse_transaction...")
+
             # Small delay to let transaction confirm
             await asyncio.sleep(2.0)
 
             # Fetch full transaction to parse
             token_info = await self._fetch_and_parse_transaction(signature)
-            
+
             if token_info:
                 logger.info(f"[BONK] ✅ Token parsed: {token_info.name} ({token_info.symbol})")
             else:
-                logger.info(f"[BONK] ❌ No token found in transaction")
-            
+                logger.info("[BONK] ❌ No token found in transaction")
+
             return token_info
 
         except asyncio.TimeoutError:
@@ -297,7 +297,7 @@ class BonkLogsListener(BaseTokenListener):
             async with AsyncClient(self.rpc_endpoint) as client:
                 # Convert string signature to Signature object
                 sig = Signature.from_string(signature)
-                
+
                 # Fetch transaction with full encoding
                 response = await client.get_transaction(
                     sig,
@@ -308,11 +308,11 @@ class BonkLogsListener(BaseTokenListener):
                 if not response.value:
                     logger.info(f"[BONK-FETCH] Transaction not found: {signature[:16]}...")
                     return None
-                
-                logger.info(f"[BONK-FETCH] Got transaction response")
+
+                logger.info("[BONK-FETCH] Got transaction response")
 
                 tx = response.value
-                
+
                 # Get transaction data
                 tx_data = tx.transaction
                 if hasattr(tx_data, "transaction"):
@@ -337,7 +337,7 @@ class BonkLogsListener(BaseTokenListener):
                 # Extract account keys
                 account_keys = list(transaction.message.account_keys)
                 logger.info(f"[BONK-PARSE] TX has {len(transaction.message.instructions)} instructions, {len(account_keys)} accounts")
-                
+
                 # Add lookup table addresses if present
                 if hasattr(transaction.message, "address_table_lookups"):
                     for lookup in transaction.message.address_table_lookups:
@@ -354,7 +354,7 @@ class BonkLogsListener(BaseTokenListener):
                     program_id = account_keys[program_idx]
                     if str(program_id) != self.program_id:
                         continue
-                    
+
                     launchlab_ix_count += 1
                     # Log instruction discriminator (first 8 bytes)
                     disc = bytes(ix.data)[:8].hex() if len(ix.data) >= 8 else "short"

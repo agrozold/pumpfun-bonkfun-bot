@@ -43,7 +43,7 @@ class PumpFunPumpPortalProcessor:
         mint = token_data.get("mint", "").lower()
         if mint.endswith("pump"):
             return True
-        
+
         # Fallback to pool field
         pool = token_data.get("pool", "").lower()
         return pool in self.supported_pool_names

@@ -46,7 +46,7 @@ async def get_creator_stats_optimized(
         result = await _get_creator_stats_helius(creator_address, limit, timeout)
         if result:
             return result
-    
+
     # Fallback to RPC-based analysis
     return await _get_creator_stats_rpc(creator_address, limit, timeout)
 
@@ -142,7 +142,7 @@ async def _get_creator_stats_rpc(
         }
 
         result = await rpc.post_rpc(body)
-        
+
         if not result or "result" not in result:
             return None
 
@@ -161,7 +161,7 @@ async def _get_creator_stats_rpc(
         # Basic analysis - count transaction types
         # Note: RPC doesn't give us parsed transaction types like Helius
         # We can only count total transactions and check for errors
-        
+
         error_count = 0
         for sig in signatures:
             if sig.get("err"):
@@ -218,20 +218,20 @@ async def is_creator_suspicious(creator_address: str) -> tuple[bool, list[str]]:
     Returns (is_suspicious, reasons).
     """
     stats = await get_creator_stats_optimized(creator_address, limit=30)
-    
+
     if not stats:
         return False, ["Could not analyze creator"]
-    
+
     reasons = []
-    
+
     # Check for suspicious patterns
     if stats.get("tokens_created", 0) > 10:
         reasons.append(f"Created {stats['tokens_created']} tokens (possible serial rugger)")
-    
+
     if stats.get("large_sells", 0) > 5:
         reasons.append(f"Multiple large sells ({stats['large_sells']})")
-    
+
     if stats.get("suspicious_patterns"):
         reasons.extend(stats["suspicious_patterns"])
-    
+
     return len(reasons) > 0, reasons

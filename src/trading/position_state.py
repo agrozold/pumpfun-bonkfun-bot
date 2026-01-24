@@ -83,10 +83,10 @@ class StateMachine:
         sm = StateMachine(initial_state=PositionState.PENDING_BUY)
         sm.transition_to(PositionState.OPENING, reason="buy confirmed")
     """
-    
+
     current_state: PositionState
     history: list = field(default_factory=list)
-    
+
     def __post_init__(self):
         # Записываем начальное состояние
         self.history.append(StateTransition(
@@ -95,15 +95,15 @@ class StateMachine:
             timestamp=datetime.utcnow(),
             reason="initial"
         ))
-    
+
     def can_transition_to(self, new_state: PositionState) -> bool:
         """Проверить возможность перехода"""
         valid_next = VALID_TRANSITIONS.get(self.current_state, set())
         return new_state in valid_next
-    
+
     def transition_to(
-        self, 
-        new_state: PositionState, 
+        self,
+        new_state: PositionState,
         reason: str = "",
         trace_id: str = None,
         force: bool = False
@@ -124,10 +124,10 @@ class StateMachine:
             raise InvalidStateTransitionError(
                 f"Invalid transition: {self.current_state.value} -> {new_state.value}"
             )
-        
+
         old_state = self.current_state
         self.current_state = new_state
-        
+
         transition = StateTransition(
             from_state=old_state,
             to_state=new_state,
@@ -136,17 +136,17 @@ class StateMachine:
             trace_id=trace_id
         )
         self.history.append(transition)
-        
+
         logger.info(
             f"State transition: {old_state.value} -> {new_state.value} "
             f"(reason: {reason})"
         )
-    
+
     @property
     def is_final(self) -> bool:
         """Проверка финального состояния"""
         return self.current_state in {PositionState.CLOSED, PositionState.FAILED}
-    
+
     @property
     def is_active(self) -> bool:
         """Проверка активности (для обратной совместимости)"""
@@ -158,7 +158,7 @@ class StateMachine:
             PositionState.PENDING_SELL,
             PositionState.CLOSING
         }
-    
+
     def to_dict(self) -> dict:
         """Сериализация для JSON"""
         return {
@@ -174,19 +174,19 @@ class StateMachine:
                 for t in self.history
             ]
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'StateMachine':
         """Десериализация из JSON"""
         state_str = data.get('current_state', 'open')
-        
+
         # Миграция: is_active -> state
         if 'current_state' not in data and 'is_active' in data:
             state_str = 'open' if data['is_active'] else 'closed'
-        
+
         current = PositionState(state_str)
         sm = cls(current_state=current)
-        
+
         # Восстановление истории
         if 'history' in data:
             sm.history = []
@@ -198,5 +198,5 @@ class StateMachine:
                     reason=t.get('reason', ''),
                     trace_id=t.get('trace_id')
                 ))
-        
+
         return sm

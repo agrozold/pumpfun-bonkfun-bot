@@ -41,7 +41,7 @@ def get_cached_creator_status(address: str, ttl_seconds: int = 3600) -> Tuple[bo
         c = conn.cursor()
         c.execute("SELECT is_risky, risk_score, last_checked FROM creator_cache WHERE address = ?", (address,))
         row = c.fetchone()
-    
+
     if row:
         is_risky = bool(row["is_risky"])
         risk_score = row["risk_score"] or 0

@@ -60,7 +60,7 @@ class PlatformAwareBuyer(Trader):
             # Get pool address and verify it exists before proceeding
             pool_address = self._get_pool_address(token_info, address_provider)
             logger.info(f"[INIT] Pool address: {pool_address}")
-            
+
             # Quick check if pool account exists with retries (race condition fix)
             max_retries = 5
             pool_exists = False
@@ -68,13 +68,13 @@ class PlatformAwareBuyer(Trader):
                 try:
                     logger.info(f"[CHECK] Checking pool account exists... (attempt {attempt+1}/{max_retries})")
                     await self.client.get_account_info(pool_address)
-                    logger.info(f"[CHECK] Pool account exists [OK]")
+                    logger.info("[CHECK] Pool account exists [OK]")
                     pool_exists = True
                     break
                 except ValueError as e:
                     if "not found" in str(e).lower():
                         if attempt < max_retries - 1:
-                            logger.warning(f"[WAIT] Pool not ready, waiting 1s...")
+                            logger.warning("[WAIT] Pool not ready, waiting 1s...")
                             await asyncio.sleep(1)
                         else:
                             logger.warning(
@@ -83,7 +83,7 @@ class PlatformAwareBuyer(Trader):
                             )
                     else:
                         raise
-            
+
             if not pool_exists:
                 return TradeResult(
                     success=False,
@@ -239,7 +239,7 @@ class PlatformAwareBuyer(Trader):
             if "Invalid bonding curve state" in error_str or "virtual_token_reserves: 0" in error_str:
                 logger.warning(f"[MIGRATE] Bonding curve unavailable for {token_info.symbol}, trying fallback...")
                 return await self._fallback_buy(token_info, self.amount)
-            
+
             logger.exception("Buy operation failed")
             return TradeResult(
                 success=False, platform=token_info.platform, error_message=str(e)
@@ -260,7 +260,7 @@ class PlatformAwareBuyer(Trader):
                 priority_fee=100_000,
                 max_retries=self.max_retries,
             )
-            
+
             # Try PumpSwap first
             logger.info(f"[FALLBACK] Trying PumpSwap BUY for {token_info.symbol}...")
             success, sig, error, token_amount, price = await fallback_buyer.buy_via_pumpswap(
@@ -268,7 +268,7 @@ class PlatformAwareBuyer(Trader):
                 sol_amount=sol_amount,
                 symbol=token_info.symbol,
             )
-            
+
             if success:
                 logger.info(f"[OK] PumpSwap BUY successful: {sig}")
                 return TradeResult(
@@ -278,7 +278,7 @@ class PlatformAwareBuyer(Trader):
                     amount=token_amount,
                     price=price,
                 )
-            
+
             # Fallback to Jupiter
             logger.info(f"[FALLBACK] PumpSwap failed: {error}, trying Jupiter...")
             success, sig, error = await fallback_buyer.buy_via_jupiter(
@@ -286,7 +286,7 @@ class PlatformAwareBuyer(Trader):
                 sol_amount=sol_amount,
                 symbol=token_info.symbol,
             )
-            
+
             if success:
                 logger.info(f"[OK] Jupiter BUY successful: {sig}")
                 return TradeResult(
@@ -296,14 +296,14 @@ class PlatformAwareBuyer(Trader):
                     amount=0,
                     price=0,
                 )
-            
+
             logger.error(f"[FAIL] All fallback buy methods failed: {error}")
             return TradeResult(
                 success=False,
                 platform=token_info.platform,
                 error_message=f"Fallback buy failed: {error}",
             )
-                
+
         except Exception as e:
             logger.exception("Fallback buy operation failed")
             return TradeResult(
@@ -550,7 +550,7 @@ class PlatformAwareSeller(Trader):
                     logger.info(f"[VERIFY OK] Token balance after sell: {remaining}")
                 except Exception as ve:
                     logger.warning(f"[VERIFY] Could not verify balance: {ve}")
-                
+
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
                 return TradeResult(
                     success=True,
@@ -632,13 +632,13 @@ class PlatformAwareSeller(Trader):
                 max_retries=self.max_retries,
                 jupiter_api_key=self.jupiter_api_key,
             )
-            
+
             success, tx_signature, error = await fallback_seller.sell(
                 mint=token_info.mint,
                 token_amount=token_amount,
                 symbol=token_info.symbol,
             )
-            
+
             if success:
                 logger.info(f"[OK] Fallback sell successful: {tx_signature}")
                 return TradeResult(
@@ -655,7 +655,7 @@ class PlatformAwareSeller(Trader):
                     platform=token_info.platform,
                     error_message=f"Fallback sell failed: {error}",
                 )
-                
+
         except Exception as e:
             logger.exception("Fallback sell operation failed")
             return TradeResult(

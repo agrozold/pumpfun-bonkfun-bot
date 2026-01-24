@@ -126,7 +126,7 @@ class WhaleTracker:
         self.time_window_minutes = time_window_minutes
         self.time_window_seconds = time_window_minutes * 60
         self.target_platform = platform  # None = все платформы, иначе только указанная
-        
+
         # Стейблкоины для игнорирования (не копируем сделки с ними)
         self.stablecoin_filter = set(stablecoin_filter or [])
         if self.stablecoin_filter:
@@ -255,7 +255,7 @@ class WhaleTracker:
         3. Helius WSS не используем - даёт 429 rate limit
         """
         public_wss = "wss://api.mainnet-beta.solana.com"
-        
+
         # Если уже переключились на fallback - используем публичный Solana
         if self._use_fallback_wss:
             logger.warning("[WHALE] WSS ENDPOINT: Using PUBLIC SOLANA (fallback mode)")

@@ -153,13 +153,13 @@ class JitoSender:
             if status:
                 state = status.get("status", "Unknown")
                 if state == "Landed":
-                    logger.info(f"[JITO] Bundle landed!")
+                    logger.info("[JITO] Bundle landed!")
                     return True
                 elif state in ("Failed", "Invalid"):
                     logger.warning(f"[JITO] Bundle {state}")
                     return False
             await asyncio.sleep(1.0)
-        logger.warning(f"[JITO] Bundle timeout")
+        logger.warning("[JITO] Bundle timeout")
         return False
 
 

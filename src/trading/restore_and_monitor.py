@@ -22,25 +22,25 @@ async def restore_and_monitor_positions(
     logger.warning("=" * 70)
     logger.warning("[RESTORE MONITOR] Starting old position recovery and monitoring...")
     logger.warning("=" * 70)
-    
+
     positions = load_positions()
-    
+
     if not positions:
         logger.info("[RESTORE MONITOR] No old positions to restore")
         return
-    
+
     logger.warning(f"[RESTORE MONITOR] Found {len(positions)} old positions to monitor:")
     for pos in positions:
         logger.warning(f"  - {pos.symbol}: {pos.quantity:.2f} tokens @ {pos.entry_price:.10f} SOL")
         logger.warning(f"    SL: {pos.stop_loss_price:.10f} SOL, TSL: {pos.tsl_enabled}")
-    
+
     # Start monitoring all positions
     monitor_tasks = []
     for position in positions:
         if not position.is_active:
             logger.info(f"[RESTORE MONITOR] Skipping closed position: {position.symbol}")
             continue
-        
+
         # Create minimal TokenInfo for monitoring
         from interfaces.core import TokenInfo
         token_info = TokenInfo(
@@ -53,24 +53,24 @@ async def restore_and_monitor_positions(
             creator=None,
             creation_timestamp=int(datetime.utcnow().timestamp()),
         )
-        
+
         # If we have bonding_curve, set it
         if position.bonding_curve:
             try:
                 token_info.bonding_curve = Pubkey.from_string(position.bonding_curve)
             except:
                 pass
-        
+
         logger.warning(f"[RESTORE MONITOR] Starting monitor for {position.symbol} (SL: {position.stop_loss_price:.2e})")
-        
+
         # Start monitoring task
         task = asyncio.create_task(
             universal_trader._monitor_position_until_exit(token_info, position)
         )
         monitor_tasks.append(task)
-    
+
     logger.warning(f"[RESTORE MONITOR] Started {len(monitor_tasks)} monitor tasks")
-    
+
     # Wait for all monitors (they run until position is closed)
     if monitor_tasks:
         # await asyncio.gather(*monitor_tasks, return_exceptions=True)  # REMOVED - non-blocking

@@ -51,7 +51,7 @@ class LetsBonkPumpPortalProcessor:
         try:
             # Log incoming data for debugging
             logger.info(f"[BONK] Processing token, keys: {list(token_data.keys())}")
-            
+
             # Extract required fields - same structure as pump.fun!
             name = token_data.get("name", "")
             symbol = token_data.get("symbol", "")
@@ -61,7 +61,7 @@ class LetsBonkPumpPortalProcessor:
             pool_raw = token_data.get("pool")
             bonding_key = token_data.get("bondingCurveKey")
             logger.info(f"[BONK-DEBUG] pool={pool_raw}, bondingCurveKey={bonding_key}")
-            
+
             # pool field might be "bonk" string, not an address!
             # If pool is not a valid pubkey (32+ chars), derive it
             pool_state_str = None
@@ -94,7 +94,7 @@ class LetsBonkPumpPortalProcessor:
             else:
                 # Fallback to derivation (may be wrong for some tokens)
                 pool_state = self.address_provider.derive_pool_address(mint)
-                logger.warning(f"[BONK] No pool/bondingCurveKey, deriving pool_state (may fail!)")
+                logger.warning("[BONK] No pool/bondingCurveKey, deriving pool_state (may fail!)")
 
             # Create temp TokenInfo to get additional accounts
             token_info_temp = TokenInfo(
@@ -109,7 +109,7 @@ class LetsBonkPumpPortalProcessor:
                 base_vault=None,
                 quote_vault=None,
             )
-            
+
             additional_accounts = self.address_provider.get_additional_accounts(token_info_temp)
             base_vault = additional_accounts.get("base_vault")
             quote_vault = additional_accounts.get("quote_vault")

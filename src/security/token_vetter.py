@@ -226,22 +226,22 @@ class TokenVetter:
         try:
             rpc = await self._get_rpc_manager()
             result = await rpc.get_account_info(mint_address, use_cache=True)
-            
+
             if not result or not result.get("value"):
                 return {"error": "Mint not found"}
-            
+
             data_b64 = result["value"].get("data", [])
             if isinstance(data_b64, list) and len(data_b64) >= 1:
                 data = base64.b64decode(data_b64[0])
             else:
                 return {"error": "Invalid data format"}
-            
+
             if len(data) < MINT_LAYOUT_SIZE:
                 return {"error": "Invalid mint data"}
-            
+
             mint_auth_option = int.from_bytes(data[0:4], "little")
             freeze_auth_option = int.from_bytes(data[46:50], "little")
-            
+
             return {
                 "mint_revoked": mint_auth_option == 0,
                 "freeze_revoked": freeze_auth_option == 0

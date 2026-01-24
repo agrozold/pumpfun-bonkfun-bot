@@ -66,8 +66,8 @@ class CreatorHistoryTracker:
             return []
 
         session = await self._get_session()
-        url = f"https://public-api.birdeye.so/v1/wallet/token_list"
-        
+        url = "https://public-api.birdeye.so/v1/wallet/token_list"
+
         headers = {
             "X-API-KEY": self.birdeye_api_key,
             "x-chain": "solana",
@@ -106,7 +106,7 @@ class CreatorHistoryTracker:
             return []
 
         session = await self._get_session()
-        
+
         # Get signatures
         payload = {
             "jsonrpc": "2.0",
@@ -123,18 +123,18 @@ class CreatorHistoryTracker:
             ) as resp:
                 if resp.status != 200:
                     return []
-                
+
                 data = await resp.json()
                 signatures = data.get("result", [])
-                
+
                 created_tokens = []
-                
+
                 # Analyze transactions (limit to first 30 for speed)
                 for sig_info in signatures[:30]:
                     sig = sig_info.get("signature")
                     if not sig:
                         continue
-                        
+
                     # Get transaction
                     tx_payload = {
                         "jsonrpc": "2.0",
@@ -145,7 +145,7 @@ class CreatorHistoryTracker:
                             {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
                         ],
                     }
-                    
+
                     async with session.post(
                         self.rpc_endpoint,
                         json=tx_payload,
@@ -153,25 +153,25 @@ class CreatorHistoryTracker:
                     ) as tx_resp:
                         if tx_resp.status != 200:
                             continue
-                            
+
                         tx_data = await tx_resp.json()
                         tx = tx_data.get("result")
-                        
+
                         if not tx or tx.get("meta", {}).get("err"):
                             continue
-                        
+
                         # Check program interactions
                         instructions = (
                             tx.get("transaction", {})
                             .get("message", {})
                             .get("instructions", [])
                         )
-                        
+
                         is_creation = any(
                             ix.get("programId") in [PUMP_FUN_PROGRAM, LETS_BONK_PROGRAM]
                             for ix in instructions
                         )
-                        
+
                         if is_creation:
                             # Extract mint from token balances
                             post_balances = tx.get("meta", {}).get("postTokenBalances", [])
@@ -184,12 +184,12 @@ class CreatorHistoryTracker:
                                         "timestamp": sig_info.get("blockTime", 0),
                                         "slot": sig_info.get("slot", 0),
                                     })
-                    
+
                     await asyncio.sleep(0.05)  # Rate limit
-                    
+
                 self._set_cached(cache_key, created_tokens)
                 return created_tokens
-                
+
         except Exception as e:
             logger.error(f"[CREATOR] RPC transaction fetch failed: {e}")
             return []
@@ -211,7 +211,7 @@ class CreatorHistoryTracker:
         """
         # Get transactions from RPC
         tokens = await self.get_creator_transactions_rpc(creator_wallet)
-        
+
         if not tokens:
             return {
                 "total_tokens_found": 0,
@@ -227,10 +227,10 @@ class CreatorHistoryTracker:
         now = datetime.utcnow()
         week_ago = now - timedelta(days=7)
         day_ago = now - timedelta(days=1)
-        
+
         recent_7d = 0
         recent_24h = 0
-        
+
         for t in tokens:
             ts = t.get("timestamp")
             if ts and isinstance(ts, (int, float)):
@@ -243,7 +243,7 @@ class CreatorHistoryTracker:
         # Calculate reputation score (0-100)
         # Lower score = higher risk
         score = 100
-        
+
         # Penalize for many tokens
         if total > 100:
             score -= 50
@@ -253,7 +253,7 @@ class CreatorHistoryTracker:
             score -= 15
         elif total > 10:
             score -= 5
-            
+
         # Penalize for recent activity (potential rug factory)
         if recent_24h > 5:
             score -= 40
@@ -261,7 +261,7 @@ class CreatorHistoryTracker:
             score -= 20
         elif recent_24h > 0:
             score -= 5
-            
+
         if recent_7d > 20:
             score -= 30
         elif recent_7d > 10:
@@ -310,17 +310,17 @@ class CreatorHistoryTracker:
             Tuple of (is_safe, stats)
         """
         stats = await self.get_creator_stats(creator_wallet)
-        
+
         if stats.get("risk_level") == "unknown":
             # New creator - cautious but not blocking
             return True, stats
-            
+
         is_safe = (
             stats["total_tokens_found"] <= max_total_tokens
             and stats["recent_tokens_24h"] <= max_tokens_24h
             and stats["reputation_score"] >= min_score
         )
-        
+
         return is_safe, stats
 
     async def close(self):

@@ -42,7 +42,7 @@ class UniversalPumpPortalListener(WatchdogMixin, BaseTokenListener):
         super().__init__()
         self.logger = logger  # Для WatchdogMixin
         self._websocket = None  # Для reconnect
-        
+
         # Add API key to URL if provided
         if api_key:
             self.pumpportal_url = f"{pumpportal_url}?api-key={api_key}"
@@ -109,7 +109,7 @@ class UniversalPumpPortalListener(WatchdogMixin, BaseTokenListener):
                     self._websocket = websocket
                     await self._subscribe_to_new_tokens(websocket)
                     ping_task = asyncio.create_task(self._ping_loop(websocket))
-                    
+
                     # Запускаем watchdog
                     await self._start_watchdog()
                     consecutive_errors = 0
@@ -117,10 +117,10 @@ class UniversalPumpPortalListener(WatchdogMixin, BaseTokenListener):
                     try:
                         while True:
                             token_info = await self._wait_for_token_creation(websocket)
-                            
+
                             # Обновляем watchdog при любом ответе
                             self._update_last_message_time()
-                            
+
                             if not token_info:
                                 continue
 

@@ -279,7 +279,7 @@ async def start_bot(config_path: str):
         # CRITICAL: Restore and monitor old positions FIRST
         logger.warning("[MAIN] Restoring and monitoring old positions...")
         asyncio.create_task(restore_and_monitor_positions(trader))
-        
+
         # Then start listening for new tokens
         logger.warning("[MAIN] Starting new token listener...")
 
@@ -402,14 +402,14 @@ def main() -> None:
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    
+
     # Check if specific config file passed as argument
     if len(sys.argv) > 1:
         config_path = sys.argv[1]
         logging.info(f"Starting single bot from: {config_path}")
         asyncio.run(start_bot(config_path))
         return
-    
+
     # Log supported platforms and listeners
     try:
         from platforms import platform_factory

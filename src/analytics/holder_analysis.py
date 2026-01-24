@@ -144,7 +144,7 @@ class HolderAnalyzer:
     async def analyze_concentration(self, mint: str, total_supply: float | None = None) -> dict[str, Any]:
         """Analyze token holder concentration using RPC."""
         holders = await self.get_top_holders_rpc(mint)
-        
+
         if not holders:
             return {
                 "top_10_pct": 0,
@@ -161,7 +161,7 @@ class HolderAnalyzer:
             supply_data = await self.get_token_supply(mint)
             if supply_data:
                 total_supply = supply_data[0]
-                
+
         if not total_supply or total_supply <= 0:
             total_supply = sum(h.get("uiAmount", 0) or 0 for h in holders)
 
@@ -178,7 +178,7 @@ class HolderAnalyzer:
             }
 
         holder_amounts = sorted([h.get("uiAmount", 0) or 0 for h in holders], reverse=True)
-        
+
         top_10_balance = sum(holder_amounts[:10])
         top_20_balance = sum(holder_amounts[:20])
         largest = holder_amounts[0] if holder_amounts else 0
@@ -210,15 +210,15 @@ class HolderAnalyzer:
     async def is_safe_distribution(self, mint: str, max_top10_concentration: float = 80.0, max_single_holder: float = 40.0) -> tuple[bool, dict]:
         """Check if token has safe holder distribution."""
         analysis = await self.analyze_concentration(mint)
-        
+
         if analysis.get("error") and analysis.get("risk_level") == "unknown":
             return False, analysis
-            
+
         is_safe = (
             analysis["top_10_pct"] <= max_top10_concentration
             and analysis["largest_holder_pct"] <= max_single_holder
         )
-        
+
         return is_safe, analysis
 
     async def close(self):

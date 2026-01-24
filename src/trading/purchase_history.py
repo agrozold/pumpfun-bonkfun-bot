@@ -27,10 +27,10 @@ def load_purchase_history() -> set[str]:
         Set of token mint addresses that were ever purchased.
     """
     _ensure_data_dir()
-    
+
     if not HISTORY_FILE.exists():
         return set()
-    
+
     try:
         with open(HISTORY_FILE, 'r') as f:
             # Use file locking for safe concurrent access
@@ -82,7 +82,7 @@ def add_to_purchase_history(
         True if added successfully, False otherwise.
     """
     _ensure_data_dir()
-    
+
     try:
         # Load existing data
         data = {"purchased_tokens": {}}
@@ -93,11 +93,11 @@ def add_to_purchase_history(
                     data = json.load(f)
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        
+
         # Add new token
         if "purchased_tokens" not in data:
             data["purchased_tokens"] = {}
-            
+
         data["purchased_tokens"][mint] = {
             "symbol": symbol,
             "bot_name": bot_name,
@@ -106,7 +106,7 @@ def add_to_purchase_history(
             "amount": amount,
             "timestamp": datetime.utcnow().isoformat(),
         }
-        
+
         # Save with exclusive lock
         with open(HISTORY_FILE, 'w') as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
@@ -114,13 +114,13 @@ def add_to_purchase_history(
                 json.dump(data, f, indent=2)
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        
+
         logger.warning(
             f"[HISTORY] Added {symbol} ({mint[:8]}...) to purchase history "
             f"(total: {len(data['purchased_tokens'])} tokens)"
         )
         return True
-        
+
     except Exception as e:
         logger.error(f"[HISTORY] Failed to add token to history: {e}")
         return False
@@ -129,10 +129,10 @@ def add_to_purchase_history(
 def get_purchase_history_stats() -> dict:
     """Get statistics about purchase history."""
     _ensure_data_dir()
-    
+
     if not HISTORY_FILE.exists():
         return {"total_tokens": 0, "file_exists": False}
-    
+
     try:
         with open(HISTORY_FILE, 'r') as f:
             data = json.load(f)

@@ -58,18 +58,18 @@ class Position:
     tsl_activation_pct: float = 0.20  # Activate TSL after +20% profit
     tsl_trail_pct: float = 0.10  # Trail 10% below high water mark
     tsl_sell_pct: float = 0.50  # Sell 50% of position when TSL triggers
-    
+
     # TSL State
     tsl_active: bool = False
     high_water_mark: float = 0.0  # Highest price since entry
     tsl_trigger_price: float = 0.0  # Current trailing stop level
-    
+
     # Status
     is_active: bool = True
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
-    
+
     # Platform info for restoration
     platform: str = "pump_fun"
     bonding_curve: str | None = None
@@ -198,14 +198,14 @@ class Position:
             tsl_sell_pct=tsl_sell_pct,
             high_water_mark=entry_price,
         )
-        
+
         if tsl_enabled:
             activation_price = entry_price * (1 + tsl_activation_pct)
             logger.warning(
                 f"[TSL] {symbol} TSL enabled: activates at {activation_price:.10f} "
                 f"(+{tsl_activation_pct*100:.0f}%), trails {tsl_trail_pct*100:.0f}%"
             )
-        
+
         return position
 
     def update_price(self, current_price: float) -> None:
@@ -218,10 +218,10 @@ class Position:
         """
         if not self.is_active or not self.tsl_enabled:
             return
-        
+
         # Calculate current profit percentage
         profit_pct = (current_price - self.entry_price) / self.entry_price
-        
+
         # Check TSL activation
         if not self.tsl_active and profit_pct >= self.tsl_activation_pct:
             self.tsl_active = True
@@ -231,7 +231,7 @@ class Position:
                 f"[TSL] {self.symbol} TSL ACTIVATED at {current_price:.10f} "
                 f"(+{profit_pct*100:.1f}%). Trail stop: {self.tsl_trigger_price:.10f}"
             )
-        
+
         # Update high water mark and trailing stop if TSL is active
         if self.tsl_active and current_price > self.high_water_mark:
             old_hwm = self.high_water_mark
@@ -365,7 +365,7 @@ def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -
         success = _positions_writer.write_json(filepath, active_positions)
         if success:
             logger.info(f"Saved {len(active_positions)} positions (atomic)")
-        
+
         # ALSO SAVE TO REDIS
         try:
             import redis
@@ -396,11 +396,11 @@ def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
     if not filepath.exists():
         logger.info(f"No positions file found at {filepath}")
         return []
-    
+
     try:
         with open(filepath, "r") as f:
             data = json.load(f)
-        
+
         positions = [Position.from_dict(p) for p in data]
         logger.info(f"Loaded {len(positions)} positions from {filepath}")
         return positions

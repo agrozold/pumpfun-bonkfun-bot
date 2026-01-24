@@ -52,24 +52,24 @@ class WatchdogMixin:
         while not self._is_shutting_down:
             try:
                 await asyncio.sleep(self.watchdog_check_interval)
-                
+
                 if self._is_shutting_down:
                     break
 
                 elapsed = time.monotonic() - self._last_message_time
-                
+
                 if elapsed > self.watchdog_timeout:
                     self._log_warning(
                         f"Watchdog timeout: no messages for {elapsed:.1f}s "
                         f"(threshold: {self.watchdog_timeout}s). Reconnecting..."
                     )
                     self._reconnect_count += 1
-                    
+
                     try:
                         await self._trigger_reconnect()
                     except Exception as e:
                         self._log_error(f"Reconnect failed: {e}")
-                    
+
                     self._last_message_time = time.monotonic()
 
             except asyncio.CancelledError:

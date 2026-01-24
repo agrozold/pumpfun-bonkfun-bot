@@ -34,3 +34,25 @@ learning-examples/
 # Temp
 ..bfg-report/
 =
+
+# Build artifacts
+nohup.out
+=
+*.bfg-report/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local configs
+.env
+.env.local
+.env.*.local

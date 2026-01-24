@@ -47,7 +47,7 @@ _cache_stats = {"hits": 0, "misses": 0}
 
 CACHE_TTL = {
     "account_info": 10,      # 10 sec
-    "token_balance": 5,      # 5 sec  
+    "token_balance": 5,      # 5 sec
     "multiple_accounts": 10, # 10 sec
     "health": 30,            # 30 sec
     "balance": 5,            # 5 sec
@@ -61,7 +61,7 @@ def _cache_get(key: str):
         if cached is not None:
             _cache_stats["hits"] += 1
             return cached
-    
+
     # Fall back to local cache
     if key in _rpc_cache:
         value, expiry = _rpc_cache[key]
@@ -77,7 +77,7 @@ def _cache_set(key: str, value, ttl: int):
     # Save to Redis for cross-bot sharing
     if REDIS_AVAILABLE:
         cache_set(f"rpc:{key}", value, ttl)
-    
+
     # Also save locally for speed
     if len(_rpc_cache) > 5000:
         now = _time.time()
@@ -167,7 +167,7 @@ class SolanaClient:
         cached = _cache_get(cache_key)
         if cached is not None:
             return Account.from_json(cached)
-            
+
         body = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -195,14 +195,14 @@ class SolanaClient:
         cached = _cache_get(cache_key)
         if cached is not None:
             return Account.from_json(cached)
-            
+
         client = await self.get_client()
         response = await client.get_account_info(
             pubkey, encoding="base64"
         )  # base64 encoding for account data by default
         if not response.value:
             raise ValueError(f"Account {pubkey} not found")
-        
+
         _cache_set(cache_key, response.value.to_json(), CACHE_TTL["account_info"])
         return response.value
 
@@ -220,19 +220,19 @@ class SolanaClient:
         """
         if not pubkeys:
             return []
-        
+
         # Solana limit is 100 accounts per call
         if len(pubkeys) > 100:
             logger.warning(f"get_multiple_accounts: truncating {len(pubkeys)} to 100")
             pubkeys = pubkeys[:100]
-        
+
         client = await self.get_client()
         response = await client.get_multiple_accounts(pubkeys, encoding="base64")
-        
+
         results = []
         for account in response.value:
             results.append(account if account else None)
-        
+
         return results
 
     async def get_token_account_balance(self, token_account: Pubkey) -> int:
@@ -248,11 +248,11 @@ class SolanaClient:
         cached = _cache_get(cache_key)
         if cached is not None:
             return Account.from_json(cached)
-            
+
         client = await self.get_client()
         response = await client.get_token_account_balance(token_account)
         result = int(response.value.amount) if response.value else 0
-        
+
         _cache_set(cache_key, result, CACHE_TTL["token_balance"])
         return result
 
@@ -344,7 +344,7 @@ class SolanaClient:
                     tip_ix = jito.create_tip_instruction(signer_keypair.pubkey())
                     tx_instructions.append(tip_ix)
                     logger.debug(f"[JITO] Added tip: {jito.tip_lamports} lamports")
-                
+
                 message = Message(tx_instructions, signer_keypair.pubkey())
                 transaction = Transaction([signer_keypair], message, recent_blockhash)
 
@@ -353,7 +353,7 @@ class SolanaClient:
                 )
 
                 logger.info(f"Sending transaction attempt {attempt + 1}/{max_retries}...")
-                
+
                 # Try JITO first for faster landing
                 if jito.enabled:
                     try:
@@ -364,7 +364,7 @@ class SolanaClient:
                         logger.warning("[JITO] Failed, falling back to regular RPC")
                     except Exception as jito_err:
                         logger.warning(f"[JITO] Error: {jito_err}, falling back to regular RPC")
-                
+
                 # Fallback to regular RPC
                 response = await client.send_transaction(transaction, tx_opts)
                 logger.info(f"Transaction sent successfully: {response.value}")
@@ -378,36 +378,36 @@ class SolanaClient:
                 # ============================================
                 # NON-RETRYABLE ERRORS - fail immediately
                 # ============================================
-                
+
                 # BondingCurveComplete (6005/0x1775) - token migrated to Raydium
                 # No point retrying - bonding curve is permanently closed
                 if "0x1775" in error_str or "6005" in error_str or "bondingcurvecomplete" in error_str_lower:
                     logger.error(
-                        f"BondingCurveComplete: Token has migrated to Raydium, cannot buy on bonding curve"
+                        "BondingCurveComplete: Token has migrated to Raydium, cannot buy on bonding curve"
                     )
                     raise RuntimeError(
                         "BondingCurveComplete: Token migrated to Raydium"
                     ) from e
-                
+
                 # BondingCurveNotComplete (6006/0x1776) - cannot sell, curve still active
                 if "0x1776" in error_str or "6006" in error_str or "bondingcurvenotcomplete" in error_str_lower:
                     logger.error(
-                        f"BondingCurveNotComplete: Cannot perform this operation, curve still active"
+                        "BondingCurveNotComplete: Cannot perform this operation, curve still active"
                     )
                     raise RuntimeError(
                         "BondingCurveNotComplete: Bonding curve still active"
                     ) from e
-                
+
                 # SlippageExceeded - price moved too much
                 if "slippage" in error_str_lower or "0x1772" in error_str:
-                    logger.error(f"Slippage exceeded: Price moved beyond tolerance")
+                    logger.error("Slippage exceeded: Price moved beyond tolerance")
                     raise RuntimeError("SlippageExceeded: Price moved too much") from e
-                
+
                 # InsufficientFunds
                 if "insufficient" in error_str_lower or "not enough" in error_str_lower:
                     logger.error(f"Insufficient funds detected: {e}")
                     raise ValueError(f"Insufficient funds: {e}") from e
-                
+
                 # AccountNotFound / InvalidAccount - wrong addresses
                 if "account not found" in error_str_lower or "invalid account" in error_str_lower:
                     logger.error(f"Account error (non-retryable): {e}")
@@ -416,7 +416,7 @@ class SolanaClient:
                 # ============================================
                 # RETRYABLE ERRORS - continue retry loop
                 # ============================================
-                
+
                 if "blockhash not found" in error_str_lower or "blockhashnotfound" in error_str_lower:
                     logger.warning(f"Blockhash expired, fetching new one (attempt {attempt + 1})")
                     # Force refresh blockhash
@@ -461,7 +461,7 @@ class SolanaClient:
         """
         client = await self.get_client()
         sig_obj = Signature.from_string(signature) if isinstance(signature, str) else signature
-        
+
         try:
             logger.info(f"Waiting for confirmation (timeout: {timeout}s)...")
             await asyncio.wait_for(
@@ -484,7 +484,7 @@ class SolanaClient:
                         return False
                 # Status not found yet - check transaction directly
                 tx_resp = await client.get_transaction(
-                    sig_obj, 
+                    sig_obj,
                     encoding="jsonParsed",
                     max_supported_transaction_version=0
                 )

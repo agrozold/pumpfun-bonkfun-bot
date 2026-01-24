@@ -186,7 +186,7 @@ class UniversalBlockListener(BaseTokenListener):
         """
         ping_failures = 0
         max_ping_failures = 3  # Allow 3 failed pings before closing
-        
+
         try:
             while True:
                 await asyncio.sleep(self.ping_interval)

@@ -1,0 +1,32 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install linters
+        run: |
+          pip install ruff black isort
+      
+      - name: Run ruff
+        run: ruff check src/ --output-format=github
+      
+      - name: Check black formatting
+        run: black --check src/ tests/
+      
+      - name: Check import sorting
+        run: isort --check-only src/ tests/

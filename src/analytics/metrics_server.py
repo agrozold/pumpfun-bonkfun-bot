@@ -144,28 +144,28 @@ async def health_handler(request: web.Request) -> web.Response:
 
 class MetricsServer:
     """HTTP сервер для метрик"""
-    
+
     def __init__(self, host: str = '0.0.0.0', port: int = 9090):
         self.host = host
         self.port = port
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
-    
+
     async def start(self) -> None:
         """Запустить сервер"""
         self._app = web.Application()
         self._app.router.add_get('/metrics', metrics_handler)
         self._app.router.add_get('/health', health_handler)
-        
+
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
-        
+
         self._site = web.TCPSite(self._runner, self.host, self.port)
         await self._site.start()
-        
+
         logger.info(f"Metrics server started on http://{self.host}:{self.port}/metrics")
-    
+
     async def stop(self) -> None:
         """Остановить сервер"""
         if self._site:
