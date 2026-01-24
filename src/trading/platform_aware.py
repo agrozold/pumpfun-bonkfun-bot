@@ -8,7 +8,7 @@ from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
-from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS, SystemAddresses
 from core.wallet import Wallet
 from interfaces.core import AddressProvider, Platform, TokenInfo
 from platforms import get_platform_implementations
@@ -538,7 +538,8 @@ class PlatformAwareSeller(Trader):
                 # VERIFY: Check token balance is actually 0 after sell
                 try:
                     from spl.token.instructions import get_associated_token_address
-                    ata = get_associated_token_address(self.wallet.pubkey, token_info.mint)
+                    token_prog = token_info.token_program_id or SystemAddresses.TOKEN_PROGRAM
+                    ata = get_associated_token_address(self.wallet.pubkey, token_info.mint, token_prog)
                     remaining = await self.client.get_token_account_balance(ata)
                     if remaining > 1000:  # More than dust remaining
                         logger.error(f"[VERIFY FAIL] Tokens still in wallet: {remaining / 10**6:.2f} - sell did NOT complete!")
