@@ -1,6 +1,5 @@
 #!/bin/bash
-# Управление systemd сервисами
-# Использование: ./commands/systemd-control.sh [start|stop|restart|status] [bot-name]
+# Управление systemd сервисами pumpfun-bot
 
 ACTION="$1"
 BOT="${2:-bot-sniper-0-pump}"
@@ -8,8 +7,8 @@ BOT="${2:-bot-sniper-0-pump}"
 case "$ACTION" in
     start)
         systemctl start "pumpfun-bot@${BOT}"
-        systemctl start pumpfun-metrics
-        echo "Started: $BOT + metrics"
+        echo "Started: $BOT"
+        systemctl status "pumpfun-bot@${BOT}" --no-pager -l
         ;;
     stop)
         systemctl stop "pumpfun-bot@${BOT}"
@@ -20,14 +19,22 @@ case "$ACTION" in
         echo "Restarted: $BOT"
         ;;
     status)
-        systemctl status "pumpfun-bot@${BOT}" --no-pager
+        systemctl status "pumpfun-bot@${BOT}" --no-pager -l
         ;;
     logs)
-        journalctl -u "pumpfun-bot@${BOT}" -f
+        journalctl -u "pumpfun-bot@${BOT}" -f --no-pager
+        ;;
+    enable)
+        systemctl enable "pumpfun-bot@${BOT}"
+        echo "Enabled: $BOT (will start on boot)"
+        ;;
+    list)
+        echo "Available bot configs:"
+        ls -1 /opt/pumpfun-bonkfun-bot/bots/*.yaml | xargs -n1 basename | sed 's/.yaml//'
         ;;
     *)
-        echo "Usage: systemd-control.sh [start|stop|restart|status|logs] [bot-name]"
-        echo "Available bots:"
-        ls -1 /opt/pumpfun-bonkfun-bot/bots/*.yaml | xargs -n1 basename | sed 's/.yaml//'
+        echo "Usage: $0 {start|stop|restart|status|logs|enable|list} [bot-name]"
+        echo "Default bot: bot-sniper-0-pump"
+        exit 1
         ;;
 esac
