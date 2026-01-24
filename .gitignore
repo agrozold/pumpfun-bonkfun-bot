@@ -61,3 +61,5 @@ test_dynamic_rpc.py
 test_full_setup.py
 test_stop_loss.py
 smart_money_wallets.json
+src/analytics/find_snipers.py
+src/analytics/top_snipers.py
