@@ -29,8 +29,51 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Constants
-TOKEN_DECIMALS = 6
+TOKEN_DECIMALS = 6  # Default, use get_token_decimals() for dynamic
 LAMPORTS_PER_SOL = 1_000_000_000
+
+# === DYNAMIC DECIMALS CACHE ===
+_decimals_cache: dict[str, int] = {}
+
+async def get_token_decimals(client, mint: "Pubkey") -> int:
+    """
+    Get token decimals from mint account.
+    Uses cache to avoid repeated RPC calls.
+    Falls back to TOKEN_DECIMALS (6) on error.
+    """
+    mint_str = str(mint)
+    
+    # Check cache
+    if mint_str in _decimals_cache:
+        return _decimals_cache[mint_str]
+    
+    try:
+        # Get mint account info
+        response = await client.get_account_info(mint, encoding="base64")
+        if response and response.value:
+            data = response.value.data
+            # Handle base64 encoded data
+            if isinstance(data, tuple):
+                import base64
+                data = base64.b64decode(data[0])
+            elif isinstance(data, str):
+                import base64
+                data = base64.b64decode(data)
+            
+            # Decimals is at offset 44 in SPL Token mint layout
+            if len(data) >= 45:
+                decimals = data[44]
+                _decimals_cache[mint_str] = decimals
+                if decimals != TOKEN_DECIMALS:
+                    logger.info(f"[DECIMALS] Token {mint_str[:8]}... has {decimals} decimals (not default 6)")
+                return decimals
+    except Exception as e:
+        logger.warning(f"[DECIMALS] Failed to get decimals for {mint_str[:8]}...: {e}, using default {TOKEN_DECIMALS}")
+    
+    # Fallback
+    _decimals_cache[mint_str] = TOKEN_DECIMALS
+    return TOKEN_DECIMALS
+# === END DYNAMIC DECIMALS ===
 
 # PumpSwap constants
 SOL_MINT = Pubkey.from_string("So11111111111111111111111111111111111111112")
