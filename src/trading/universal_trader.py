@@ -39,6 +39,9 @@ from trading.purchase_history import (
     add_to_purchase_history,
     load_purchase_history,
 )
+# === TRACE CONTEXT INTEGRATION ===
+from analytics.trace_context import TraceContext, get_current_trace
+from analytics.trace_recorder import init_trace_recorder, shutdown_trace_recorder
 from trading.position import is_token_in_positions
 from utils.logger import get_logger
 
@@ -2144,9 +2147,20 @@ class UniversalTrader:
         """
         try:
             # ============================================
-            # CROSS-BOT DUPLICATE CHECK - EARLIEST POSSIBLE!
+            # START TRACE CONTEXT - EARLIEST POSSIBLE!
             # ============================================
             mint_str = str(token_info.mint)
+            trace = TraceContext.start(
+                trade_type='buy',
+                mint=mint_str,
+                source='listener',
+                slot_detected=getattr(token_info, 'creation_slot', None)
+            )
+            logger.info(f"[TRACE] Started trace_id={trace.trace_id} for {token_info.symbol}")
+            
+            # ============================================
+            # CROSS-BOT DUPLICATE CHECK - EARLIEST POSSIBLE!
+            # ============================================
             if is_token_in_positions(mint_str):
                 logger.info(f"[SKIP] {token_info.symbol} - already in positions.json (cross-bot check)")
                 return False
@@ -2314,7 +2328,16 @@ class UniversalTrader:
             try:
                 logger.info(f"[DEBUG] token_info.bonding_curve = {getattr(token_info, 'bonding_curve', None)}")
                 logger.info(f"[BUY] Calling buyer.execute for {token_info.symbol}...")
+                
+                # === TRACE: Mark build complete ===
+                if trace:
+                    trace.mark_build_complete(symbol=token_info.symbol, platform=token_info.platform.value)
+                
                 buy_result: TradeResult = await self.buyer.execute(token_info)
+                
+                # === TRACE: Mark sent ===
+                if trace and buy_result.tx_signature:
+                    trace.mark_sent(provider='platform', signature=buy_result.tx_signature)
                 logger.info(
                     f"Buy result: success={buy_result.success}, "
                     f"tx_signature={buy_result.tx_signature}, "
@@ -2326,10 +2349,26 @@ class UniversalTrader:
 
             if buy_result.success:
                 logger.warning(f"[OK] BUY SUCCESS: {token_info.symbol} - {buy_result.tx_signature}")
+                
+                # === TRACE: Mark finalized success ===
+                if trace:
+                    trace.mark_finalized(success=True, slot_landed=None)
+                    from analytics.trace_recorder import record_trace
+                    await record_trace(trace)
+                    trace.finish()
+                
                 await self._handle_successful_buy(token_info, buy_result)
                 return True
             else:
                 logger.error(f"[FAIL] BUY FAILED: {token_info.symbol} - {buy_result.error_message or 'Unknown error'}")
+                
+                # === TRACE: Mark finalized fail ===
+                if trace:
+                    trace.mark_finalized(success=False, fail_reason=buy_result.error_message or 'Unknown')
+                    from analytics.trace_recorder import record_trace
+                    await record_trace(trace)
+                    trace.finish()
+                
                 await self._handle_failed_buy(token_info, buy_result)
                 return False
 
