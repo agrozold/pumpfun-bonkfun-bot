@@ -133,7 +133,7 @@ async def metrics_handler(request: web.Request) -> web.Response:
     metrics_output = generate_latest(REGISTRY)
     return web.Response(
         body=metrics_output,
-        content_type=CONTENT_TYPE_LATEST
+        headers={'Content-Type': CONTENT_TYPE_LATEST}
     )
 
 
