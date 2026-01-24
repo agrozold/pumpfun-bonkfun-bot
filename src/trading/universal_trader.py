@@ -533,6 +533,10 @@ class UniversalTrader:
         # === REDIS DEDUP STORE (initialized lazily) ===
         self._dedup_store = None
         self._dedup_enabled = True  # Set False to use only in-memory
+        
+        # CRITICAL BALANCE PROTECTION
+        # When balance <= 0.02 SOL, bot stops completely
+        self._critical_low_balance: bool = False
     # === DEDUP STORE HELPER METHODS ===
     
     async def _get_dedup_store(self):
@@ -598,9 +602,6 @@ class UniversalTrader:
     # === END DEDUP HELPER METHODS ===
 
 
-        # CRITICAL BALANCE PROTECTION
-        # When balance <= 0.02 SOL, bot stops completely
-        self._critical_low_balance: bool = False
 
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
@@ -2749,7 +2750,7 @@ class UniversalTrader:
         sell_retry_count = 0
 
         # CRITICAL: Track total monitor iterations to detect stuck loops
-        max_iterations = 86400  # Max 24 hours of 1-second checks
+        max_iterations = 36000  # Max 24 hours of 1-second checks
         total_iterations = 0
         MAX_SELL_RETRIES = 5
         pending_stop_loss = False  # Флаг что нужно продать по SL
