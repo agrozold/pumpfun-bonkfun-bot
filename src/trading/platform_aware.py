@@ -537,7 +537,7 @@ class PlatformAwareSeller(Trader):
             if success:
                 # VERIFY: Check token balance is actually 0 after sell
                 try:
-                    from core.pubkeys import get_associated_token_address
+                    from spl.token.instructions import get_associated_token_address
                     ata = get_associated_token_address(self.wallet.pubkey, token_info.mint)
                     remaining = await self.client.get_token_account_balance(ata)
                     if remaining > 1000:  # More than dust remaining
