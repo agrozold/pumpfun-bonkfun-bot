@@ -48,6 +48,15 @@ try:
 except ImportError as e:
     logging.warning(f"Metrics integration not available: {e}")
 # === End Metrics Integration ===
+
+# === AutoSweep Import ===
+try:
+    from security.auto_sweep import AutoSweeper, SweepConfig, TradingLimiter
+    AUTOSWEEP_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"AutoSweep not available: {e}")
+    AUTOSWEEP_AVAILABLE = False
+# === End AutoSweep Import ===
 from utils.logger import setup_file_logging, setup_trace_logging
 
 logger = logging.getLogger(__name__)
@@ -155,6 +164,7 @@ async def start_bot(config_path: str):
                 "enable_fixed", True
             ),
             fixed_priority_fee=cfg.get("priority_fees", {}).get("fixed_amount", 500000),
+            sell_fixed_priority_fee=cfg.get("priority_fees", {}).get("sell_fixed_amount", 10000),
             extra_priority_fee=cfg.get("priority_fees", {}).get(
                 "extra_percentage", 0.0
             ),
@@ -292,6 +302,26 @@ async def start_bot(config_path: str):
         except Exception as e:
             logger.warning(f"[METRICS] Failed to start metrics server: {e}")
         # === End Metrics Server ===
+        
+        # === Start AutoSweeper ===
+        if AUTOSWEEP_AVAILABLE:
+            try:
+                sweep_cfg = cfg.get("auto_sweep", {})
+                if sweep_cfg.get("enabled", False):
+                    sweep_config = SweepConfig.from_dict(sweep_cfg)
+                    sweeper = AutoSweeper(
+                        config=sweep_config,
+                        client=trader.solana_client,
+                        wallet=trader.wallet,
+                    )
+                    await sweeper.start()
+                    logger.info(f"[SWEEP] AutoSweeper started: threshold={sweep_config.sweep_threshold_sol} SOL")
+                else:
+                    logger.info("[SWEEP] AutoSweeper disabled in config")
+            except Exception as e:
+                logger.warning(f"[SWEEP] Failed to start AutoSweeper: {e}")
+        # === End AutoSweeper ===
+        
         await trader.start()
 
     except Exception as e:

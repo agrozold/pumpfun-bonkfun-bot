@@ -25,6 +25,7 @@ priority_fees:
   enable_dynamic: false
   enable_fixed: true
   fixed_amount: 150000
+  sell_fixed_amount: 10000
   max_fee: 2000000
   min_fee: 100000
   strategy: sniper
@@ -61,3 +62,18 @@ trade:
 trending_scanner:
   enabled: false
 wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
+
+# === AUTO-SWEEP CONFIGURATION ===
+auto_sweep:
+  enabled: false  # Set true to enable auto-sweep to cold wallet
+  cold_wallet: null  # Your cold wallet address (required if enabled)
+  sweep_threshold_sol: 1.0  # Sweep when balance > this
+  keep_balance_sol: 0.1  # Keep this amount on hot wallet
+  check_interval_sec: 300  # Check every 5 minutes
+  max_daily_loss_sol: 0.0  # 0 = no limit, set to stop trading on losses
+
+# === DEDUP CONFIGURATION ===
+dedup:
+  backend: redis  # redis or sqlite
+  redis_host: localhost
+  redis_port: 6379

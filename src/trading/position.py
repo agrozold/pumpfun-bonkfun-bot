@@ -416,7 +416,7 @@ def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -
         logger.exception(f"Failed to save positions: {e}")
 
 def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
-    """Load positions from file.
+    """Load positions from file, with Redis fallback.
 
     Args:
         filepath: Path to positions file
@@ -424,19 +424,49 @@ def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
     Returns:
         List of Position objects
     """
-    if not filepath.exists():
-        logger.info(f"No positions file found at {filepath}")
-        return []
-
+    positions = []
+    
+    # Try file first
+    if filepath.exists():
+        try:
+            with open(filepath, "r") as f:
+                data = json.load(f)
+            if data:
+                positions = [Position.from_dict(p) for p in data]
+                logger.info(f"Loaded {len(positions)} positions from {filepath}")
+                return positions
+        except Exception as e:
+            logger.warning(f"Failed to load from file: {e}")
+    
+    # Fallback to Redis
     try:
-        with open(filepath, "r") as f:
-            data = json.load(f)
-
-        positions = [Position.from_dict(p) for p in data]
-        logger.info(f"Loaded {len(positions)} positions from {filepath}")
+        import redis
+        redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        
+        # Get all position keys
+        keys = redis_client.keys("position:*pump")
+        if not keys:
+            logger.info("No positions in Redis")
+            return []
+        
+        for key in keys:
+            try:
+                data = redis_client.get(key)
+                if data:
+                    pos_dict = json.loads(data)
+                    if pos_dict.get("is_active", False):
+                        positions.append(Position.from_dict(pos_dict))
+            except Exception as e:
+                logger.warning(f"Failed to load {key}: {e}")
+        
+        if positions:
+            logger.info(f"Loaded {len(positions)} positions from Redis")
+            # Sync to file
+            save_positions(positions, filepath)
+        
         return positions
     except Exception as e:
-        logger.exception(f"Failed to load positions: {e}")
+        logger.warning(f"Redis fallback failed: {e}")
         return []
 
 

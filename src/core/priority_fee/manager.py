@@ -19,6 +19,7 @@ class PriorityFeeManager:
         fixed_fee: int,
         extra_fee: float,
         hard_cap: int,
+        sell_fixed_fee: int = 10000,  # Lower fee for sells
         strategy: str = "aggressive",
         min_fee: int = 50_000,
         max_fee: int = 10_000_000,
@@ -41,6 +42,7 @@ class PriorityFeeManager:
         self.enable_dynamic_fee = enable_dynamic_fee
         self.enable_fixed_fee = enable_fixed_fee
         self.fixed_fee = fixed_fee
+        self.sell_fixed_fee = sell_fixed_fee  # Lower priority for sells
         self.extra_fee = extra_fee
         self.hard_cap = hard_cap
         self.min_fee = min_fee

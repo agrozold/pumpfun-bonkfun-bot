@@ -39,6 +39,13 @@ from trading.purchase_history import (
     add_to_purchase_history,
     load_purchase_history,
 )
+# === DEDUP STORE INTEGRATION ===
+from trading.dedup_store import (
+    get_dedup_store,
+    try_acquire_token,
+    mark_token_bought,
+    RedisDedupStore,
+)
 # === TRACE CONTEXT INTEGRATION ===
 from analytics.trace_context import TraceContext, get_current_trace
 from analytics.trace_recorder import init_trace_recorder, shutdown_trace_recorder
@@ -95,6 +102,7 @@ class UniversalTrader:
         enable_dynamic_priority_fee: bool = False,
         enable_fixed_priority_fee: bool = True,
         fixed_priority_fee: int = 200_000,
+        sell_fixed_priority_fee: int = 10000,
         extra_priority_fee: float = 0.0,
         hard_cap_prior_fee: int = 200_000,
         priority_fee_strategy: str = "aggressive",
@@ -207,6 +215,7 @@ class UniversalTrader:
             strategy=priority_fee_strategy,
             min_fee=priority_fee_min,
             max_fee=priority_fee_max,
+            sell_fixed_fee=sell_fixed_priority_fee,
         )
 
         # Platform setup
@@ -520,6 +529,74 @@ class UniversalTrader:
         # Load from persistent file (shared across all bots)
         self._bought_tokens: set[str] = load_purchase_history()
         logger.warning(f"[HISTORY] Loaded {len(self._bought_tokens)} tokens from global purchase history")
+        
+        # === REDIS DEDUP STORE (initialized lazily) ===
+        self._dedup_store = None
+        self._dedup_enabled = True  # Set False to use only in-memory
+    # === DEDUP STORE HELPER METHODS ===
+    
+    async def _get_dedup_store(self):
+        """Lazy init DedupStore"""
+        if self._dedup_store is None and self._dedup_enabled:
+            try:
+                self._dedup_store = await get_dedup_store()
+                logger.info("[DEDUP] DedupStore initialized")
+            except Exception as e:
+                logger.warning(f"[DEDUP] Failed to init store: {e}, using in-memory only")
+                self._dedup_enabled = False
+        return self._dedup_store
+    
+    async def _try_acquire_for_buy(self, mint_str: str, bot_name: str = "universal") -> bool:
+        """
+        Try to acquire token for buying using DedupStore + in-memory.
+        Returns True if we can proceed with buy.
+        """
+        # Fast in-memory check first
+        if mint_str in self._bought_tokens or mint_str in self._buying_tokens:
+            return False
+        
+        # Try Redis/SQLite dedup
+        if self._dedup_enabled:
+            try:
+                store = await self._get_dedup_store()
+                if store:
+                    acquired = await store.try_acquire(mint_str, bot_name)
+                    if not acquired:
+                        logger.info(f"[DEDUP] Token {mint_str[:8]}... already acquired by another process")
+                        return False
+            except Exception as e:
+                logger.warning(f"[DEDUP] Store error: {e}, falling back to in-memory")
+        
+        # In-memory tracking
+        self._buying_tokens.add(mint_str)
+        return True
+    
+    async def _mark_bought(self, mint_str: str, bot_name: str = "universal") -> None:
+        """Mark token as bought in all stores"""
+        self._bought_tokens.add(mint_str)
+        self._buying_tokens.discard(mint_str)
+        
+        if self._dedup_enabled:
+            try:
+                store = await self._get_dedup_store()
+                if store:
+                    await store.mark_bought(mint_str, bot_name)
+            except Exception as e:
+                logger.warning(f"[DEDUP] Failed to mark bought: {e}")
+    
+    async def _release_buy_lock(self, mint_str: str) -> None:
+        """Release token if buy failed"""
+        self._buying_tokens.discard(mint_str)
+        
+        if self._dedup_enabled:
+            try:
+                store = await self._get_dedup_store()
+                if store:
+                    await store.release(mint_str)
+            except Exception as e:
+                logger.warning(f"[DEDUP] Failed to release: {e}")
+    # === END DEDUP HELPER METHODS ===
+
 
         # CRITICAL BALANCE PROTECTION
         # When balance <= 0.02 SOL, bot stops completely
@@ -3040,7 +3117,7 @@ class UniversalTrader:
                 client=self.solana_client,
                 wallet=self.wallet,
                 slippage=self.sell_slippage,
-                priority_fee=200_000,  # Higher priority for emergency sell
+                priority_fee=10000,  # Higher priority for emergency sell
                 max_retries=3,
                 jupiter_api_key=self.jupiter_api_key,
             )

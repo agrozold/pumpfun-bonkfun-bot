@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Sell all pump.fun/BAGS/BONK tokens via PumpPortal trade-local API.
-Works with Token-2022 via DRPC/Helius DAS API.
+Uses standard RPC getTokenAccountsByOwner (works with all providers).
 Removes sold positions from positions.json.
 """
 
@@ -38,77 +38,13 @@ SKIP_TOKENS = {
 }
 
 
-def get_all_tokens_das(wallet_pubkey: str) -> list[dict]:
-    """Get all tokens using DAS API (DRPC or Helius - supports Token-2022)."""
-
-    # Try DRPC first, then Helius
-    drpc_endpoint = os.getenv("DRPC_RPC_ENDPOINT")
-    helius_key = os.getenv("HELIUS_API_KEY")
-
-    # DRPC with DAS support
-    if drpc_endpoint:
-        api_url = drpc_endpoint
-    elif helius_key:
-        api_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
-    else:
-        print("⚠️  No DRPC or HELIUS API configured")
-        return []
-
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getAssetsByOwner",
-        "params": {
-            "ownerAddress": wallet_pubkey,
-            "page": 1,
-            "limit": 100,
-            "displayOptions": {"showFungible": True}
-        }
-    }
-
-    try:
-        resp = requests.post(api_url, json=payload, timeout=30)
-        data = resp.json()
-    except Exception as e:
-        print(f"⚠️  DAS API error: {e}")
-        return []
-
-    tokens = []
-    if 'result' in data and 'items' in data['result']:
-        for item in data['result']['items']:
-            mint = item.get('id')
-            if not mint or mint in SKIP_TOKENS:
-                continue
-
-            # Only pump.fun/BAGS/BONK tokens (ending with 'pump')
-            if not mint.endswith('pump'):
-                continue
-
-            token_info = item.get('token_info', {})
-            balance = token_info.get('balance', 0)
-            decimals = token_info.get('decimals', 6)
-
-            if balance and int(balance) > 0:
-                content = item.get('content', {})
-                meta = content.get('metadata', {})
-                symbol = meta.get('symbol') or meta.get('name') or 'UNKNOWN'
-
-                tokens.append({
-                    "mint": mint,
-                    "symbol": symbol,
-                    "balance": int(balance) / (10 ** decimals)
-                })
-    elif 'error' in data:
-        print(f"⚠️  DAS API returned error: {data['error']}")
-        # Fallback to standard RPC
-        return get_all_tokens_rpc(wallet_pubkey)
-
-    return tokens
-
-
-def get_all_tokens_rpc(wallet_pubkey: str) -> list[dict]:
-    """Fallback: Get tokens using standard RPC (may miss Token-2022)."""
+def get_all_tokens(wallet_pubkey: str) -> list[dict]:
+    """Get all tokens using standard RPC (works with any provider)."""
     rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
+    
+    if not rpc_endpoint:
+        print("⚠️  SOLANA_NODE_RPC_ENDPOINT not configured")
+        return []
 
     TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
     TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -131,22 +67,32 @@ def get_all_tokens_rpc(wallet_pubkey: str) -> list[dict]:
             resp = requests.post(rpc_endpoint, json=payload, timeout=30)
             data = resp.json()
         except Exception as e:
-            print(f"⚠️  RPC error: {e}")
+            print(f"⚠️  RPC error ({program_id[:8]}...): {e}")
             continue
 
         if "result" in data and "value" in data["result"]:
             for account in data["result"]["value"]:
-                info = account["account"]["data"]["parsed"]["info"]
-                mint = info["mint"]
-                balance = float(info["tokenAmount"]["uiAmount"] or 0)
+                try:
+                    info = account["account"]["data"]["parsed"]["info"]
+                    mint = info["mint"]
+                    balance = float(info["tokenAmount"]["uiAmount"] or 0)
 
-                if balance > 0 and mint not in SKIP_TOKENS and mint.endswith("pump"):
-                    tokens.append({
-                        "mint": mint,
-                        "symbol": "UNKNOWN",
-                        "balance": balance
-                    })
+                    if balance > 0 and mint not in SKIP_TOKENS:
+                        # Check if pump.fun token (ends with 'pump')
+                        is_pump = mint.endswith("pump")
+                        
+                        tokens.append({
+                            "mint": mint,
+                            "symbol": "PUMP" if is_pump else "TOKEN",
+                            "balance": balance,
+                            "is_pump": is_pump
+                        })
+                except (KeyError, TypeError) as e:
+                    continue
 
+    # Sort: pump tokens first, then by balance
+    tokens.sort(key=lambda x: (not x.get("is_pump", False), -x["balance"]))
+    
     return tokens
 
 
@@ -224,18 +170,28 @@ async def main():
     pubkey = str(keypair.pubkey())
 
     print(f"\nWallet: {pubkey}")
-    print("Fetching tokens (DRPC/Helius DAS API)...\n")
+    print("Fetching tokens...\n")
 
-    # Use DAS API for Token-2022 support
-    tokens = get_all_tokens_das(pubkey)
+    # Use standard RPC (works with all providers)
+    tokens = get_all_tokens(pubkey)
 
-    if not tokens:
-        print("No pump.fun/BAGS/BONK tokens found!")
+    # Filter only pump.fun tokens for selling
+    pump_tokens = [t for t in tokens if t.get("is_pump", False)]
+
+    if not pump_tokens:
+        print("No pump.fun tokens found!")
+        
+        # Show other tokens if any
+        other_tokens = [t for t in tokens if not t.get("is_pump", False)]
+        if other_tokens:
+            print(f"\nOther tokens in wallet ({len(other_tokens)}):")
+            for t in other_tokens[:10]:  # Show first 10
+                print(f"  • {t['mint'][:20]}... ({t['balance']:.4f})")
         return
 
-    print(f"Found {len(tokens)} tokens:\n")
-    for i, t in enumerate(tokens, 1):
-        print(f"  {i}. {t['symbol']:12} | {t['mint'][:20]}... ({t['balance']:.2f})")
+    print(f"Found {len(pump_tokens)} pump.fun tokens:\n")
+    for i, t in enumerate(pump_tokens, 1):
+        print(f"  {i}. {t['mint'][:32]}... ({t['balance']:.2f})")
 
     if "--dry-run" in sys.argv:
         print("\nDRY RUN - no sells executed")
@@ -251,15 +207,15 @@ async def main():
     success = 0
     failed = 0
 
-    for t in tokens:
-        print(f"Selling {t['symbol']} ({t['mint'][:20]}...)...")
+    for t in pump_tokens:
+        print(f"Selling {t['mint'][:32]}...")
 
         try:
             ok, sig, error = sell_token(t["mint"], keypair, pubkey, rpc)
 
             if ok:
                 print(f"  ✅ TX: {sig}")
-                remove_from_positions(t["mint"], t["symbol"])
+                remove_from_positions(t["mint"], t.get("symbol", "PUMP"))
                 success += 1
             else:
                 print(f"  ❌ {error}")

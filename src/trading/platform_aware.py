@@ -629,7 +629,7 @@ class PlatformAwareSeller(Trader):
                 client=self.client,
                 wallet=self.wallet,
                 slippage=self.slippage,
-                priority_fee=100_000,  # Default priority fee for fallback
+                priority_fee=10000,  # Low priority fee for sell
                 max_retries=self.max_retries,
                 jupiter_api_key=self.jupiter_api_key,
             )

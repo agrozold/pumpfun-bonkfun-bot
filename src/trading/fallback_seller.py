@@ -106,7 +106,7 @@ class FallbackSeller:
         client: "SolanaClient",
         wallet: "Wallet",
         slippage: float = 0.25,
-        priority_fee: int = 100_000,
+        priority_fee: int = 10000,
         max_retries: int = 3,
         alt_rpc_endpoint: str | None = None,  # Alternative RPC to avoid rate limits
         jupiter_api_key: str | None = None,  # Jupiter Ultra API key
@@ -178,6 +178,10 @@ class FallbackSeller:
 
         try:
             rpc_client = await self._get_rpc_client()
+            
+            # Get dynamic decimals for this token
+            token_decimals = await get_token_decimals(rpc_client, mint)
+            logger.info(f"[DECIMALS] Using {token_decimals} decimals for {symbol}")
 
             # Use provided market or find it
             if market_address:
@@ -294,7 +298,7 @@ class FallbackSeller:
                     base_amount_raw = struct.unpack("<Q", base_data[64:72])[0]
                     quote_amount_raw = struct.unpack("<Q", quote_data[64:72])[0]
 
-                    base_amount = base_amount_raw / (10 ** TOKEN_DECIMALS)
+                    base_amount = base_amount_raw / (10 ** token_decimals)
                     quote_amount = quote_amount_raw / (10 ** 9)  # SOL has 9 decimals
 
                     if base_amount == 0:
@@ -314,7 +318,7 @@ class FallbackSeller:
 
             # Calculate expected tokens
             expected_tokens = sol_amount / price
-            min_tokens_output = int(expected_tokens * (1 - self.slippage) * 10**TOKEN_DECIMALS)
+            min_tokens_output = int(expected_tokens * (1 - self.slippage) * 10**token_decimals)
             buy_amount_lamports = int(sol_amount * LAMPORTS_PER_SOL)
 
             logger.info(f"[BUY] PumpSwap BUY: {sol_amount} SOL ({buy_amount_lamports} lamports) -> ~{expected_tokens:,.2f} {symbol}")
@@ -716,6 +720,9 @@ class FallbackSeller:
         """Sell via PumpSwap AMM."""
         try:
             rpc_client = await self._get_rpc_client()
+            
+            # Get dynamic decimals for this token
+            token_decimals = await get_token_decimals(rpc_client, mint)
 
             # Find market
             filters = [MemcmpOpts(offset=POOL_BASE_MINT_OFFSET, bytes=bytes(mint))]
@@ -745,7 +752,7 @@ class FallbackSeller:
             )
 
             # Calculate sell amount
-            sell_amount = int(token_amount * 10**TOKEN_DECIMALS)
+            sell_amount = int(token_amount * 10**token_decimals)
 
             # Get pool accounts
             pool_base_ata = Pubkey.from_string(market_data["pool_base_token_account"])
@@ -772,7 +779,7 @@ class FallbackSeller:
             base_amount_raw = struct.unpack("<Q", base_data[64:72])[0]
             quote_amount_raw = struct.unpack("<Q", quote_data[64:72])[0]
 
-            base_amount = base_amount_raw / (10 ** TOKEN_DECIMALS)
+            base_amount = base_amount_raw / (10 ** token_decimals)
             quote_amount = quote_amount_raw / (10 ** 9)
             price = quote_amount / base_amount
 
@@ -951,7 +958,7 @@ class FallbackSeller:
         try:
             logger.info(f"[JUPITER] Jupiter SELL for {symbol}...")
 
-            sell_amount = int(token_amount * 10**TOKEN_DECIMALS)
+            sell_amount = int(token_amount * 10**token_decimals)
             slippage_bps = int(self.slippage * 10000)
 
             # Use Ultra API if key available

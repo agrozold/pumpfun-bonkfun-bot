@@ -94,7 +94,7 @@ async def emergency_sell(mint_str: str):
         client=client,
         wallet=wallet,
         slippage=0.5,  # 50% slippage for emergency!
-        priority_fee=500_000,  # High priority
+        priority_fee=10000,  # High priority
         max_retries=5,
         jupiter_api_key=jupiter_api_key,
     )

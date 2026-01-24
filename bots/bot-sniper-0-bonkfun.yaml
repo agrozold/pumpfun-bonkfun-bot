@@ -32,6 +32,7 @@ priority_fees:
   enable_dynamic: false
   enable_fixed: true
   fixed_amount: 500000
+  sell_fixed_amount: 10000
   min_fee: 100000
   max_fee: 5000000
 
