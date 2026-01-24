@@ -1,35 +1,36 @@
+# Environment
 .env
-*.log
-logs/
+.env.backup*
+
+# IDE
+.cursor/
+.kiro/
+.windsurf/
+.vscode/
+.idea/
+
+# Python
 __pycache__/
 *.pyc
-.venv/
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
 venv/
-positions.json
-*.pem
-*.key
 
-# Data & trades
+# Logs & Data
+*.log
+nohup.out
+logs/
 data/
 trades/
-*.bak
 backups/
-*.orig
-*.rej
-*.orig
-*.rej
+positions.json*
 
-# Backups with potential secrets
-*.backup
-*.backup.*
-.env.backup*
-*.tar.gz
+# Dev docs (local only)
+docs/sessions/
+learning-examples/
 
-# Test files
-test_*.py
-
-# Egg info
-*.egg-info/
-.env.local
-FETCH_HEAD
-*.bak.*
+# Temp
+..bfg-report/
+=
