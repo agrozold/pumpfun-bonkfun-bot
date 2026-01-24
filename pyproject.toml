@@ -68,6 +68,7 @@ exclude = [
     "dist",
     "learning-examples",
     "idl",
+    "src/geyser",
 ]
 line-length = 100
 indent-width = 4
@@ -80,6 +81,9 @@ ignore = [
     "E402",
     "F401",
     "F841",
+    "E701",
+    "E731",
+    "E741",
 ]
 
 [tool.ruff.format]
