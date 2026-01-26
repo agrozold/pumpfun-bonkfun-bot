@@ -199,6 +199,13 @@ class Position:
         Returns:
             Position instance
         """
+        # VALIDATION: Entry price must be positive and reasonable
+        if entry_price <= 0:
+            logger.error(f"[POSITION] INVALID entry_price={entry_price}, forcing to minimum 0.0000001")
+            entry_price = 0.0000001  # Minimum reasonable price
+        elif entry_price > 1000:  # Price > 1000 SOL is likely an error
+            logger.warning(f"[POSITION] Suspiciously high entry_price={entry_price}, keeping as-is")
+
         take_profit_price = None
         if take_profit_percentage is not None:
             take_profit_price = entry_price * (1 + take_profit_percentage)
@@ -206,6 +213,14 @@ class Position:
         stop_loss_price = None
         if stop_loss_percentage is not None:
             stop_loss_price = entry_price * (1 - stop_loss_percentage)
+            # VALIDATION: SL must always be positive!
+            if stop_loss_price <= 0:
+                logger.error(
+                    f"[SL CALC] NEGATIVE SL DETECTED! entry={entry_price:.10f}, sl_pct={stop_loss_percentage*100:.1f}%, "
+                    f"calculated_sl={stop_loss_price:.10f} - FIXING to positive value"
+                )
+                # Set SL to 10% of entry price as minimum
+                stop_loss_price = entry_price * 0.1
             logger.warning(
                 f"[SL CALC] entry={entry_price:.10f}, sl_pct={stop_loss_percentage*100:.1f}%, "
                 f"sl_price={stop_loss_price:.10f}"

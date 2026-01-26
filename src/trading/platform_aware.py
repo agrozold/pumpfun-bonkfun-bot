@@ -538,7 +538,9 @@ class PlatformAwareSeller(Trader):
                 # VERIFY: Check token balance is actually 0 after sell
                 try:
                     from spl.token.instructions import get_associated_token_address
-                    token_prog = token_info.token_program_id or SystemAddresses.TOKEN_PROGRAM
+                    # TOKEN2022 FIX: Most pump.fun/bonk/bags tokens use Token2022
+                    # Default to TOKEN_2022_PROGRAM if token_program_id is not set
+                    token_prog = token_info.token_program_id or SystemAddresses.TOKEN_2022_PROGRAM
                     ata = get_associated_token_address(self.wallet.pubkey, token_info.mint, token_prog)
                     remaining = await self.client.get_token_account_balance(ata)
                     if remaining > 1000:  # More than dust remaining

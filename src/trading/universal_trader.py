@@ -1079,9 +1079,14 @@ class UniversalTrader:
             return False, None, "skip", 0.0, 0.0
 
         # ============================================
-        # [1/4] TRY PLATFORM-SPECIFIC BONDING CURVE
+        # [1/4] TRY ALL BONDING CURVES (for whale_all_platforms mode)
+        # When whale_all_platforms=true, we need to check ALL platforms
         # ============================================
-        if self.platform == Platform.PUMP_FUN:
+        
+        # PUMP.FUN - Check always for whale_all_platforms or if current platform
+        should_check_pumpfun = (self.platform == Platform.PUMP_FUN or 
+                                getattr(self, 'enable_whale_copy', False))
+        if should_check_pumpfun:
             logger.info(f"[CHECK] [1/4] Checking Pump.Fun bonding curve for {symbol}...")
             try:
                 from platforms.pumpfun.address_provider import PumpFunAddresses
@@ -1120,17 +1125,21 @@ class UniversalTrader:
             except Exception as e:
                 logger.info(f"[WARN] Pump.Fun check failed: {e}")
 
-        elif self.platform == Platform.LETS_BONK:
+        # LETSBONK - Check always for whale_all_platforms or if current platform
+        should_check_letsbonk = (self.platform == Platform.LETS_BONK or 
+                                  getattr(self, 'enable_whale_copy', False))
+        if should_check_letsbonk:
             logger.info(f"[CHECK] [1/4] Checking LetsBonk bonding curve for {symbol}...")
             try:
                 from platforms.letsbonk.address_provider import LetsBonkAddressProvider
+                from platforms.letsbonk.curve_manager import LetsBonkCurveManager
 
                 address_provider = LetsBonkAddressProvider()
                 pool_address = address_provider.derive_pool_address(mint)
 
-                # Check if pool exists and not migrated
-                curve_manager = self.platform_implementations.curve_manager
-                pool_state = await curve_manager.get_pool_state(pool_address)
+                # Use LetsBonk-specific curve manager for proper parsing
+                letsbonk_curve_manager = LetsBonkCurveManager(self.solana_client)
+                pool_state = await letsbonk_curve_manager.get_pool_state(pool_address)
 
                 if pool_state and not pool_state.get("complete", False) and pool_state.get("status") != "migrated":
                     # Bonding curve available! Use normal letsbonk buy
@@ -1156,17 +1165,21 @@ class UniversalTrader:
             except Exception as e:
                 logger.info(f"[WARN] LetsBonk check failed: {e}")
 
-        elif self.platform == Platform.BAGS:
+        # BAGS - Check always for whale_all_platforms or if current platform
+        should_check_bags = (self.platform == Platform.BAGS or 
+                              getattr(self, 'enable_whale_copy', False))
+        if should_check_bags:
             logger.info(f"[CHECK] [1/4] Checking BAGS (Meteora DBC) pool for {symbol}...")
             try:
                 from platforms.bags.address_provider import BagsAddressProvider
+                from platforms.bags.curve_manager import BagsCurveManager
 
                 address_provider = BagsAddressProvider()
                 pool_address = address_provider.derive_pool_address(mint)
 
-                # Check if pool exists and not migrated
-                curve_manager = self.platform_implementations.curve_manager
-                pool_state = await curve_manager.get_pool_state(pool_address)
+                # Use BAGS-specific curve manager for proper parsing
+                bags_curve_manager = BagsCurveManager(self.solana_client)
+                pool_state = await bags_curve_manager.get_pool_state(pool_address)
 
                 if pool_state and pool_state.get("status") != "migrated":
                     # BAGS pool available! Use normal bags buy
