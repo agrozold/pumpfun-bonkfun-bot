@@ -25,8 +25,13 @@ from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
 from monitoring.pump_pattern_detector import PumpPatternDetector
 from monitoring.token_scorer import TokenScorer
-from monitoring.whale_tracker import WhaleTracker, WhaleBuy
-from monitoring.whale_poller import WhalePoller, WhaleBuy as PollerWhaleBuy
+# Use WhalePoller instead of WhaleTracker (logsSubscribe doesn't work for wallets)
+try:
+    from monitoring.whale_poller import WhalePoller, WhaleBuy
+    WHALE_POLLER_AVAILABLE = True
+except ImportError:
+    from monitoring.whale_tracker import WhaleTracker as WhalePoller, WhaleBuy
+    WHALE_POLLER_AVAILABLE = False
 from monitoring.dev_reputation import DevReputationChecker
 from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolumeAnalysis
@@ -157,8 +162,6 @@ class UniversalTrader:
         whale_wallets_file: str = "smart_money_wallets.json",
         whale_min_buy_amount: float = 0.5,
         whale_all_platforms: bool = False,
-        whale_use_poller: bool = False,  # Use polling instead of WebSocket
-        whale_poll_interval: float = 30.0,  # Polling interval in seconds
         stablecoin_filter: list = None,
         helius_api_key: str | None = None,
         birdeye_api_key: str | None = None,
@@ -305,78 +308,50 @@ class UniversalTrader:
         logger.warning(f"[WHALE] enable_whale_copy = {enable_whale_copy}")
         logger.warning(f"[WHALE] wallets_file = {whale_wallets_file}")
         logger.warning(f"[WHALE] min_buy_amount = {whale_min_buy_amount}")
-        logger.warning(f"[WHALE] use_poller = {whale_use_poller}")
         logger.warning("=" * 50)
 
         self.enable_whale_copy = enable_whale_copy
-        self.whale_tracker: WhaleTracker | None = None
-        self.whale_poller: WhalePoller | None = None
-        self.whale_use_poller = whale_use_poller
+        self.whale_tracker: WhalePoller | None = None
         self.helius_api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
 
         if enable_whale_copy:
             try:
-                # Каждый бот слушает whale только для СВОЕЙ платформы
-                # Это избегает конфликтов WebSocket подписок между процессами
-                # Определяем platform для whale tracker
-                # Если whale_all_platforms=True -> слушаем ВСЕ платформы (platform=None)
-                # Иначе слушаем только свою платформу
-                whale_platform = None if whale_all_platforms else self.platform.value
-
-                if whale_use_poller:
-                    # Use polling-based whale monitor with Weighted RPC
-                    logger.warning("[WHALE] Creating WhalePoller instance (WEIGHTED RPC)...")
-                    self.whale_poller = WhalePoller(
-                        wallets_file=whale_wallets_file,
-                        min_buy_amount=whale_min_buy_amount,
-                        poll_interval=whale_poll_interval,
-                        max_tx_age=600.0,  # 10 minutes
-                        helius_api_key=helius_api_key,
-                    )
-                    self.whale_poller.set_callback(self._on_whale_buy)
-                    
-                    wallet_count = len(self.whale_poller.whale_wallets) if self.whale_poller.whale_wallets else 0
-                    logger.warning(f"[WHALE] WhalePoller CREATED: {wallet_count} wallets")
-                    logger.warning(f"[WHALE] Poll interval: {whale_poll_interval}s")
-                    logger.warning(f"[WHALE] WEIGHTED RPC distribution: Alchemy 60%, dRPC 30%, Chainstack 10%")
-                    
-                    if wallet_count == 0:
-                        logger.error("[WHALE] ERROR: No whale wallets loaded!")
-                    else:
-                        sample_wallets = list(self.whale_poller.whale_wallets.keys())[:3]
-                        logger.warning(f"[WHALE] Sample wallets: {sample_wallets}")
+                # CRITICAL: Use WhalePoller (HTTP polling) instead of WhaleTracker (WSS)
+                # because Solana's logsSubscribe with 'mentions' filter does NOT work
+                # for wallet addresses - only for Program IDs!
+                if WHALE_POLLER_AVAILABLE:
+                    logger.warning("[WHALE] Creating WhalePoller instance (HTTP polling)...")
+                    logger.warning("[WHALE] Note: Using HTTP polling because WSS logsSubscribe")
+                    logger.warning("[WHALE]       doesn't support wallet address mentions!")
                 else:
-                    # Use WebSocket-based whale tracker
-                    logger.warning("[WHALE] Creating WhaleTracker instance (WebSocket)...")
-                    self.whale_tracker = WhaleTracker(
-                        wallets_file=whale_wallets_file,
-                        min_buy_amount=whale_min_buy_amount,
-                        helius_api_key=helius_api_key,
-                        rpc_endpoint=rpc_endpoint,
-                        wss_endpoint=wss_endpoint,
-                        time_window_minutes=5.0,  # Only copy buys from last 5 minutes
-                        platform=whale_platform,
-                        stablecoin_filter=stablecoin_filter or [],
-                    )
-                    self.whale_tracker.set_callback(self._on_whale_buy)
+                    logger.warning("[WHALE] WhalePoller not available, falling back to WhaleTracker")
+                    logger.warning("[WHALE] WARNING: WSS-based tracking may not work for wallet addresses!")
 
-                    # Log wallet count
-                    wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
-                    logger.warning(f"[WHALE] WhaleTracker CREATED: {wallet_count} wallets")
-                    logger.warning(f"[WHALE] Platform filter: {self.platform.value}")
-                    logger.warning(f"[WHALE] WSS endpoint: {wss_endpoint[:50] if wss_endpoint else 'None'}...")
+                self.whale_tracker = WhalePoller(
+                    wallets_file=whale_wallets_file,
+                    min_buy_amount=whale_min_buy_amount,
+                    poll_interval=30.0,  # Poll every 30 seconds
+                    max_tx_age=600.0,    # Process transactions up to 10 minutes old
+                    stablecoin_filter=stablecoin_filter or [],
+                )
+                self.whale_tracker.set_callback(self._on_whale_buy)
 
-                    if wallet_count == 0:
-                        logger.error("[WHALE] ERROR: No whale wallets loaded!")
-                    else:
-                        # Log first few wallets
-                        sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
-                        logger.warning(f"[WHALE] Sample wallets: {sample_wallets}")
+                # Log wallet count
+                wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
+                logger.warning(f"[WHALE] WhalePoller CREATED: {wallet_count} wallets")
+                logger.warning(f"[WHALE] Min buy amount: {whale_min_buy_amount} SOL")
+                logger.warning(f"[WHALE] Poll interval: 30s")
+
+                if wallet_count == 0:
+                    logger.error("[WHALE] ERROR: No whale wallets loaded!")
+                else:
+                    # Log first few wallets
+                    sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
+                    logger.warning(f"[WHALE] Sample wallets: {sample_wallets}")
 
             except Exception as e:
-                logger.exception(f"[WHALE] EXCEPTION creating whale monitor: {e}")
+                logger.exception(f"[WHALE] EXCEPTION creating WhalePoller: {e}")
                 self.whale_tracker = None
-                self.whale_poller = None
         else:
             logger.warning("[WHALE] Whale copy: DISABLED in config")
 
@@ -2035,22 +2010,17 @@ class UniversalTrader:
             logger.warning(f"RPC warm-up failed: {e!s}")
 
         try:
-            # Start whale tracker/poller BEFORE choosing operating mode
-            # Whale monitoring should run in ALL modes if enabled
+            # Start whale tracker BEFORE choosing operating mode
+            # Whale tracker should run in ALL modes if enabled
             whale_task = None
-            if self.whale_poller:
-                # Use Weighted RPC polling
-                logger.warning("[WHALE] Starting whale poller (WEIGHTED RPC) in background...")
-                whale_task = asyncio.create_task(self.whale_poller.start())
-            elif self.whale_tracker:
-                # Use WebSocket-based tracker
-                logger.warning("[WHALE] Starting whale tracker (WebSocket) in background...")
+            if self.whale_tracker:
+                logger.warning("[WHALE] Starting whale tracker in background...")
                 whale_task = asyncio.create_task(self.whale_tracker.start())
             else:
                 if self.enable_whale_copy:
-                    logger.error("[WHALE] Whale copy enabled but monitor not initialized!")
+                    logger.error("[WHALE] Whale copy enabled but tracker not initialized!")
                 else:
-                    logger.info("Whale monitoring not enabled, skipping...")
+                    logger.info("Whale tracker not enabled, skipping...")
 
             # Choose operating mode based on yolo_mode
             if not self.yolo_mode:
@@ -2066,12 +2036,10 @@ class UniversalTrader:
                     logger.info(
                         f"No suitable token found within timeout period ({self.token_wait_timeout}s). Exiting..."
                     )
-                # Cleanup whale tracker/poller in single token mode
+                # Cleanup whale tracker in single token mode
                 if whale_task:
                     whale_task.cancel()
-                    if self.whale_poller:
-                        await self.whale_poller.stop()
-                    elif self.whale_tracker:
+                    if self.whale_tracker:
                         await self.whale_tracker.stop()
             else:
                 # Continuous mode: process tokens until interrupted
@@ -2117,9 +2085,7 @@ class UniversalTrader:
                     processor_task.cancel()
                     if whale_task:
                         whale_task.cancel()
-                        if self.whale_poller:
-                            await self.whale_poller.stop()
-                        elif self.whale_tracker:
+                        if self.whale_tracker:
                             await self.whale_tracker.stop()
                     if trending_task:
                         trending_task.cancel()

@@ -48,8 +48,6 @@ whale_copy:
   enabled: true
   wallets_file: smart_money_wallets.json
   min_buy_amount: 0.4
-  use_poller: true  # Use Weighted RPC polling (Alchemy 60%, dRPC 30%, Chainstack 10%)
-  poll_interval: 30.0  # Polling interval in seconds
   helius_api_key: ''
 dev_check:
   enabled: false
