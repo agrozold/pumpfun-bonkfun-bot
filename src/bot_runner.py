@@ -256,6 +256,8 @@ async def start_bot(config_path: str):
                 "wallets_file", "smart_money_wallets.json"
             ),
             whale_min_buy_amount=cfg.get("whale_copy", {}).get("min_buy_amount", 0.5),
+            whale_use_poller=cfg.get("whale_copy", {}).get("use_poller", False),  # Use Weighted RPC polling
+            whale_poll_interval=cfg.get("whale_copy", {}).get("poll_interval", 30.0),
             helius_api_key=cfg.get("whale_copy", {}).get("helius_api_key") or os.getenv("HELIUS_API_KEY"),
             whale_all_platforms=cfg.get("whale_all_platforms", False),
             stablecoin_filter=cfg.get("stablecoin_filter", []),
