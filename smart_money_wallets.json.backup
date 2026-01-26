@@ -1,0 +1,848 @@
+{
+  "whales": [
+    {
+      "wallet": "7qT4fKLKT7kLThgRAq6Lnmq4UPFSq8M3ZeroktMpmBPe",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "2NoNSAa4F9Srj3M6myFtKTk9VWrYqyHBMbCwwepfYmwi",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "BCrTEXmWutwPz8qv6w1S5gDbaLnSLpXKM5kSGVWyyfxu",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "6ymMhWZPnG79XAF3BXcP2DaeH92ANSA2SFLHAFyHrgPH",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "8zFZHuSRuDpuAR7J6FzwyF3vKNx4CVW3DFHJerQhc7Zd",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "57rXqaQsvgyBKwebP2StfqQeCBjBS4jsrZFJN5aU2V9b",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "9kWfCLPJGTNzxyfnBGhYs47HWoS3NCehqEKDGke1UTRk",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "nDhEvgMozYMuA37zAmHnwwMGEmQSbnszWpvEHG4Y6iX",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "B6DSCtSxdLnfsPeXf5fXsLGxiWas8nf2xVzPmMyp9Kj",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "verified-good",
+      "source": "indexer-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "GDRTKkK5QmW9C768wmecq12hc14rhupsZCBFWJSEXsEX",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "penguin-insider (GDRT +137 SOL/tok)",
+      "source": "penguin-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "21kMe9Ztcj3qLSN4Re2v9XQfXBrvJnJPHkw1CbaoPDnT",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "penguin-insider (21kM +97 SOL/tok)",
+      "source": "penguin-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "4HjGze3GXy8aWzWeuR5hFZP6ezqRb3yhLbQULhefzQdN",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "penguin-insider (4HjGze +70 SOL/tok)",
+      "source": "penguin-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "Bx9TNm7ztJJsg3xfu7VPyangGv3tHH3U7NM7awPe4sLs",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "penguin-insider (Bx9TNm +70 SOL/tok)",
+      "source": "penguin-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "6rwXnAp6EfgfRAqaiq3zTRaBrAuNKc4CGRq7y6QesSCL",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "penguin-insider (6rwX +40 SOL/tok)",
+      "source": "penguin-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "DaUBRKnAjuqzozUjkH4QuVJUJiSmrbnLbCeqAgwA6dGF",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "penguin-insider (DaUB +30 SOL/tok)",
+      "source": "penguin-analysis",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "274vmGgKuYQp8Fxvb8n3cr9ZeY3SYM6LgeaXM6jS2nD6",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "sniper (KOL +109 SOL/tok)",
+      "source": "manual-research",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "AG86AvT4GH2UNbbVRi4YY722SDYXNfGXiJrPvcUYfHcV",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "sniper (Sniper +18 SOL/tok)",
+      "source": "manual-research",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "DP7G43VPwR5Ab5rcjrCnvJ8UgvRXRHTWscMjRD1eSdGC",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "sniper (KOL +11 SOL/tok)",
+      "source": "manual-research",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "A9oTUD5vY9yM7ZH2JnTfKztbFYwKzDo5vywtwjZzvjXd",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "sniper (Sniper +12 SOL/tok)",
+      "source": "manual-research",
+      "added_date": "2026-01-25T15:00:00Z"
+    },
+    {
+      "wallet": "EYfdt8cNFyyTEJKp18dcoVbgUHDnM1SK3bT2uKj9XXHc",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "zerion-verified ($58k, +$45k/day)",
+      "source": "zerion-analysis",
+      "added_date": "2026-01-25T16:00:00Z"
+    },
+    {
+      "wallet": "nya666pQkP3PzWxi7JngU3rRMHuc7zbLK8c8wxQ4qpT",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "zerion-verified ($64k, early-buyer)",
+      "source": "zerion-analysis",
+      "added_date": "2026-01-25T16:00:00Z"
+    },
+    {
+      "wallet": "4MgyCKw6X9J4atQ4qkMfBzcmampQQupfahzBK5gFGCmC",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($9k, +$3k/day)",
+      "source": "zerion-analysis",
+      "added_date": "2026-01-25T16:00:00Z"
+    },
+    {
+      "wallet": "AAtkkSUcJptp3vAq5WBV1NuGKe1UXLrjo85h5cJGN2wF",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "zerion-verified ($139k, early 8Jx8)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:00:00Z"
+    },
+    {
+      "wallet": "5dbKD19c9nnWYj9qwpGHYVzrbaqmzhM3niU3YijEJfHS",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "zerion-verified ($91k, early 8Jx8)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:00:00Z"
+    },
+    {
+      "wallet": "3kebnKw7cPdSkLRfiMEALyZJGZ4wdiSRvmoN4rD1yPzV",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "zerion-verified ($132k, early 8Jx8)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:00:00Z"
+    },
+    {
+      "wallet": "696969Y6orZEjp4gZtwcCZS7TNVuhMVE6G5mFvdJ4mYq",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($31k, early 8Jx8)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:00:00Z"
+    },
+    {
+      "wallet": "97V26zCSXhBRSGsnfK4dTai8sd34UHQkA3G7jS9MG9BC",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($14k, early 8Jx8)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:00:00Z"
+    },
+    {
+      "wallet": "BTf4A2exGK9BCVDNzy65b9dUzXgMqB4weVkvTMFQsadd",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($17.5k, early GASf)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:30:00Z"
+    },
+    {
+      "wallet": "Fkemk4DNp9ncsixH8gJqoysHu8mvG2A1TMVbGTMoYa9d",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($16.4k, early GASf)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:30:00Z"
+    },
+    {
+      "wallet": "EtmVgZ547zUXUo93PtGqGYp6SXYHDmRvDyGuY4SWTQHS",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($6.5k, early GASf)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:30:00Z"
+    },
+    {
+      "wallet": "9pUgbXaDjqDcf3t8HWcfMyTKcUTHaK4o3sUVrPf2b1eE",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($4.4k, early GASf)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:30:00Z"
+    },
+    {
+      "wallet": "52v8BDSL2At8dPCwDnyfYvmrjPjRJzSGhSqGJ4dLJ3Fq",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified ($4.2k, early GASf)",
+      "source": "zerion-token-analysis",
+      "added_date": "2026-01-25T17:30:00Z"
+    },
+    {
+      "wallet": "J23qr98GjGJJqKq9CBEnyRhHbmkaVxtTJNNxKu597wsA",
+      "win_rate": 0.85,
+      "trades_count": 0,
+      "label": "PENGU-mega ($15.2M, 49k SOL vol)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "F7uF5geKv9yQr2HYFuTzEQTa2oZ3DziAQSReYcf6N3EX",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($627k)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "BC8yiFFQWFEKrEEj75zYsuK3ZDCfv6QEeMRif9oZZ9TW",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($460k, 54k SOL vol)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "3XUyrGUkAQWXCNribfEYNqvLS75EPKT5P8Et463JDECp",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($368k)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "34FfD7MKrKsXjdkTPsdCCWEDjHCxDPEDYh61XEU6uimR",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($247k, 6.6k SOL vol)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "5jVhe5N3PGc5Bbw7FQL9d58rJbZN9x4ZGfZF9gStuSxx",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "PENGU-whale ($163k)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "GYQwwvyL4UTrjoNChC1KNWpkYWwB1uuc53nUvpQH5gN2",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "PENGU-whale ($146k, linked trades)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "3C97FcdTLrKS4da363cc2dkoPm6kTY2epRh6UAdQdGLk",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "PENGU-whale ($130k)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "GS6febzY8hSYUYhbdxFNfsHiUcnS4gpKkgM2sWjdoUQ1",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "PENGU-whale ($130k)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "Ew6qBU7N34gRNgpgUwhJ3PgrtbPYpLYWLBEG5yuQTceD",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "PENGU-strong ($72k, active trader)",
+      "source": "dexscreener-pengu-analysis",
+      "added_date": "2026-01-25T18:30:00Z"
+    },
+    {
+      "wallet": "ACp9B94HaNELWmcf2941kUKMGz8AMQHEBJsM4s6UBEKN",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($488k, active PF trader)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "5MYzYbjsuhCVWc8Cx8cv7MtKNQXbKZcgPHh1h9G6mb8F",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($357k)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "EdF8apcddwSr86WnJcBPJ7Gax12e48qqyd5zcafrGQ4Y",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($369k, PS active)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "7REh3hYRvMFcTmYckP2fuHJWReDxRHo8xjPsMYUxD63k",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($361k)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "6pxYPvfAd6pZaEZNGbBbkRfmmPTn77aPc8TdmEq2qe9V",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($367k)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "6FJM5zYxKojSWt2MyGMzdXxNJ76TjLvRephj2spSLTF1",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($372k, PF active)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "4eZqB76CTwJXKjpL5V86kkGL75nt4eoXKSFfqi4Mb1MM",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($406k, PS active)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "3n244Q7xPRArYo2xvrtH85uhcDV71uV7Qmigz6JNed4w",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($464k, PS active)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "GMqwf2ct8runQarHgHxkbXgcMBJzwjVoL525ZLCAFLB2",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($468k, profitable PF)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "3fupiyLEr2BnFE9myQY8FS1kzqjhVZd7MdxUj74TFev4",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($794k holder)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "4rGhZ4NsmKWCdP6apioNiJAogNSVw5pgf6FY7FbEuMQW",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($1.4M, very early, 4k SOL PS)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "Bz6pwnEEtspxRVxwJycmDBZQFdAhDgPaJWvRcTP24ZP9",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($811k, active trader)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "EC5zBMQqf8zvKh9wHM4FRtfhX71Hw2EwXu6pWSZiY71J",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($659k, other DEX)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "F2hA2zDVnHyDUiMQ6b3K9Gx9A2JAxJn66ASH9xZ9LqbG",
+      "win_rate": 0.8,
+      "trades_count": 0,
+      "label": "PENGU-whale ($763k, PS active)",
+      "source": "dexscreener-pengu-deep",
+      "added_date": "2026-01-25T19:00:00Z"
+    },
+    {
+      "wallet": "CUFC1QXnbBtfGNXZ5Earwg7AWEkZkDUEehSNJeGydpgh",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($35k, 1k SOL PS)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "627oKQ7pEuhcN6LiVghqsYET8GpatpP4Jd6aUAh1iW2o",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($58k, very active PF)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "4y9NtzSfdELSNWsXwtfBEupHNBGxFJdtwL6NXfW4wXAY",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($24k)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "ERPdkHVPD5XWAHatzN1s748AT37QbpWwRw1RLNhK3XWQ",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($20k, 4.4k SOL PS vol)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "GXp8twzs23KMmdsihwnctvZUhx1mSbKUVZZoWAXzTURn",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($17k, active PF)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "3tH9JEXZo6PiPh3p9PRZQbMKkXHKEb3NUQED3uYXLcGV",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($17k)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "DNUW4W7smaSRsnkTazFV48PSy6z962HT6GugHg9Ed8B9",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($16k, active)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "9tHEmZ287c5LkDZRLzj1vnBuqDkW38u825jzzLjCWYNm",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($9k, 657 SOL PS)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "2nKUmHZ3WxQutV9n7GtLYKpMBHud4WMPAzZ4FgWEuHmc",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($319k WHALE, 4.2k SOL PS)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "Fe2mBGCfdHnpvGHBQUagt7m1MhwE3VLX49UiXsAxCs9m",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($21k)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "HHZa9Wd6xfXLx34eW6agNETqszfWj45gfXnwqeHBhKsJ",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($24k, very active PF)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "9gKLS1UbdXkMDagQSSi5ve8zqgru99oTMUvhHMyXim9D",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($17k, active)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "643hZvM8mqNciymSRW2ohke3mNvyYhxBaWUZRGayzLVT",
+      "win_rate": 0.75,
+      "trades_count": 0,
+      "label": "new-verified ($12k)",
+      "source": "manual-verification",
+      "added_date": "2026-01-25T19:30:00Z"
+    },
+    {
+      "wallet": "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813420"
+    },
+    {
+      "wallet": "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813453"
+    },
+    {
+      "wallet": "5kuh7fiWA7j14iVQrg2gv1stzWhrhE1gruDtej97nnzW",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813460"
+    },
+    {
+      "wallet": "C481ZKiw4TZGs4EjNkhm6TB7s17swzmqAmCcNm73vGnW",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813470"
+    },
+    {
+      "wallet": "DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813476"
+    },
+    {
+      "wallet": "3c1huMjpBBtuBkpPfmY69tW91mqgRhAYbs1scbbeFn7m",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813487"
+    },
+    {
+      "wallet": "DsUA2xfjdRnk2FXkXpEa61mx34P9yKxHxceuJ6d24yDM",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813493"
+    },
+    {
+      "wallet": "62nvXUcG8bKp1BFqJfFr5Rz223QrLrHdSE4oupDAGsvF",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813499"
+    },
+    {
+      "wallet": "7kA5gfafaoBMQ4pJpCfyT5TKbnzG7twbt3WkX5bVcW25",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813506"
+    },
+    {
+      "wallet": "3FpKm9iSie6ug3xcbSPAeTEDGuizEz9CVUyuHn63inXa",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813513"
+    },
+    {
+      "wallet": "G5qwR7CRELKJJFQinGFhqaoYYtfDeKjiLWHuv2n8rkvr",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813519"
+    },
+    {
+      "wallet": "8hkFX634F8PtVg4E98EMQWATz2r55u5xBrbWrseUDg6E",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813526"
+    },
+    {
+      "wallet": "5PVMT5f22fGbN1uDwaiCaxchzuawS5NTjUbitU5emWAW",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813532"
+    },
+    {
+      "wallet": "FWo4HiSUhcTmqfZj92TjgFkztw2RiWY9ELEF79JA6mRb",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813539"
+    },
+    {
+      "wallet": "AeRDs2bahLjCeyYg6166nmQyMabcGMjBQBvdWnzADfpe",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813545"
+    },
+    {
+      "wallet": "GnTEqZ5vM4dBBo8oeRoS69KpqeyvARci5no5HJBCN8cA",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813552"
+    },
+    {
+      "wallet": "2CZZxXeAEhAyJRhzcpFPbNCsoj4rZp2FeVGcCyjzDUkw",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813558"
+    },
+    {
+      "wallet": "7x6KT1ubswbHBDrjS8JQ6bEJxXHefjfXfNxZhp2RGht6",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813566"
+    },
+    {
+      "wallet": "AajY2Jqe8Czafis2tRHTFYw9iYZquHTi9ToC5o2neEGt",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813577"
+    },
+    {
+      "wallet": "FfyLxGLJu6WnCMahP9AKEDkC3VFWRvcH8wUx42CQTGhB",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813588"
+    },
+    {
+      "wallet": "8oZbWdsVUfq5wwdbEnUXP46cm94uB6CvkiRj4GPcamry",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813600"
+    },
+    {
+      "wallet": "G9YjAaxuGEgKVc1FA7jJED4N5vhJGfX8ZGdGB9tAt2Wt",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813610"
+    },
+    {
+      "wallet": "B9ytpw6fHdGVDGxY9NhwJeKQyqStRGzcWkaEaRQb4LT1",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813617"
+    },
+    {
+      "wallet": "6BtGVk1AhEb64VpP6ME6zJaTACM426cpTsbfrxRVfxN2",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813624"
+    },
+    {
+      "wallet": "8NDhyUP9yz6VU63ycGivboGmn9CvcrtAiNZzEaRrji9D",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813631"
+    },
+    {
+      "wallet": "DQYKsBEiJEoUy6C6nLkJoHgSjc2QEm3FY4M1SdkA1c28",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813637"
+    },
+    {
+      "wallet": "APZ17krF566zny2AYUEFfYSLp3zgtn1oKWxg38cnEXsE",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813644"
+    },
+    {
+      "wallet": "6v23SZ7qeKiNX2zNDjaLurujHMgjfxPmPRgpzLfEEydA",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813651"
+    },
+    {
+      "wallet": "3VU6rKjvj4CRUMtks3ceXzqTjXpNUWUWysyLdhNfKQ3x",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813658"
+    },
+    {
+      "wallet": "F99GMbfvAARxZU5eJ4Mq1Avmgb4oYTuhXGXD4ysSiCAN",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813674"
+    },
+    {
+      "wallet": "BKs8zR8SiEx9g6LDb7va7xdYMER3raLqzQbT1Tax3seT",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813681"
+    },
+    {
+      "wallet": "8UQyaMQrjA5y2BwgkEzKSz2Mm2Ggjs3StGp2upE8b1JH",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813688"
+    },
+    {
+      "wallet": "EGxWyUzozFdnSLYHdp6PgDy2sZ1cR2TQF1YvJvjkrBXn",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813694"
+    },
+    {
+      "wallet": "9trjasACpBn8MsAVGqLac8AmFV4oG49RN9kZghWU2CN2",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813701"
+    },
+    {
+      "wallet": "F4DPERw8PYxJC16ReuQsunJvhghbN9dQBkVx7bXd9H9E",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813708"
+    },
+    {
+      "wallet": "2jpf3qQgQ9N9x4Xq3mQmhNWoeH3bdoXDvkWDHudwxHZi",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "zerion-verified",
+      "source": "zerion_check_20260125",
+      "added_date": "2026-01-25T20:23:34.813715"
+    }
+  ],
+  "min_buy_amount_sol": 0.5,
+  "min_win_rate_threshold": 0.65,
+  "tracking_enabled": true,
+  "last_updated": "2026-01-25T16:00:00Z"
+}
