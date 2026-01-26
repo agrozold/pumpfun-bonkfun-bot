@@ -595,7 +595,72 @@ class FallbackSeller:
                             if attempt == self.max_retries - 1:
                                 return False, None, error_msg
 
-                    return False, None, "All Jupiter Ultra BUY attempts failed"
+                    # FALLBACK TO LITE API when Ultra fails (404 for Meteora/BAGS tokens)
+                    logger.warning("[JUPITER] Ultra API failed, trying Lite API fallback...")
+                    
+                    # Switch to Lite API
+                    jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
+                    jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
+                    
+                    quote_params = {
+                        "inputMint": str(SOL_MINT),
+                        "outputMint": str(mint),
+                        "amount": str(buy_amount_lamports),
+                        "slippageBps": slippage_bps,
+                    }
+                    
+                    try:
+                        async with session.get(jupiter_quote_url, params=quote_params) as resp:
+                            if resp.status != 200:
+                                error_text = await resp.text()
+                                return False, None, f"Jupiter Lite quote also failed: {error_text}"
+                            quote = await resp.json()
+                        
+                        out_amount = int(quote.get("outAmount", 0))
+                        out_amount_tokens = out_amount / (10 ** TOKEN_DECIMALS)
+                        logger.info(f"[JUPITER] Lite API expected: ~{out_amount_tokens:,.2f} {symbol}")
+                        
+                        swap_body = {
+                            "quoteResponse": quote,
+                            "userPublicKey": str(self.wallet.pubkey),
+                            "wrapAndUnwrapSol": True,
+                            "prioritizationFeeLamports": self.priority_fee,
+                        }
+                        
+                        for lite_attempt in range(self.max_retries):
+                            try:
+                                async with session.post(jupiter_swap_url, json=swap_body) as resp:
+                                    if resp.status != 200:
+                                        error_text = await resp.text()
+                                        logger.warning(f"Jupiter Lite swap failed: {error_text}")
+                                        continue
+                                    swap_data = await resp.json()
+                                
+                                swap_tx_base64 = swap_data.get("swapTransaction")
+                                if not swap_tx_base64:
+                                    continue
+                                
+                                tx_bytes = base64.b64decode(swap_tx_base64)
+                                tx = VersionedTransaction.from_bytes(tx_bytes)
+                                signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
+                                
+                                logger.info(f"[TX] Jupiter Lite BUY attempt {lite_attempt + 1}/{self.max_retries}...")
+                                result = await rpc_client.send_transaction(
+                                    signed_tx,
+                                    opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+                                )
+                                sig = str(result.value)
+                                
+                                logger.info(f"[OK] Jupiter Lite BUY SUCCESS: {sig}")
+                                return True, sig, None
+                                
+                            except Exception as e:
+                                logger.warning(f"Jupiter Lite attempt {lite_attempt + 1} failed: {e}")
+                        
+                        return False, None, "All Jupiter Lite BUY attempts also failed"
+                        
+                    except Exception as e:
+                        return False, None, f"Jupiter Lite fallback failed: {e}"
 
                 else:
                     # Fallback to v6 API

@@ -1256,6 +1256,55 @@ class UniversalTrader:
             logger.info(f"[WARN] Jupiter error: {e}")
 
         # ============================================
+
+        # ============================================
+        # [4/4] TRY BAGS/METEORA (universal fallback)
+        # This runs for ALL platforms when whale_all_platforms=true
+        # ============================================
+        if self.platform != Platform.BAGS:  # Skip if already checked above
+            logger.info(f"[CHECK] [4/4] Trying BAGS (Meteora DBC) as fallback for {symbol}...")
+            try:
+                from platforms.bags.address_provider import BagsAddressProvider
+
+                address_provider = BagsAddressProvider()
+                pool_address = address_provider.derive_pool_address(mint)
+
+                # Check if pool exists
+                curve_manager_bags = None
+                try:
+                    from platforms.bags.curve_manager import BagsCurveManager
+                    curve_manager_bags = BagsCurveManager(self.solana_client)
+                except ImportError:
+                    # Fallback: use platform_implementations if available
+                    pass
+
+                pool_state = None
+                if curve_manager_bags:
+                    pool_state = await curve_manager_bags.get_pool_state(pool_address)
+
+                if pool_state and pool_state.get("status") != "migrated":
+                    logger.info(f"[OK] BAGS pool available for {symbol}")
+
+                    # Create TokenInfo for bags buy
+                    token_info = await self._create_bags_token_info_from_mint(
+                        mint_str, symbol, pool_address, pool_state
+                    )
+
+                    if token_info:
+                        # Execute buy via buyer
+                        buy_result = await self.buyer.execute(token_info)
+
+                        if buy_result.success:
+                            logger.warning(f"[OK] BAGS FALLBACK BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                            return True, buy_result.tx_signature, "bags_fallback", buy_result.amount or 0, buy_result.price or 0
+                        else:
+                            logger.info(f"[WARN] BAGS fallback buy failed: {buy_result.error_message}")
+                else:
+                    logger.info(f"[WARN] BAGS pool not found or migrated for {symbol}")
+
+            except Exception as e:
+                logger.info(f"[WARN] BAGS fallback check failed: {e}")
+
         # [FAIL] NO LIQUIDITY FOUND
         # ============================================
         logger.error(f"[FAIL] NO LIQUIDITY: Could not buy {symbol} on any DEX")

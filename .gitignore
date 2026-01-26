@@ -63,3 +63,18 @@ test_stop_loss.py
 smart_money_wallets.json
 src/analytics/find_snipers.py
 src/analytics/top_snipers.py
+
+# Local credentials backups
+*.local
+indexer_db.py.local
+
+# Backup files
+*.backup.*
+
+# Wallet data (private)
+insider_wallets.json
+verified_insiders.json
+smart_money_wallets_backup*.json
+
+# Disabled bot configs
+*.disabled
