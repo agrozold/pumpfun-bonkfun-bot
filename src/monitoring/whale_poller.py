@@ -314,6 +314,7 @@ class WhalePoller:
 
     async def _poll_cycle(self):
         """Single polling cycle - check all whale wallets."""
+        logger.warning("[POLLER] Starting poll cycle...")
         wallets = list(self.whale_wallets.keys())
         
         # Process in batches of 10 to avoid overwhelming RPC
@@ -530,7 +531,7 @@ class WhalePoller:
         # Call callback
         if self.on_whale_buy:
             try:
-                await self.on_whale_buy(whale_buy)
+                asyncio.create_task(self.on_whale_buy(whale_buy))
                 self._stats["success"] += 1
             except Exception as e:
                 logger.error(f"[POLLER] Callback error: {e}")

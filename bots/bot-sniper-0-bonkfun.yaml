@@ -1,5 +1,5 @@
 # BONK.FUN via PumpPortal (saves DRPC budget!)
-enabled: true
+enabled: false
 env_file: .env
 name: bot-sniper-bonk
 platform: lets_bonk

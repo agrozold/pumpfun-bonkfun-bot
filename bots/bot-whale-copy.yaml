@@ -1,4 +1,4 @@
-enabled: false
+enabled: true
 env_file: .env
 name: bot-whale-copy
 platform: pump_fun
@@ -11,7 +11,7 @@ filters:
   yolo_mode: true
   sniper_enabled: false
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
-wss_endpoint: ${SOLANA_NODE_WSS_ENDPOINT}
+wss_endpoint: ${CHAINSTACK_WSS_ENDPOINT}
 private_key: ${SOLANA_PRIVATE_KEY}
 priority_fees:
   enable_dynamic: false
@@ -27,7 +27,7 @@ trade:
   max_hold_time: 0
   min_sol_balance: 0.03
   moon_bag_percentage: 50
-  price_check_interval: 0
+  price_check_interval: 1
   sell_slippage: 0.35
   stop_loss_percentage: 0.20
   tsl_enabled: true

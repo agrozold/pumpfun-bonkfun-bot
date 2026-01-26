@@ -1,4 +1,4 @@
-enabled: true
+enabled: false
 env_file: .env
 name: bot-sniper-bags
 platform: bags

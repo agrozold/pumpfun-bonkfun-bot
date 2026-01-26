@@ -826,6 +826,9 @@ class FallbackSeller:
             )
 
             # Calculate sell amount
+            # Get token decimals
+            rpc_client = await self._get_rpc_client()
+            token_decimals = await get_token_decimals(rpc_client, mint)
             sell_amount = int(token_amount * 10**token_decimals)
 
             # Get pool accounts
@@ -1026,150 +1029,169 @@ class FallbackSeller:
         token_amount: float,
         symbol: str,
     ) -> tuple[bool, str | None, str | None]:
-        """Sell via Jupiter aggregator (Ultra API if key available)."""
+        """Sell via Jupiter aggregator. Ultra API first, fallback to Lite on 404."""
         import base64
 
         try:
             logger.info(f"[JUPITER] Jupiter SELL for {symbol}...")
 
+            # Get token decimals
+            rpc_client = await self._get_rpc_client()
+            token_decimals = await get_token_decimals(rpc_client, mint)
             sell_amount = int(token_amount * 10**token_decimals)
             slippage_bps = int(self.slippage * 10000)
 
-            # Use Ultra API if key available
-            if self.jupiter_api_key:
-                jupiter_url = "https://api.jup.ag/ultra/v1/order"
-                headers = {"x-api-key": self.jupiter_api_key}
-                logger.info("[JUPITER] Using Jupiter Ultra API for SELL")
-            else:
-                jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
-                jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
-                headers = {}
-                logger.info("[JUPITER] Using Jupiter Lite API for SELL (no Ultra key)")
-
             async with aiohttp.ClientSession() as session:
-                rpc_client = await self._get_rpc_client()
-
+                # Try Ultra API first if key available
                 if self.jupiter_api_key:
-                    # Jupiter Ultra API - single request
-                    order_body = {
-                        "inputMint": str(mint),
-                        "outputMint": str(SOL_MINT),
-                        "amount": sell_amount,
-                        "taker": str(self.wallet.pubkey),
-                        "slippageBps": slippage_bps,
-                    }
-
-                    for attempt in range(self.max_retries):
-                        try:
-                            async with session.post(
-                                jupiter_url,
-                                json=order_body,
-                                headers=headers
-                            ) as resp:
-                                if resp.status != 200:
-                                    error_text = await resp.text()
-                                    logger.warning(f"Jupiter Ultra SELL order failed: {error_text}")
-                                    continue
-                                order_data = await resp.json()
-
-                            tx_base64 = order_data.get("transaction")
-                            if not tx_base64:
-                                logger.warning("No transaction in Jupiter Ultra SELL response")
-                                continue
-
-                            out_amount = int(order_data.get("outAmount", 0))
-                            out_amount_sol = out_amount / LAMPORTS_PER_SOL
-                            logger.info(f"[JUPITER] Jupiter Ultra SELL expected: ~{out_amount_sol:.6f} SOL")
-
-                            tx_bytes = base64.b64decode(tx_base64)
-                            tx = VersionedTransaction.from_bytes(tx_bytes)
-                            signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
-
-                            logger.info(f"[TX] Jupiter Ultra SELL attempt {attempt + 1}/{self.max_retries}...")
-                            result = await rpc_client.send_transaction(
-                                signed_tx,
-                                opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                            )
-                            sig = str(result.value)
-
-                            logger.info(f"[SIG] Jupiter Ultra SELL signature: {sig}")
-                            logger.info(f"[OK] Jupiter Ultra SELL sent! Expected ~{out_amount_sol:.6f} SOL")
-                            return True, sig, None
-
-                        except Exception as e:
-                            error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                            logger.warning(f"Jupiter Ultra SELL attempt {attempt + 1} failed: {error_msg}")
-                            if attempt == self.max_retries - 1:
-                                return False, None, error_msg
-
-                    return False, None, "All Jupiter Ultra SELL attempts failed"
-
-                else:
-                    # Fallback to v6 API
-                    quote_params = {
-                        "inputMint": str(mint),
-                        "outputMint": str(SOL_MINT),
-                        "amount": str(sell_amount),
-                        "slippageBps": slippage_bps,
-                    }
-
-                    async with session.get(jupiter_quote_url, params=quote_params) as resp:
-                        if resp.status != 200:
-                            error_text = await resp.text()
-                            return False, None, f"Jupiter quote failed: {error_text}"
-                        quote = await resp.json()
-
-                    out_amount = int(quote.get("outAmount", 0))
-                    out_amount_sol = out_amount / LAMPORTS_PER_SOL
-                    logger.info(f"[JUPITER] Jupiter expected output: ~{out_amount_sol:.6f} SOL")
-
-                    swap_body = {
-                        "quoteResponse": quote,
-                        "userPublicKey": str(self.wallet.pubkey),
-                        "wrapAndUnwrapSol": True,
-                        "prioritizationFeeLamports": self.priority_fee,
-                    }
-
-                    for attempt in range(self.max_retries):
-                        try:
-                            async with session.post(jupiter_swap_url, json=swap_body) as resp:
-                                if resp.status != 200:
-                                    error_text = await resp.text()
-                                    logger.warning(f"Jupiter swap request failed: {error_text}")
-                                    continue
-                                swap_data = await resp.json()
-
-                            swap_tx_base64 = swap_data.get("swapTransaction")
-                            if not swap_tx_base64:
-                                return False, None, "No swap transaction in Jupiter response"
-
-                            tx_bytes = base64.b64decode(swap_tx_base64)
-                            tx = VersionedTransaction.from_bytes(tx_bytes)
-                            signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
-
-                            logger.info(f"[TX] Jupiter sell attempt {attempt + 1}/{self.max_retries}...")
-                            result = await rpc_client.send_transaction(
-                                signed_tx,
-                                opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                            )
-                            sig = str(result.value)
-
-                            logger.info(f"[SIG] Jupiter signature: {sig}")
-
-                            await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
-                            logger.info("[OK] Jupiter sell confirmed!")
-                            return True, sig, None
-
-                        except Exception as e:
-                            error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
-                            logger.warning(f"Jupiter attempt {attempt + 1} failed: {error_msg}")
-                            if attempt == self.max_retries - 1:
-                                return False, None, error_msg
-
-                    return False, None, "All Jupiter attempts failed"
+                    logger.info("[JUPITER] Trying Ultra API first...")
+                    success, sig, error = await self._jupiter_ultra_sell(
+                        session, rpc_client, mint, sell_amount, slippage_bps, symbol
+                    )
+                    if success:
+                        return True, sig, None
+                    
+                    # If 404, fallback to Lite API
+                    if error and "404" in str(error):
+                        logger.warning(f"[JUPITER] Ultra returned 404, trying Lite API...")
+                    else:
+                        # Other error - still try Lite as last resort
+                        logger.warning(f"[JUPITER] Ultra failed: {error}, trying Lite API...")
+                
+                # Lite API (fallback or no key)
+                logger.info("[JUPITER] Using Lite API for SELL")
+                return await self._jupiter_lite_sell(
+                    session, rpc_client, mint, sell_amount, slippage_bps, symbol
+                )
 
         except Exception as e:
+            logger.error(f"[JUPITER] SELL error: {e}")
             return False, None, str(e)
+
+    async def _jupiter_ultra_sell(
+        self, session, rpc_client, mint, sell_amount, slippage_bps, symbol
+    ) -> tuple[bool, str | None, str | None]:
+        """Jupiter Ultra API sell."""
+        import base64
+        
+        jupiter_url = "https://api.jup.ag/ultra/v1/order"
+        headers = {"x-api-key": self.jupiter_api_key}
+
+        order_body = {
+            "inputMint": str(mint),
+            "outputMint": str(SOL_MINT),
+            "amount": sell_amount,
+            "taker": str(self.wallet.pubkey),
+            "slippageBps": slippage_bps,
+        }
+
+        for attempt in range(self.max_retries):
+            try:
+                async with session.post(jupiter_url, json=order_body, headers=headers) as resp:
+                    if resp.status == 404:
+                        return False, None, "404 Not Found"
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.warning(f"Jupiter Ultra SELL failed ({resp.status}): {error_text}")
+                        continue
+                    order_data = await resp.json()
+
+                tx_base64 = order_data.get("transaction")
+                if not tx_base64:
+                    logger.warning("No transaction in Jupiter Ultra response")
+                    continue
+
+                out_amount = int(order_data.get("outAmount", 0))
+                out_amount_sol = out_amount / LAMPORTS_PER_SOL
+                logger.info(f"[JUPITER] Ultra expected: ~{out_amount_sol:.6f} SOL")
+
+                tx_bytes = base64.b64decode(tx_base64)
+                tx = VersionedTransaction.from_bytes(tx_bytes)
+                signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
+
+                result = await rpc_client.send_transaction(
+                    signed_tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+                )
+                sig = str(result.value)
+                logger.info(f"[OK] Jupiter Ultra SELL sent: {sig}")
+                return True, sig, None
+
+            except Exception as e:
+                error_msg = str(e) if str(e) else f"{type(e).__name__}"
+                logger.warning(f"Jupiter Ultra attempt {attempt + 1} failed: {error_msg}")
+                if attempt == self.max_retries - 1:
+                    return False, None, error_msg
+
+        return False, None, "All Jupiter Ultra attempts failed"
+
+    async def _jupiter_lite_sell(
+        self, session, rpc_client, mint, sell_amount, slippage_bps, symbol
+    ) -> tuple[bool, str | None, str | None]:
+        """Jupiter Lite API sell."""
+        import base64
+        
+        jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
+        jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
+
+        quote_params = {
+            "inputMint": str(mint),
+            "outputMint": str(SOL_MINT),
+            "amount": str(sell_amount),
+            "slippageBps": slippage_bps,
+        }
+
+        try:
+            async with session.get(jupiter_quote_url, params=quote_params) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    return False, None, f"Jupiter Lite quote failed: {error_text}"
+                quote = await resp.json()
+        except Exception as e:
+            return False, None, f"Jupiter Lite quote error: {e}"
+
+        out_amount = int(quote.get("outAmount", 0))
+        out_amount_sol = out_amount / LAMPORTS_PER_SOL
+        logger.info(f"[JUPITER] Lite expected: ~{out_amount_sol:.6f} SOL")
+
+        swap_body = {
+            "quoteResponse": quote,
+            "userPublicKey": str(self.wallet.pubkey),
+            "wrapAndUnwrapSol": True,
+            "prioritizationFeeLamports": self.priority_fee,
+        }
+
+        for attempt in range(self.max_retries):
+            try:
+                async with session.post(jupiter_swap_url, json=swap_body) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.warning(f"Jupiter Lite swap failed: {error_text}")
+                        continue
+                    swap_data = await resp.json()
+
+                swap_tx_base64 = swap_data.get("swapTransaction")
+                if not swap_tx_base64:
+                    return False, None, "No swap transaction in response"
+
+                tx_bytes = base64.b64decode(swap_tx_base64)
+                tx = VersionedTransaction.from_bytes(tx_bytes)
+                signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
+
+                result = await rpc_client.send_transaction(
+                    signed_tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+                )
+                sig = str(result.value)
+                logger.info(f"[OK] Jupiter Lite SELL sent: {sig}")
+                return True, sig, None
+
+            except Exception as e:
+                error_msg = str(e) if str(e) else f"{type(e).__name__}"
+                logger.warning(f"Jupiter Lite attempt {attempt + 1} failed: {error_msg}")
+                if attempt == self.max_retries - 1:
+                    return False, None, error_msg
+
+        return False, None, "All Jupiter Lite attempts failed"
+
 
     async def _sell_via_pumpportal(
         self,

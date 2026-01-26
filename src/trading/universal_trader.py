@@ -38,7 +38,7 @@ from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolum
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.position import Position, save_positions, load_positions, remove_position, ExitReason
+from trading.position import Position, save_positions, load_positions, remove_position, ExitReason, register_monitor, unregister_monitor
 from security.token_vetter import TokenVetter, VetResult
 from trading.purchase_history import (
     was_token_purchased,
@@ -469,7 +469,7 @@ class UniversalTrader:
         self.take_profit_percentage = take_profit_percentage
         self.stop_loss_percentage = stop_loss_percentage
         self.max_hold_time = max_hold_time
-        self.price_check_interval = price_check_interval
+        self.price_check_interval = max(1, price_check_interval)  # Min 1 sec to prevent RPC spam
 
         # Trailing Stop-Loss (TSL) parameters
         self.tsl_enabled = tsl_enabled
@@ -906,7 +906,7 @@ class UniversalTrader:
                 logger.warning("=" * 70)
                 logger.warning("[WHALE COPY] SUCCESS")
                 logger.warning(f"  SYMBOL:    {whale_buy.token_symbol}")
-                if self.whale_tracker: self.whale_tracker._copy_stats["success"] += 1
+                if self.whale_tracker: self.whale_tracker._stats["success"] += 1
                 logger.warning(f"  TOKEN:     {mint_str}")
                 logger.warning(f"  DEX:       {dex_used}")
                 logger.warning(f"  AMOUNT:    {token_amount:.2f} tokens")
@@ -921,6 +921,15 @@ class UniversalTrader:
                 entry_price = price if price > 0 else self.buy_amount / max(token_amount, 1)
 
                 # CRITICAL: Create position with TP/SL using same method as regular buys!
+                # CRITICAL: Derive bonding_curve for fast sell path (avoid fallback)
+                from solders.pubkey import Pubkey as SoldersPubkey
+                PUMP_PROGRAM_ID = SoldersPubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
+                bonding_curve_derived, _ = SoldersPubkey.find_program_address(
+                    [b"bonding-curve", bytes(mint)],
+                    PUMP_PROGRAM_ID
+                )
+                logger.info(f"[WHALE] Derived bonding_curve: {bonding_curve_derived}")
+
                 position = Position.create_from_buy_result(
                     mint=mint,
                     symbol=whale_buy.token_symbol,
@@ -930,7 +939,7 @@ class UniversalTrader:
                     stop_loss_percentage=self.stop_loss_percentage,
                     max_hold_time=self.max_hold_time,
                     platform=dex_used,
-                    bonding_curve=None,  # Will be derived if needed
+                    bonding_curve=str(bonding_curve_derived),  # Properly derived!
                     # TSL parameters
                     tsl_enabled=self.tsl_enabled,
                     tsl_activation_pct=self.tsl_activation_pct,
@@ -963,14 +972,31 @@ class UniversalTrader:
                 if self.exit_strategy == "tp_sl" and not self.marry_mode:
                     logger.warning(f"[WHALE] Starting TP/SL monitor for {whale_buy.token_symbol}")
 
-                    # Create minimal TokenInfo for monitoring
+                    # Create TokenInfo for monitoring WITH bonding_curve for fast sell!
                     from interfaces.core import TokenInfo
+                    from core.pubkeys import TOKEN_PROGRAM_ID
+                    
+                    # Derive associated_bonding_curve  
+                    associated_bonding_curve_derived, _ = SoldersPubkey.find_program_address(
+                        [bytes(bonding_curve_derived), bytes(TOKEN_PROGRAM_ID), bytes(mint)],
+                        SoldersPubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+                    )
+                    
+                    # Pump.fun fee recipient (creator_vault) - required for direct sell
+                    PUMP_FEE_RECIPIENT = SoldersPubkey.from_string("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
+                    
+                    logger.info(f"[WHALE] Derived bonding_curve: {bonding_curve_derived}")
+                    logger.info(f"[WHALE] Derived associated_bonding_curve: {associated_bonding_curve_derived}")
+                    
                     token_info = TokenInfo(
                         name=whale_buy.token_symbol,
                         symbol=whale_buy.token_symbol,
                         uri="",
                         mint=mint,
                         platform=self.platform,
+                        bonding_curve=bonding_curve_derived,  # CRITICAL for fast sell!
+                        associated_bonding_curve=associated_bonding_curve_derived,  # CRITICAL!
+                        creator_vault=PUMP_FEE_RECIPIENT,  # CRITICAL: fee recipient for pump.fun sell!
                         user=None,
                         creator=None,
                         creation_timestamp=0,
@@ -985,7 +1011,7 @@ class UniversalTrader:
                 logger.error("=" * 70)
                 logger.error("[WHALE COPY] FAILED - no liquidity found")
                 logger.error(f"  SYMBOL:    {whale_buy.token_symbol}")
-                if self.whale_tracker: self.whale_tracker._copy_stats["failed"] += 1
+                if self.whale_tracker: self.whale_tracker._stats["failed"] += 1
                 logger.error(f"  TOKEN:     {mint_str}")
                 logger.error(f"  WHALE:     {whale_buy.whale_label}")
                 logger.error(f"  WALLET:    {whale_buy.whale_wallet}")
@@ -2966,8 +2992,17 @@ class UniversalTrader:
                     # AGGRESSIVE SELL RETRY для STOP LOSS
                     # ============================================
                     sell_success = False
-                    for sell_attempt in range(1, MAX_SELL_RETRIES + 1):
-                        logger.warning(f"[SELL] Attempt {sell_attempt}/{MAX_SELL_RETRIES} for {token_info.symbol}")
+                    
+                    # AGGRESSIVE MODE: При убытке >= 20% - минимум ретраев, без пауз
+                    is_emergency_sell = pnl_pct <= -HARD_STOP_LOSS_PCT
+                    max_retries = 2 if is_emergency_sell else MAX_SELL_RETRIES
+                    retry_delay = 0.0 if is_emergency_sell else 0.5
+                    
+                    if is_emergency_sell:
+                        logger.error(f"[EMERGENCY SELL] {token_info.symbol}: PnL {pnl_pct:.1f}% - AGGRESSIVE MODE (max {max_retries} retries, no delay)")
+                    
+                    for sell_attempt in range(1, max_retries + 1):
+                        logger.warning(f"[SELL] Attempt {sell_attempt}/{max_retries} for {token_info.symbol}")
 
                         # Execute sell with position quantity and entry price
                         sell_result = await self.seller.execute(
@@ -2993,7 +3028,7 @@ class UniversalTrader:
                             )
 
                             # Log final PnL
-                            final_pnl = position.get_pnl()
+                            final_pnl = position.get_pnl(sell_result.price)
                             logger.info(
                                 f"[FINAL] PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
                             )
@@ -3017,14 +3052,14 @@ class UniversalTrader:
                             logger.error(
                                 f"[FAIL] Sell attempt {sell_attempt} failed: {sell_result.error_message}"
                             )
-                            # Короткая пауза перед retry
-                            if sell_attempt < MAX_SELL_RETRIES:
-                                await asyncio.sleep(0.5)
+                            # Короткая пауза перед retry (0 при emergency)
+                            if sell_attempt < max_retries and retry_delay > 0:
+                                await asyncio.sleep(retry_delay)
 
                     # Если все попытки обычной продажи не удались - FALLBACK
                     if not sell_success:
                         logger.error(
-                            f"[CRITICAL] All {MAX_SELL_RETRIES} sell attempts failed! Trying FALLBACK..."
+                            f"[CRITICAL] All {max_retries} sell attempts failed! Trying FALLBACK..."
                         )
                         fallback_success = await self._emergency_fallback_sell(
                             token_info, position, current_price
@@ -3064,6 +3099,49 @@ class UniversalTrader:
                     f"[MONITOR] Price fetch error #{consecutive_price_errors}/{MAX_PRICE_ERRORS} "
                     f"for {token_info.symbol}: {error_msg}"
                 )
+                
+                # ============================================
+                # FALLBACK: Try DexScreener if bonding curve fails
+                # ============================================
+                if "not found" in error_msg.lower() or "invalid" in error_msg.lower():
+                    try:
+                        from utils.dexscreener_price import get_price_from_dexscreener
+                        dex_price = await get_price_from_dexscreener(str(token_info.mint))
+                        if dex_price and dex_price > 0:
+                            logger.info(f"[FALLBACK] Got price from DexScreener: {dex_price:.10f} SOL")
+                            current_price = dex_price
+                            last_known_price = dex_price
+                            consecutive_price_errors = 0  # Reset errors
+                            
+                            # Calculate PnL and check SL/TP
+                            pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+                            position.update_price(current_price)
+                            should_exit, exit_reason = position.should_exit(current_price)
+                            
+                            logger.info(
+                                f"[MONITOR-DEX] {token_info.symbol}: {current_price:.10f} SOL "
+                                f"({pnl_pct:+.2f}%) | SL: {(position.stop_loss_price or 0):.10f}"
+                            )
+                            
+                            # Check hard SL
+                            if pnl_pct <= -HARD_STOP_LOSS_PCT:
+                                logger.error(f"[HARD SL] {token_info.symbol}: {pnl_pct:.1f}% - SELLING!")
+                                should_exit = True
+                                exit_reason = ExitReason.STOP_LOSS
+                            
+                            if should_exit and exit_reason:
+                                # Proceed with sell logic (same as above)
+                                fallback_success = await self._emergency_fallback_sell(
+                                    token_info, position, current_price
+                                )
+                                if fallback_success:
+                                    break
+                            
+                            # Continue monitoring with DexScreener price
+                            await asyncio.sleep(self.price_check_interval)
+                            continue
+                    except Exception as dex_err:
+                        logger.warning(f"[FALLBACK] DexScreener also failed: {dex_err}")
 
                 # ============================================
                 # CRITICAL FIX: Check SL even when price fetch fails!
@@ -3413,21 +3491,21 @@ class UniversalTrader:
                     if pool_state is None:
                         logger.warning(
                             f"[WARN] Position {position.symbol}: bonding curve not found - "
-                            "token may have migrated. Removing corrupted position."
+                            "token may have migrated. Will monitor via DexScreener."
                         )
-                        token_migrated = True
+                        token_migrated = False  # Don't remove - use DexScreener!
                     elif pool_state.get("complete", False):
                         logger.warning(
                             f"[WARN] Position {position.symbol}: token migrated to PumpSwap. "
-                            "Cannot sell via bonding curve - removing position."
+                            "Will monitor via DexScreener instead."
                         )
-                        token_migrated = True
+                        token_migrated = False  # Don't remove - use DexScreener!
                     elif pool_state.get("status", 0) != 0:
                         logger.warning(
                             f"[WARN] Position {position.symbol}: token migrated (status={pool_state.get('status')}). "
-                            "Cannot sell via bonding curve - removing position."
+                            "Will monitor via DexScreener."
                         )
-                        token_migrated = True
+                        token_migrated = False  # Don't remove - use DexScreener!
                     elif pool_state.get("creator"):
                         creator_str = pool_state.get("creator")
                         if isinstance(creator_str, str):
@@ -3443,13 +3521,18 @@ class UniversalTrader:
                     # Don't mark as migrated - try to sell anyway via fallback
                     token_migrated = False
             else:
-                logger.warning(f"Position {position.symbol} has no bonding_curve - removing")
-                token_migrated = True
+                # No bonding_curve - try to monitor via DexScreener instead of removing!
+                logger.warning(f"Position {position.symbol} has no bonding_curve - will monitor via DexScreener")
+                token_migrated = False  # Don't remove! Try DexScreener fallback
 
-            # Skip and remove corrupted/migrated positions
-            if token_migrated:
+            # Skip and remove ONLY if truly corrupted (not just missing bonding_curve)
+            if token_migrated and not position.mint:
+                logger.error(f"Position truly corrupted (no mint) - removing")
                 remove_position(position.mint)
                 continue
+            elif token_migrated:
+                # Token migrated but still tradeable - continue monitoring via DexScreener
+                logger.warning(f"Position {position.symbol} migrated but will try DexScreener monitoring")
 
             # Create TokenInfo with creator info for proper sell
             token_info = TokenInfo(
@@ -3463,8 +3546,13 @@ class UniversalTrader:
                 creator_vault=creator_vault,
             )
 
-            # Start monitoring in background
-            logger.info(f"[RESTORE] Starting position monitor for {position.symbol} (TP: {position.take_profit_price}, SL: {position.stop_loss_price})")
+            # Start monitoring in background (with duplicate protection)
+            mint_str = str(position.mint)
+            if not register_monitor(mint_str):
+                logger.warning(f"[RESTORE] Skipping {position.symbol} - already has monitor")
+                continue
+            
+            logger.info(f"[RESTORE] Starting monitor for {position.symbol} (TP: {position.take_profit_price}, SL: {position.stop_loss_price})")
             asyncio.create_task(self._monitor_position_until_exit(token_info, position))
 
 
