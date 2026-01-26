@@ -270,8 +270,18 @@ async def get_fee_recipient(client: AsyncClient, curve_state: BondingCurveState)
 
 
 async def get_token_balance(client: AsyncClient, ata: Pubkey) -> int:
-    response = await retry_rpc_call(client.get_token_account_balance, ata)
-    return int(response.value.amount) if response.value else 0
+    """Get token balance - works with both TokenProgram and Token2022Program.
+    
+    Token2022 accounts may not appear in getTokenAccountsByOwner with TokenProgram filter.
+    This function queries the ATA directly, which works for both program types.
+    """
+    try:
+        response = await retry_rpc_call(client.get_token_account_balance, ata)
+        return int(response.value.amount) if response.value else 0
+    except Exception as e:
+        # If ATA doesn't exist or is empty, return 0
+        print(f"⚠️ Warning: Could not get balance for {ata}: {e}")
+        return 0
 
 
 def calculate_price(curve_state: BondingCurveState) -> float:

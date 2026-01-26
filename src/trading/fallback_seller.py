@@ -771,10 +771,19 @@ class FallbackSeller:
         raise ValueError(f"Unknown token program: {owner}")
 
     async def _get_token_balance(self, ata: Pubkey) -> int:
-        """Get token balance in raw units."""
-        rpc_client = await self._get_rpc_client()
-        response = await rpc_client.get_token_account_balance(ata)
-        return int(response.value.amount) if response.value else 0
+        """Get token balance in raw units - works with both TokenProgram and Token2022Program.
+        
+        Token2022 accounts may not appear in getTokenAccountsByOwner with TokenProgram filter.
+        This function queries the ATA directly, which works for both program types.
+        """
+        try:
+            rpc_client = await self._get_rpc_client()
+            response = await rpc_client.get_token_account_balance(ata)
+            return int(response.value.amount) if response.value else 0
+        except Exception as e:
+            # If ATA doesn't exist or is empty, return 0
+            logger.warning(f"[BALANCE] Could not get balance for {ata}: {e}")
+            return 0
 
     async def _sell_via_pumpswap(
         self,
