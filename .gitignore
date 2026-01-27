@@ -78,3 +78,6 @@ smart_money_wallets_backup*.json
 
 # Disabled bot configs
 *.disabled
+*.backup_*
+smart_money_wallets.json
+smart_money_wallets.json.backup
