@@ -136,3 +136,74 @@ async def get_token_price_fast(mint: str) -> float | None:
     """Quick price fetch - Jupiter only."""
     async with aiohttp.ClientSession() as session:
         return await get_price_jupiter(mint, session)
+
+
+# === BATCH PRICE FETCHING ===
+# Jupiter allows up to 50 tokens per request - use this to save quota!
+
+_price_cache = {}
+_cache_ts = 0
+CACHE_TTL = 1.5  # seconds - cache prices briefly to reduce API calls
+
+
+async def get_prices_batch(mints: list[str]) -> dict[str, float]:
+    """
+    Get prices for multiple tokens in ONE request.
+    Returns: {mint: price_in_sol, ...}
+    """
+    if not mints:
+        return {}
+    
+    # Limit to 50 per Jupiter docs
+    mints = mints[:50]
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            ids = ",".join(mints)
+            url = f"https://api.jup.ag/price/v3?ids={ids}"
+            headers = {"Accept": "application/json"}
+            api_key = os.getenv("JUPITER_API_KEY")
+            if api_key:
+                headers["x-api-key"] = api_key
+            
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status != 200:
+                    return {}
+                
+                data = await resp.json()
+                sol_usd = await _get_sol_usd(session)
+                
+                result = {}
+                for mint in mints:
+                    token_data = data.get(mint, {})
+                    usd_price = token_data.get("usdPrice")
+                    if usd_price and sol_usd and sol_usd > 0:
+                        result[mint] = float(usd_price) / sol_usd
+                
+                return result
+        except Exception as e:
+            logger.debug(f"[JUP_BATCH] Error: {e}")
+            return {}
+
+
+async def get_token_price_cached(mint: str) -> float | None:
+    """
+    Get price with brief caching to reduce API calls.
+    Good for high-frequency monitoring.
+    """
+    global _price_cache, _cache_ts
+    
+    now = time.time()
+    
+    # Check cache
+    if mint in _price_cache and (now - _cache_ts) < CACHE_TTL:
+        return _price_cache[mint]
+    
+    # Fetch fresh
+    price, _ = await get_token_price(mint)
+    
+    if price:
+        _price_cache[mint] = price
+        _cache_ts = now
+    
+    return price
