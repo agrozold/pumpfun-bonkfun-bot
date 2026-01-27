@@ -991,11 +991,11 @@ class UniversalTrader:
 
                     # Create TokenInfo for monitoring WITH bonding_curve for fast sell!
                     from interfaces.core import TokenInfo
-                    from core.pubkeys import SystemAddresses
+                    from core.pubkeys import TOKEN_PROGRAM_ID
                     
                     # Derive associated_bonding_curve  
                     associated_bonding_curve_derived, _ = SoldersPubkey.find_program_address(
-                        [bytes(bonding_curve_derived), bytes(SystemAddresses.TOKEN_PROGRAM), bytes(mint)],
+                        [bytes(bonding_curve_derived), bytes(TOKEN_PROGRAM_ID), bytes(mint)],
                         SoldersPubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
                     )
                     
