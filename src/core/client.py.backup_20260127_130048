@@ -296,7 +296,6 @@ class SolanaClient:
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
         account_data_size_limit: int | None = None,
-        use_jito: bool = True,  # Disable for sell operations
     ) -> str:
         """
         Send a transaction with optional priority fee and compute unit limit.
@@ -362,7 +361,7 @@ class SolanaClient:
                 # Add JITO tip instruction if JITO is enabled
                 jito = get_jito_sender()
                 tx_instructions = list(instructions)  # copy
-                if jito.enabled and use_jito:
+                if jito.enabled:
                     tip_ix = jito.create_tip_instruction(signer_keypair.pubkey())
                     tx_instructions.append(tip_ix)
                     logger.debug(f"[JITO] Added tip: {jito.tip_lamports} lamports")
@@ -377,7 +376,7 @@ class SolanaClient:
                 logger.info(f"Sending transaction attempt {attempt + 1}/{max_retries}...")
 
                 # Try JITO first for faster landing
-                if jito.enabled and use_jito:
+                if jito.enabled:
                     try:
                         jito_sig = await jito.send_transaction(transaction)
                         if jito_sig:
