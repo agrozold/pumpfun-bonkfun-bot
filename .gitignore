@@ -1,83 +1,53 @@
-# Environment
+# Sensitive data
 .env
-.env.backup*
+.env.local
 
-# IDE
-.cursor/
-.kiro/
-.windsurf/
-.vscode/
-.idea/
+# Whale wallets and insider data
+smart_money_wallets*.json
+insider_wallets.json
+verified_insiders.json
+
+# Positions and trades
+positions.json*
+purchase_history.json
+trades/
+
+# Backups and temp
+backups/
+src_backup*/
+*.backup*
+*.bak*
+*.tmp
+
+# Logs
+logs/
+*.log
+nohup.out
+
+# Database
+*.db
+data/
+src/data/
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-.pytest_cache/
-.ruff_cache/
+*.py[cod]
+*.so
+.Python
+env/
 venv/
-
-# Logs & Data
-*.log
-nohup.out
-logs/
-data/
-trades/
-backups/
-positions.json*
-
-# Dev docs (local only)
-docs/sessions/
-learning-examples/
-
-# Temp
-..bfg-report/
-=
-
-# Build artifacts
-nohup.out
-=
-*.bfg-report/
+.venv
+*.egg-info/
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
-*.swo
 
-# Testing
-.pytest_cache/
+# Coverage
 .coverage
-coverage.xml
-htmlcov/
+.pytest_cache/
 
-# Local configs
-.env
-.env.local
-.env.*.local
-test_dev_reputation.py
-test_dynamic_rpc.py
-test_full_setup.py
-test_stop_loss.py
-smart_money_wallets.json
-src/analytics/find_snipers.py
-src/analytics/top_snipers.py
-
-# Local credentials backups
-*.local
-indexer_db.py.local
-
-# Backup files
-*.backup.*
-
-# Wallet data (private)
-insider_wallets.json
-verified_insiders.json
-smart_money_wallets_backup*.json
-
-# Disabled bot configs
-*.disabled
-*.backup_*
-smart_money_wallets.json
-smart_money_wallets.json.backup
+# OS
+.DS_Store
+Thumbs.db
