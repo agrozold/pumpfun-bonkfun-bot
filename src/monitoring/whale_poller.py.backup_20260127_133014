@@ -202,34 +202,22 @@ class WhalePoller:
         )
 
     def _setup_rpc_endpoints(self):
-        """Setup RPC endpoints with weights from env."""
-        # Weights from env (default: QuickNode=50, Chainstack=40, dRPC=10, Alchemy=0)
-        w_quicknode = int(os.getenv("RPC_WEIGHT_QUICKNODE", "50"))
-        w_chainstack = int(os.getenv("RPC_WEIGHT_CHAINSTACK", "40"))
-        w_drpc = int(os.getenv("RPC_WEIGHT_DRPC", "10"))
-        w_alchemy = int(os.getenv("RPC_WEIGHT_ALCHEMY", "0"))
-
-        # QuickNode - PRIMARY (from WSS endpoint)
-        quicknode_wss = os.getenv("QUICKNODE_WSS_ENDPOINT")
-        if quicknode_wss and w_quicknode > 0:
-            quicknode_http = quicknode_wss.replace("wss://", "https://")
-            self._rpc.add(quicknode_http, weight=w_quicknode, name="QuickNode")
-
-        # Chainstack - SECONDARY (3M/month)
-        chainstack = os.getenv("CHAINSTACK_RPC_ENDPOINT")
-        if chainstack and w_chainstack > 0:
-            self._rpc.add(chainstack, weight=w_chainstack, name="Chainstack")
-
-        # dRPC - fallback
-        drpc = os.getenv("DRPC_RPC_ENDPOINT")
-        if drpc and w_drpc > 0:
-            self._rpc.add(drpc, weight=w_drpc, name="dRPC")
-
-        # Alchemy - disabled by default (rate limited)
+        """Setup RPC endpoints with weights."""
+        # Alchemy - generous limits, use most
         alchemy = os.getenv("ALCHEMY_RPC_ENDPOINT")
-        if alchemy and w_alchemy > 0:
-            self._rpc.add(alchemy, weight=w_alchemy, name="Alchemy")
-
+        if alchemy:
+            self._rpc.add(alchemy, weight=60, name="Alchemy")
+            
+        # dRPC - good fallback
+        drpc = os.getenv("DRPC_RPC_ENDPOINT")
+        if drpc:
+            self._rpc.add(drpc, weight=30, name="dRPC")
+            
+        # Chainstack - preserve quota (3M/month)
+        chainstack = os.getenv("CHAINSTACK_RPC_ENDPOINT")
+        if chainstack:
+            self._rpc.add(chainstack, weight=10, name="Chainstack")
+            
         # Fallback to public if nothing else
         if len(self._rpc) == 0:
             self._rpc.add("https://api.mainnet-beta.solana.com", weight=100, name="Public")
