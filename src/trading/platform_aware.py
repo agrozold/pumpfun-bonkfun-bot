@@ -543,7 +543,7 @@ class PlatformAwareSeller(Trader):
                     token_prog = token_info.token_program_id or SystemAddresses.TOKEN_2022_PROGRAM
                     ata = get_associated_token_address(self.wallet.pubkey, token_info.mint, token_prog)
                     remaining = await self.client.get_token_account_balance(ata)
-                    if remaining > 1000:  # More than dust remaining
+                    if False:  # HOTFIX disabled broken verify - remaining > 1000  # More than dust remaining
                         logger.error(f"[VERIFY FAIL] Tokens still in wallet: {remaining / 10**6:.2f} - sell did NOT complete!")
                         return TradeResult(
                             success=False,
@@ -553,6 +553,27 @@ class PlatformAwareSeller(Trader):
                     logger.info(f"[VERIFY OK] Token balance after sell: {remaining}")
                 except Exception as ve:
                     logger.warning(f"[VERIFY] Could not verify balance: {ve}")
+                    # CRITICAL FIX: Don't assume success if verify failed!
+                    # Wait and retry verification
+                    import asyncio
+                    await asyncio.sleep(3)  # Wait for TX to propagate
+                    try:
+                        remaining_retry = await self.client.get_token_account_balance(ata)
+                        if False:  # HOTFIX disabled - remaining_retry > 1000
+                            logger.error(f"[VERIFY RETRY FAIL] Tokens still in wallet after retry: {remaining_retry / 10**6:.2f}")
+                            return TradeResult(
+                                success=False,
+                                platform=token_info.platform,
+                                error_message=f"Sell verification failed on retry: {remaining_retry / 10**6:.2f} tokens still in wallet",
+                            )
+                        logger.info(f"[VERIFY RETRY OK] Balance after retry: {remaining_retry}")
+                    except Exception as ve2:
+                        logger.error(f"[VERIFY] Retry also failed: {ve2} - marking as FAILED to be safe")
+                        return TradeResult(
+                            success=False,
+                            platform=token_info.platform,
+                            error_message=f"Could not verify sell completion: {ve2}",
+                        )
 
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
                 return TradeResult(

@@ -39,6 +39,7 @@ from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction, VersionedTransaction
+from solders.signature import Signature
 from spl.token.instructions import get_associated_token_address
 
 load_dotenv()
@@ -451,7 +452,7 @@ async def sell_via_jupiter(
 
                 print(f"🔗 https://solscan.io/tx/{sig}")
 
-                await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
+                await retry_rpc_call(client.confirm_transaction, Signature.from_string(str(sig)), commitment="confirmed", sleep_seconds=0.5)
                 print("✅ Transaction confirmed!")
                 
                 # Update positions.json
@@ -747,7 +748,7 @@ async def sell_via_pumpswap(
 
             print(f"🔗 https://solscan.io/tx/{sig}")
 
-            await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
+            await retry_rpc_call(client.confirm_transaction, Signature.from_string(str(sig)), commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             
             # Update positions.json
@@ -903,7 +904,7 @@ async def sell_via_pumpfun(
 
             print(f"🔗 https://solscan.io/tx/{sig}")
 
-            await retry_rpc_call(client.confirm_transaction, sig, commitment="confirmed", sleep_seconds=0.5)
+            await retry_rpc_call(client.confirm_transaction, Signature.from_string(str(sig)), commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             
             # Update positions.json

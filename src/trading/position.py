@@ -188,6 +188,12 @@ class Position:
             return True, ExitReason.STOP_LOSS
 
         if self.tsl_active and current_price <= self.tsl_trigger_price:
+            # FILTER: If PnL > +50%, DON'T sell on TSL - position is too good!
+            pnl_pct = ((current_price - self.entry_price) / self.entry_price) * 100 if self.entry_price > 0 else 0
+            if pnl_pct > 50:
+                # Still in big profit, just update TSL trigger higher and continue
+                # This prevents selling on DexScreener price glitches
+                return False, None
             return True, ExitReason.TRAILING_STOP
 
         if self.take_profit_price and current_price >= self.take_profit_price:

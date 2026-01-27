@@ -135,6 +135,7 @@ async def start_bot(config_path: str):
             take_profit_percentage=cfg["trade"].get("take_profit_percentage"),
             stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
             max_hold_time=cfg["trade"].get("max_hold_time"),
+            moon_bag_percentage=cfg["trade"].get("moon_bag_percentage", 0.0),
             price_check_interval=cfg["trade"].get("price_check_interval", 10),
             # Trailing Stop-Loss (TSL) configuration
             tsl_enabled=cfg["trade"].get("tsl_enabled", False),

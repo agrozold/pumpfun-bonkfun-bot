@@ -918,8 +918,25 @@ class UniversalTrader:
 
                 # Save position WITH TP/SL settings!
                 mint = Pubkey.from_string(mint_str)
-                entry_price = price if price > 0 else self.buy_amount / max(token_amount, 1)
-
+                # USE REAL PRICE FROM TX if available, DexScreener only as fallback!
+                if price > 0:
+                    # Price from transaction is authoritative
+                    entry_price = price
+                    logger.warning(f"[WHALE] Entry price from TX: {entry_price:.10f} SOL")
+                else:
+                    # No TX price (Jupiter/fallback) - try DexScreener
+                    from utils.dexscreener_price import get_price_from_dexscreener
+                    try:
+                        dex_price = await get_price_from_dexscreener(mint_str)
+                        if dex_price and dex_price > 0:
+                            entry_price = dex_price
+                            logger.warning(f"[WHALE] Entry price from DexScreener: {entry_price:.10f} SOL")
+                        else:
+                            entry_price = self.buy_amount / max(token_amount, 1)
+                            logger.error(f"[WHALE] WARNING: Using calculated entry_price: {entry_price:.10f} SOL")
+                    except Exception as e:
+                        entry_price = self.buy_amount / max(token_amount, 1)
+                        logger.error(f"[WHALE] DexScreener failed ({e}), using calculated: {entry_price:.10f} SOL")
                 # CRITICAL: Create position with TP/SL using same method as regular buys!
                 # CRITICAL: Derive bonding_curve for fast sell path (avoid fallback)
                 from solders.pubkey import Pubkey as SoldersPubkey
@@ -1289,11 +1306,25 @@ class UniversalTrader:
             )
 
             if success:
-                # Jupiter doesn't return exact amounts, estimate from SOL spent
-                estimated_price = sol_amount / 1000000  # Rough estimate
-                estimated_tokens = sol_amount / estimated_price if estimated_price > 0 else 0
+                # Get REAL price from DexScreener (Jupiter estimate is unreliable)
+                from utils.dexscreener_price import get_price_from_dexscreener
+                try:
+                    dex_price = await get_price_from_dexscreener(mint_str)
+                    if dex_price and dex_price > 0:
+                        real_price = dex_price
+                        estimated_tokens = sol_amount / real_price
+                        logger.warning(f"[OK] Jupiter BUY SUCCESS: {symbol} - got price from DexScreener: {real_price:.10f}")
+                    else:
+                        # Fallback: use 0 to trigger DexScreener check in entry_price block
+                        real_price = 0
+                        estimated_tokens = 0
+                        logger.warning(f"[OK] Jupiter BUY SUCCESS: {symbol} - price will be fetched later")
+                except Exception as e:
+                    logger.warning(f"[WARN] DexScreener price fetch failed: {e}")
+                    real_price = 0
+                    estimated_tokens = 0
                 logger.warning(f"[OK] Jupiter BUY SUCCESS: {symbol} - {sig}")
-                return True, sig, "jupiter", estimated_tokens, estimated_price
+                return True, sig, "jupiter", estimated_tokens, real_price
             else:
                 logger.info(f"[WARN] Jupiter failed: {error}")
 
@@ -2864,10 +2895,15 @@ class UniversalTrader:
                 break
 
             try:
-                # Get current price from pool/curve (works for all platforms)
-                current_price = await curve_manager.calculate_price(pool_address)
-
-                # Если есть pending stop loss - сразу пытаемся продать снова
+                # DEXSCREENER FIRST - curve_manager is unreliable!
+                from utils.dexscreener_price import get_price_from_dexscreener
+                dex_price = await get_price_from_dexscreener(str(token_info.mint))
+                
+                if dex_price and dex_price > 0:
+                    current_price = dex_price
+                else:
+                    # Fallback to curve only if DexScreener fails
+                    current_price = await curve_manager.calculate_price(pool_address)
                 if pending_stop_loss:
                     logger.warning(
                         f"[RETRY SL] Pending stop loss for {token_info.symbol}, "
@@ -3462,10 +3498,9 @@ class UniversalTrader:
                 f"platform={position.platform}, is_active={position.is_active}"
             )
 
-            # Only restore positions for our platform
-            if position.platform != self.platform.value:
-                logger.info(f"[RESTORE] Skipping position {position.symbol} - different platform ({position.platform} != {self.platform.value})")
-                continue
+            # DISABLED:             # Only restore positions for our platform
+            # DISABLED:             if position.platform != self.platform.value:
+            # DISABLED:                 logger.info(f"[RESTORE] Skipping position {position.symbol} - different platform ({position.platform} != {self.platform.value})")
 
             if not position.is_active:
                 logger.info(f"[RESTORE] Skipping closed position {position.symbol}")

@@ -714,7 +714,7 @@ class FallbackSeller:
 
                             logger.info(f"[SIG] Jupiter BUY signature: {sig}")
 
-                            await rpc_client.confirm_transaction(Signature.from_string(sig), commitment="confirmed")
+                            await rpc_client.confirm_transaction(Signature.from_string(str(sig)), commitment="confirmed")
                             logger.info(f"[OK] Jupiter BUY confirmed! Got ~{out_amount_tokens:,.2f} {symbol}")
                             return True, sig, None
 

@@ -65,3 +65,6 @@ class SystemAddresses:
             "rent": cls.RENT,
             "sol_mint": cls.SOL_MINT,
         }
+
+# Token Program ID
+TOKEN_PROGRAM_ID: Final[Pubkey] = TOKEN_PROGRAM  # Alias for PDA derivation
