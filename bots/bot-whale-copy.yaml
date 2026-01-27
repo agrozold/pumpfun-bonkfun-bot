@@ -76,6 +76,7 @@ stablecoin_filter:
   - 2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo
   - F3hW1kkYVXhMz9FRV8t3mEfwmLQygF7PtPSsofPCdmXR
   - So11111111111111111111111111111111111111112
+  - USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB   # USD1
 
 token_vetting:
   enabled: false

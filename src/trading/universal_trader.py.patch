@@ -1,0 +1,5 @@
+# В __init__ класса UniversalTrader добавить:
+
+# Load existing positions from file at startup
+self.active_positions = load_positions()
+logger.warning(f"[INIT] Loaded {len(self.active_positions)} existing positions from file")

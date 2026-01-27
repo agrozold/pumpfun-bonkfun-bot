@@ -1308,23 +1308,29 @@ class UniversalTrader:
             )
 
             if success:
-                # Get REAL price from DexScreener (Jupiter estimate is unreliable)
+                # Get REAL price from DexScreener (Jupiter doesn't return price)
                 from utils.dexscreener_price import get_price_from_dexscreener
+                real_price = 0
+                estimated_tokens = 0
+                
+                # Try DexScreener with retries (new tokens may take time to appear)
                 try:
-                    dex_price = await get_price_from_dexscreener(mint_str)
+                    dex_price = await get_price_from_dexscreener(mint_str, max_retries=3, retry_delay=2.0)
                     if dex_price and dex_price > 0:
                         real_price = dex_price
                         estimated_tokens = sol_amount / real_price
-                        logger.warning(f"[OK] Jupiter BUY SUCCESS: {symbol} - got price from DexScreener: {real_price:.10f}")
-                    else:
-                        # Fallback: use 0 to trigger DexScreener check in entry_price block
-                        real_price = 0
-                        estimated_tokens = 0
-                        logger.warning(f"[OK] Jupiter BUY SUCCESS: {symbol} - price will be fetched later")
+                        logger.warning(f"[OK] Jupiter BUY SUCCESS: {symbol} - price from DexScreener: {real_price:.10f}")
                 except Exception as e:
                     logger.warning(f"[WARN] DexScreener price fetch failed: {e}")
-                    real_price = 0
-                    estimated_tokens = 0
+                
+                # If still no price, estimate based on typical pump.fun token
+                if real_price <= 0:
+                    # Assume ~1M tokens for 0.02 SOL buy = 0.00000002 SOL/token typical
+                    # This is rough estimate, will be corrected by monitoring
+                    estimated_tokens = sol_amount * 50_000_000  # ~50M tokens per SOL
+                    real_price = sol_amount / estimated_tokens
+                    logger.warning(f"[WARN] Jupiter: No price available, using estimate: {real_price:.10f} SOL")
+                
                 logger.warning(f"[OK] Jupiter BUY SUCCESS: {symbol} - {sig}")
                 return True, sig, "jupiter", estimated_tokens, real_price
             else:
