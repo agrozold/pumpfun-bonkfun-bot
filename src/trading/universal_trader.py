@@ -2874,7 +2874,7 @@ class UniversalTrader:
         # CRITICAL: Track total monitor iterations to detect stuck loops
         max_iterations = 36000  # Max 24 hours of 1-second checks
         total_iterations = 0
-        MAX_SELL_RETRIES = 5
+        MAX_SELL_RETRIES = 2
         pending_stop_loss = False  # Флаг что нужно продать по SL
 
         while position.is_active:
@@ -3049,104 +3049,41 @@ class UniversalTrader:
                         sell_quantity = position.quantity
 
                     # ============================================
-                    # AGGRESSIVE SELL RETRY для STOP LOSS
                     # ============================================
-                    sell_success = False
+                    # FAST SELL с параллельными методами (5s timeout, 10s max)
+                    # ============================================
+                    logger.error(f"[SELL] {token_info.symbol}: PnL {pnl_pct:.1f}% - FAST SELL MODE")
                     
-                    # AGGRESSIVE MODE: При убытке >= 20% - минимум ретраев, без пауз
-                    is_emergency_sell = pnl_pct <= -HARD_STOP_LOSS_PCT
-                    max_retries = 2 if is_emergency_sell else MAX_SELL_RETRIES
-                    retry_delay = 0.0 if is_emergency_sell else 0.5
+                    sell_success = await self._fast_sell_with_timeout(
+                        token_info, position, current_price
+                    )
                     
-                    if is_emergency_sell:
-                        logger.error(f"[EMERGENCY SELL] {token_info.symbol}: PnL {pnl_pct:.1f}% - AGGRESSIVE MODE (max {max_retries} retries, no delay)")
-                    
-                    for sell_attempt in range(1, max_retries + 1):
-                        logger.warning(f"[SELL] Attempt {sell_attempt}/{max_retries} for {token_info.symbol}")
-
-                        # Execute sell with position quantity and entry price
-                        sell_result = await self.seller.execute(
-                            token_info,
-                            token_amount=sell_quantity,
-                            token_price=position.entry_price,
-                        )
-
-                        if sell_result.success:
-                            sell_success = True
-                            # Close position with actual exit price
-                            position.close_position(sell_result.price, exit_reason)
-
-                            logger.warning(
-                                f"[OK] Successfully exited position: {exit_reason.value}"
-                            )
-                            self._log_trade(
-                                "sell",
-                                token_info,
-                                sell_result.price,
-                                sell_result.amount,
-                                sell_result.tx_signature,
-                            )
-
-                            # Log final PnL
-                            final_pnl = position.get_pnl(sell_result.price)
-                            logger.info(
-                                f"[FINAL] PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
-                            )
-
-                            # Remove position from saved file
-                            self._remove_position(str(token_info.mint))
-
-                            # Close ATA if enabled
-                            await handle_cleanup_after_sell(
-                                self.solana_client,
-                                self.wallet,
-                                token_info.mint,
-                                token_info.token_program_id,
-                                self.priority_fee_manager,
-                                self.cleanup_mode,
-                                self.cleanup_with_priority_fee,
-                                self.cleanup_force_close_with_burn,
-                            )
-                            break
-                        else:
-                            logger.error(
-                                f"[FAIL] Sell attempt {sell_attempt} failed: {sell_result.error_message}"
-                            )
-                            # Короткая пауза перед retry (0 при emergency)
-                            if sell_attempt < max_retries and retry_delay > 0:
-                                await asyncio.sleep(retry_delay)
-
-                    # Если все попытки обычной продажи не удались - FALLBACK
-                    if not sell_success:
-                        logger.error(
-                            f"[CRITICAL] All {max_retries} sell attempts failed! Trying FALLBACK..."
-                        )
-                        fallback_success = await self._emergency_fallback_sell(
-                            token_info, position, current_price
-                        )
-                        if fallback_success:
-                            logger.info("[OK] Fallback sell successful")
-                            sell_success = True
-                        else:
-                            # КРИТИЧЕСКАЯ СИТУАЦИЯ - не можем продать!
-                            # Продолжаем мониторинг и пробуем снова на следующей итерации
-                            logger.error(
-                                f"[CRITICAL] FALLBACK ALSO FAILED for {token_info.symbol}! "
-                                f"Will retry on next price check. Position still open!"
-                            )
-                            pending_stop_loss = True
-                            sell_retry_count += 1
-
-                            # Если слишком много неудачных попыток - уменьшаем интервал проверки
-                            if sell_retry_count >= 3:
-                                logger.error(
-                                    f"[CRITICAL] {sell_retry_count} failed sell cycles! "
-                                    f"Reducing check interval to 1 second"
-                                )
-                            await asyncio.sleep(1)  # Быстрый retry
-                            continue  # НЕ выходим из цикла, пробуем снова!
-
                     if sell_success:
+                        logger.warning(f"[OK] Successfully exited position: {exit_reason.value}")
+                        
+                        # Log final PnL
+                        final_pnl = position.get_pnl(current_price)
+                        logger.info(f"[FINAL] PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)")
+                        
+                        # Close ATA if enabled
+                        await handle_cleanup_after_sell(
+                            self.solana_client,
+                            self.wallet,
+                            token_info.mint,
+                            token_info.token_program_id,
+                            self.priority_fee_manager,
+                            self.cleanup_mode,
+                            self.cleanup_with_priority_fee,
+                            self.cleanup_force_close_with_burn,
+                        )
+                    else:
+                        # Не удалось продать - retry на следующей итерации
+                        logger.error(f"[CRITICAL] FAST SELL FAILED for {token_info.symbol}! Retrying...")
+                        pending_stop_loss = True
+                        sell_retry_count += 1
+                        await asyncio.sleep(1)
+                        continue
+
                         break  # Успешно продали - выходим из цикла мониторинга
 
                 # Wait before next price check
@@ -3394,6 +3331,110 @@ class UniversalTrader:
         else:
             # Fallback to deriving the address using platform provider
             return address_provider.derive_pool_address(token_info.mint)
+
+
+    async def _fast_sell_with_timeout(
+        self, token_info: TokenInfo, position: Position, current_price: float
+    ) -> bool:
+        """
+        Ultra-fast sell with 5s timeout per method, 10s total max.
+        For pump.fun: PumpPortal + Jupiter in parallel
+        For others: Jupiter directly
+        """
+        from trading.fallback_seller import FallbackSeller
+        from trading.position import ExitReason
+        
+        mint_str = str(token_info.mint)
+        is_pumpfun = mint_str.endswith("pump")
+        sell_quantity = position.quantity
+        
+        logger.warning(f"[FAST SELL] Starting for {token_info.symbol} ({sell_quantity:.2f} tokens)")
+        
+        # Create fallback seller once
+        fallback_seller = FallbackSeller(
+            client=self.solana_client,
+            wallet=self.wallet,
+            slippage=self.sell_slippage,
+            priority_fee=50000,  # Higher priority for fast sell
+            max_retries=1,  # Single attempt per method
+            jupiter_api_key=self.jupiter_api_key,
+        )
+        
+        async def try_pumpportal():
+            try:
+                return await asyncio.wait_for(
+                    fallback_seller._sell_via_pumpportal(token_info.mint, sell_quantity, token_info.symbol),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                return False, None, "PumpPortal timeout 5s"
+            except Exception as e:
+                return False, None, str(e)
+        
+        async def try_jupiter():
+            try:
+                return await asyncio.wait_for(
+                    fallback_seller._sell_via_jupiter(token_info.mint, sell_quantity, token_info.symbol),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                return False, None, "Jupiter timeout 5s"
+            except Exception as e:
+                return False, None, str(e)
+        
+        async def try_pumpswap():
+            try:
+                return await asyncio.wait_for(
+                    fallback_seller._sell_via_pumpswap(token_info.mint, sell_quantity, token_info.symbol),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                return False, None, "PumpSwap timeout 5s"
+            except Exception as e:
+                return False, None, str(e)
+        
+        start_time = asyncio.get_event_loop().time()
+        
+        # PHASE 1: Parallel attempts (5s)
+        if is_pumpfun:
+            logger.info(f"[FAST SELL] Pump.fun token - PumpPortal + Jupiter parallel")
+            results = await asyncio.gather(try_pumpportal(), try_jupiter(), return_exceptions=True)
+            
+            for i, result in enumerate(results):
+                method = "PumpPortal" if i == 0 else "Jupiter"
+                if isinstance(result, tuple) and result[0]:
+                    logger.info(f"[FAST SELL] {method} SUCCESS: {result[1]}")
+                    position.close_position(current_price, ExitReason.STOP_LOSS)
+                    self._remove_position(mint_str)
+                    return True
+                elif isinstance(result, tuple):
+                    logger.warning(f"[FAST SELL] {method} failed: {result[2]}")
+        else:
+            logger.info(f"[FAST SELL] Non-pump token - Jupiter first")
+            success, sig, error = await try_jupiter()
+            if success:
+                logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
+                position.close_position(current_price, ExitReason.STOP_LOSS)
+                self._remove_position(mint_str)
+                return True
+            logger.warning(f"[FAST SELL] Jupiter failed: {error}")
+        
+        elapsed = asyncio.get_event_loop().time() - start_time
+        if elapsed >= 10.0:
+            logger.error(f"[FAST SELL] Total timeout 10s reached!")
+            return False
+        
+        # PHASE 2: Try PumpSwap
+        logger.warning(f"[FAST SELL] Phase 1 failed, trying PumpSwap...")
+        success, sig, error = await try_pumpswap()
+        if success:
+            logger.info(f"[FAST SELL] PumpSwap SUCCESS: {sig}")
+            position.close_position(current_price, ExitReason.STOP_LOSS)
+            self._remove_position(mint_str)
+            return True
+        
+        logger.error(f"[FAST SELL] All methods failed for {token_info.symbol}!")
+        return False
 
     async def _save_token_info(self, token_info: TokenInfo) -> None:
         """Save token information to a file."""

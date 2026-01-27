@@ -735,27 +735,36 @@ class FallbackSeller:
         token_amount: float,
         symbol: str = "TOKEN",
     ) -> tuple[bool, str | None, str | None]:
-        """Try to sell via PumpSwap, fallback to PumpPortal, then Jupiter."""
+        """Try to sell via PumpPortal FIRST (fastest for pump.fun), then PumpSwap, then Jupiter."""
         logger.info(f"[FALLBACK] Attempting fallback sell for {symbol} ({mint})")
 
-        # Try PumpSwap first
-        success, sig, error = await self._sell_via_pumpswap(mint, token_amount, symbol)
-        if success:
-            return success, sig, None
+        # Check if pump.fun token (ends with 'pump')
+        mint_str = str(mint)
+        is_pumpfun = mint_str.endswith("pump")
 
-        logger.info(f"PumpSwap failed: {error}, trying PumpPortal...")
+        if is_pumpfun:
+            # PumpPortal FIRST for pump.fun tokens (fastest, most reliable)
+            logger.info(f"[FALLBACK] Pump.fun token detected, trying PumpPortal first...")
+            success, sig, error = await self._sell_via_pumpportal(mint, token_amount, symbol)
+            if success:
+                return success, sig, None
+            logger.info(f"PumpPortal failed: {error}, trying PumpSwap...")
 
-        # Try PumpPortal (works for Token-2022 pump.fun tokens)
-        success, sig, error = await self._sell_via_pumpportal(mint, token_amount, symbol)
-        if success:
-            return success, sig, None
+            # PumpSwap second (for migrated tokens)
+            success, sig, error = await self._sell_via_pumpswap(mint, token_amount, symbol)
+            if success:
+                return success, sig, None
+            logger.info(f"PumpSwap failed: {error}, trying Jupiter...")
+        else:
+            # Non pump.fun tokens - try PumpSwap first
+            success, sig, error = await self._sell_via_pumpswap(mint, token_amount, symbol)
+            if success:
+                return success, sig, None
+            logger.info(f"PumpSwap failed: {error}, trying Jupiter...")
 
-        logger.info(f"PumpPortal failed: {error}, trying Jupiter...")
-
-        # Fallback to Jupiter
+        # Jupiter as last resort (for fully migrated tokens)
         success, sig, error = await self._sell_via_jupiter(mint, token_amount, symbol)
         return success, sig, error
-
 
     async def _get_token_program_id(self, mint: Pubkey) -> Pubkey:
         """Determine if mint uses TokenProgram or Token2022Program."""
