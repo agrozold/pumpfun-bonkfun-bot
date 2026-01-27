@@ -2892,9 +2892,9 @@ class UniversalTrader:
                 break
 
             try:
-                # DEXSCREENER FIRST - curve_manager is unreliable!
-                from utils.dexscreener_price import get_price_from_dexscreener
-                dex_price = await get_price_from_dexscreener(str(token_info.mint))
+                # JUPITER FIRST - more accurate than DexScreener!
+                from utils.jupiter_price import get_token_price
+                dex_price, _source = await get_token_price(str(token_info.mint))
                 
                 if dex_price and dex_price > 0:
                     current_price = dex_price
