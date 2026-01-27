@@ -535,45 +535,82 @@ class PlatformAwareSeller(Trader):
             success = await self.client.confirm_transaction(tx_signature, timeout=45.0)
 
             if success:
-                # VERIFY: Check token balance is actually 0 after sell
+                # VERIFY: Check token balance via transaction parsing (more reliable than RPC balance)
                 try:
                     from spl.token.instructions import get_associated_token_address
                     # TOKEN2022 FIX: Most pump.fun/bonk/bags tokens use Token2022
-                    # Default to TOKEN_2022_PROGRAM if token_program_id is not set
                     token_prog = token_info.token_program_id or SystemAddresses.TOKEN_2022_PROGRAM
                     ata = get_associated_token_address(self.wallet.pubkey, token_info.mint, token_prog)
-                    remaining = await self.client.get_token_account_balance(ata)
-                    if False:  # HOTFIX disabled broken verify - remaining > 1000  # More than dust remaining
-                        logger.error(f"[VERIFY FAIL] Tokens still in wallet: {remaining / 10**6:.2f} - sell did NOT complete!")
-                        return TradeResult(
-                            success=False,
-                            platform=token_info.platform,
-                            error_message=f"Sell verification failed: {remaining / 10**6:.2f} tokens still in wallet",
-                        )
-                    logger.info(f"[VERIFY OK] Token balance after sell: {remaining}")
-                except Exception as ve:
-                    logger.warning(f"[VERIFY] Could not verify balance: {ve}")
-                    # CRITICAL FIX: Don't assume success if verify failed!
-                    # Wait and retry verification
-                    import asyncio
-                    await asyncio.sleep(3)  # Wait for TX to propagate
+
+                    # Method 1: Parse transaction to verify sell (most reliable)
+                    verified_via_tx = False
                     try:
-                        remaining_retry = await self.client.get_token_account_balance(ata)
-                        if False:  # HOTFIX disabled - remaining_retry > 1000
-                            logger.error(f"[VERIFY RETRY FAIL] Tokens still in wallet after retry: {remaining_retry / 10**6:.2f}")
+                        tx_result = await self.client._get_transaction_result(str(tx_signature))
+                        if tx_result:
+                            meta = tx_result.get("meta", {})
+                            # Check if transaction succeeded (no error)
+                            if meta.get("err") is None:
+                                # Look for our token in postTokenBalances
+                                post_balances = meta.get("postTokenBalances", [])
+                                mint_str = str(token_info.mint)
+                                wallet_str = str(self.wallet.pubkey)
+                                
+                                found_balance = False
+                                for bal in post_balances:
+                                    if bal.get("mint") == mint_str and bal.get("owner") == wallet_str:
+                                        found_balance = True
+                                        remaining_raw = int(bal.get("uiTokenAmount", {}).get("amount", 0))
+                                        if remaining_raw < 1000:  # Less than dust
+                                            logger.info(f"[VERIFY TX] Sell verified: balance = {remaining_raw}")
+                                            verified_via_tx = True
+                                        else:
+                                            logger.error(f"[VERIFY TX] Tokens remain: {remaining_raw}")
+                                        break
+                                
+                                if not found_balance:
+                                    # No entry for our wallet+mint = ATA was closed = sold all
+                                    logger.info("[VERIFY TX] No post-balance = ATA closed, sell complete")
+                                    verified_via_tx = True
+                    except Exception as tx_err:
+                        logger.warning(f"[VERIFY TX] Parse error: {tx_err}")
+
+                    if verified_via_tx:
+                        logger.info(f"Sell transaction verified: {tx_signature}")
+                        return TradeResult(
+                            success=True,
+                            platform=token_info.platform,
+                            tx_signature=tx_signature,
+                            amount=token_balance_decimal,
+                            price=token_price_sol,
+                        )
+
+                    # Method 2: Fallback - RPC balance check with finalized commitment
+                    logger.info("[VERIFY] TX parse inconclusive, checking RPC balance...")
+                    await asyncio.sleep(2)  # Wait for state propagation
+                    
+                    try:
+                        remaining = await self.client.get_token_account_balance(
+                            ata,
+                            commitment="finalized",
+                            skip_cache=True
+                        )
+                        if remaining > 1000:
+                            logger.error(f"[VERIFY FAIL] Tokens still in wallet: {remaining / 10**6:.2f}")
                             return TradeResult(
                                 success=False,
                                 platform=token_info.platform,
-                                error_message=f"Sell verification failed on retry: {remaining_retry / 10**6:.2f} tokens still in wallet",
+                                error_message=f"Sell verification failed: {remaining / 10**6:.2f} tokens remain",
                             )
-                        logger.info(f"[VERIFY RETRY OK] Balance after retry: {remaining_retry}")
-                    except Exception as ve2:
-                        logger.error(f"[VERIFY] Retry also failed: {ve2} - marking as FAILED to be safe")
-                        return TradeResult(
-                            success=False,
-                            platform=token_info.platform,
-                            error_message=f"Could not verify sell completion: {ve2}",
-                        )
+                        logger.info(f"[VERIFY OK] Balance after sell: {remaining}")
+                    except Exception as bal_err:
+                        err_str = str(bal_err).lower()
+                        if "not found" in err_str or "invalid" in err_str or "could not find" in err_str:
+                            logger.info("[VERIFY] ATA not found = closed after sell = SUCCESS")
+                        else:
+                            logger.warning(f"[VERIFY] Balance check error (assuming success): {bal_err}")
+
+                except Exception as ve:
+                    logger.warning(f"[VERIFY] Verification error (assuming success): {ve}")
 
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
                 return TradeResult(

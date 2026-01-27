@@ -166,7 +166,8 @@ class SolanaClient:
         cache_key = "health"
         cached = _cache_get(cache_key)
         if cached is not None:
-            return Account.from_json(cached)
+            if isinstance(cached, int): return cached
+        return Account.from_json(cached)
 
         body = {
             "jsonrpc": "2.0",
@@ -194,7 +195,8 @@ class SolanaClient:
         cache_key = f"acc:{str(pubkey)}"
         cached = _cache_get(cache_key)
         if cached is not None:
-            return Account.from_json(cached)
+            if isinstance(cached, int): return cached
+        return Account.from_json(cached)
 
         client = await self.get_client()
         response = await client.get_account_info(
@@ -235,25 +237,44 @@ class SolanaClient:
 
         return results
 
-    async def get_token_account_balance(self, token_account: Pubkey) -> int:
-        """Get token balance for an account (with caching).
+    async def get_token_account_balance(
+        self, 
+        token_account: Pubkey,
+        commitment: str = "confirmed",
+        skip_cache: bool = False
+    ) -> int:
+        """Get token balance for an account.
 
         Args:
             token_account: Token account address
+            commitment: Commitment level (processed/confirmed/finalized)
+            skip_cache: Skip cache for fresh data (use after sell verification)
 
         Returns:
             Token balance as integer
         """
         cache_key = f"bal:{str(token_account)}"
-        cached = _cache_get(cache_key)
-        if cached is not None:
-            return Account.from_json(cached)
+        
+        if not skip_cache:
+            cached = _cache_get(cache_key)
+            # FIX: cached value is int, not JSON
+            if cached is not None and isinstance(cached, int):
+                return cached
 
         client = await self.get_client()
-        response = await client.get_token_account_balance(token_account)
+        
+        # Use commitment parameter for RPC call
+        from solana.rpc.commitment import Commitment
+        response = await client.get_token_account_balance(
+            token_account,
+            commitment=Commitment(commitment)
+        )
         result = int(response.value.amount) if response.value else 0
 
-        _cache_set(cache_key, result, CACHE_TTL["token_balance"])
+        # Only cache if not skipping cache
+        if not skip_cache:
+            _cache_set(cache_key, result, CACHE_TTL["token_balance"])
+        
         return result
 
     async def get_latest_blockhash(self) -> Hash:
