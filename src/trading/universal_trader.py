@@ -522,7 +522,9 @@ class UniversalTrader:
         self.token_timestamps: dict[str, float] = {}
         self.pump_signals: dict[str, list] = {}  # mint -> detected patterns
         self.pending_tokens: dict[str, TokenInfo] = {}  # mint -> TokenInfo for pattern-only mode
-        self.active_positions: list[Position] = []  # Active positions for persistence
+        # Load existing positions from file at startup (CRITICAL FIX!)
+        self.active_positions: list[Position] = load_positions()
+        logger.warning(f"[INIT] Loaded {len(self.active_positions)} existing positions from file")  # Active positions for persistence
 
         # ANTI-DUPLICATE PROTECTION (CRITICAL!)
         # Single lock for ALL buy operations to prevent race conditions

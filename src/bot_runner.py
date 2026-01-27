@@ -40,6 +40,7 @@ from config_loader import (
 )
 #DISABLED: from trading.restore_and_monitor import restore_and_monitor_positions
 from trading.universal_trader import UniversalTrader
+from trading.wallet_sync import sync_wallet
 
 # === Metrics Integration ===
 try:
@@ -322,6 +323,16 @@ async def start_bot(config_path: str):
             except Exception as e:
                 logger.warning(f"[SWEEP] Failed to start AutoSweeper: {e}")
         # === End AutoSweeper ===
+        
+
+        # === WALLET SYNC - restore lost positions ===
+        logger.warning("[STARTUP] Running wallet sync...")
+        try:
+            await sync_wallet()
+            logger.warning("[STARTUP] Wallet sync completed")
+        except Exception as e:
+            logger.error(f"[STARTUP] Wallet sync failed: {e}")
+        # === END WALLET SYNC ===
         
         await trader.start()
 
