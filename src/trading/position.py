@@ -226,7 +226,12 @@ class Position:
 
 def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -> None:
     """Save positions to file. Redis is backup only."""
-    active = [p.to_dict() for p in positions if p.is_active]
+    # DEDUPLICATE by mint - keep only latest (prevents duplicate entries)
+    unique_positions = {}
+    for p in positions:
+        if p.is_active:
+            unique_positions[str(p.mint)] = p
+    active = [p.to_dict() for p in unique_positions.values()]
     
     try:
         # Write to file - SINGLE SOURCE OF TRUTH

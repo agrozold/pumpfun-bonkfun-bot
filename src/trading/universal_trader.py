@@ -2140,7 +2140,7 @@ class UniversalTrader:
                         # Keep running forever until interrupted (with balance check)
                         while True:
                             if self._critical_low_balance:
-                                logger.error("🛑 Bot stopped due to critical low balance (≤ 0.02 SOL)")
+                                logger.error("🛑 Bot stopped due to critical low balance")
                                 logger.error("🛑 Please top up your wallet and restart the bot.")
                                 break
                             await asyncio.sleep(60)
@@ -2280,7 +2280,7 @@ class UniversalTrader:
             # CRITICAL BALANCE CHECK - STOP BOT
             # ============================================
             if self._critical_low_balance:
-                logger.error("🛑 Bot stopped due to critical low balance (≤ 0.02 SOL)")
+                logger.error("🛑 Bot stopped due to critical low balance")
                 logger.error("🛑 Please top up your wallet and restart the bot.")
                 break
 
@@ -2628,7 +2628,8 @@ class UniversalTrader:
 
             # CRITICAL BALANCE CHECK: Stop bot completely if balance <= 0.02 SOL
             # This applies to ALL platforms: PUMP, BONK, BAGS
-            CRITICAL_BALANCE_THRESHOLD = 0.02
+            # Use min_sol_balance from config (critical = min - 0.01 for gas reserve)
+            CRITICAL_BALANCE_THRESHOLD = max(0.01, self.min_sol_balance - 0.02)
             if balance_sol <= CRITICAL_BALANCE_THRESHOLD:
                 logger.error("=" * 70)
                 logger.error(f"🛑 CRITICAL LOW BALANCE: {balance_sol:.4f} SOL <= {CRITICAL_BALANCE_THRESHOLD} SOL")
@@ -2641,13 +2642,14 @@ class UniversalTrader:
 
             # Simple balance check: don't buy if balance < MIN_BALANCE_FOR_BUY
             # TSL/SL/TP will still work regardless of balance
-            MIN_BALANCE_FOR_BUY = 0.03
+            # Use min_sol_balance from config
+            MIN_BALANCE_FOR_BUY = self.min_sol_balance
 
             if balance_sol < MIN_BALANCE_FOR_BUY:
                 logger.warning(
                     f"[BALANCE] LOW BALANCE: {balance_sol:.4f} SOL < {MIN_BALANCE_FOR_BUY} SOL minimum"
                 )
-                logger.warning("⛔ Skipping buy - need at least 0.03 SOL to buy new tokens")
+                logger.warning(f"⛔ Skipping buy - need at least {MIN_BALANCE_FOR_BUY} SOL to buy new tokens")
                 return False
 
             logger.debug(f"Balance OK: {balance_sol:.4f} SOL")
