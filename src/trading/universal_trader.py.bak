@@ -2892,42 +2892,15 @@ class UniversalTrader:
                 break
 
             try:
-                # JUPITER FIRST with timeout - more accurate than DexScreener!
+                # JUPITER FIRST - more accurate than DexScreener!
                 from utils.jupiter_price import get_token_price
-                price_source = "unknown"
+                dex_price, _source = await get_token_price(str(token_info.mint))
                 
-                try:
-                    # 3 second timeout for price fetch
-                    dex_price, _source = await asyncio.wait_for(
-                        get_token_price(str(token_info.mint)),
-                        timeout=3.0
-                    )
-                    if dex_price and dex_price > 0:
-                        current_price = dex_price
-                        price_source = _source or "jupiter"
-                    else:
-                        raise ValueError("No price from Jupiter")
-                except (asyncio.TimeoutError, Exception) as price_err:
-                    # Fast fallback to DexScreener directly (not slow curve_manager)
-                    try:
-                        from utils.dexscreener_price import get_dex_price
-                        dex_price = await asyncio.wait_for(
-                            get_dex_price(str(token_info.mint)),
-                            timeout=2.0
-                        )
-                        if dex_price and dex_price > 0:
-                            current_price = dex_price
-                            price_source = "dexscreener_fallback"
-                        else:
-                            current_price = await curve_manager.calculate_price(pool_address)
-                            price_source = "curve_fallback"
-                    except Exception:
-                        current_price = await curve_manager.calculate_price(pool_address)
-                        price_source = "curve_fallback"
-                
-                # Log price source on first check
-                if check_count == 1:
-                    logger.info(f"[PRICE] {token_info.symbol}: {current_price:.10f} SOL (source: {price_source})")
+                if dex_price and dex_price > 0:
+                    current_price = dex_price
+                else:
+                    # Fallback to curve only if DexScreener fails
+                    current_price = await curve_manager.calculate_price(pool_address)
                 if pending_stop_loss:
                     logger.warning(
                         f"[RETRY SL] Pending stop loss for {token_info.symbol}, "
