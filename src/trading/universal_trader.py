@@ -2910,9 +2910,9 @@ class UniversalTrader:
                 except (asyncio.TimeoutError, Exception) as price_err:
                     # Fast fallback to DexScreener directly (not slow curve_manager)
                     try:
-                        from utils.dexscreener_price import get_dex_price
+                        from utils.dexscreener_price import get_price_from_dexscreener
                         dex_price = await asyncio.wait_for(
-                            get_dex_price(str(token_info.mint)),
+                            get_price_from_dexscreener(str(token_info.mint)),
                             timeout=2.0
                         )
                         if dex_price and dex_price > 0:
