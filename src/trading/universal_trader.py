@@ -2613,43 +2613,30 @@ class UniversalTrader:
             return False
 
     async def _check_balance_before_buy(self) -> bool:
-        """Check if wallet has enough SOL to continue trading.
+        """Check if wallet has enough SOL to buy new tokens.
 
         Returns:
-            True if balance is sufficient, False if bot should stop buying.
+            True if balance >= min_sol_balance, False otherwise.
 
-        CRITICAL STOP: If balance <= 0.02 SOL, sets self._critical_low_balance = True
-        which signals the bot to stop completely (not just skip buys).
+        NOTE: When balance < min_sol_balance:
+        - Sets _critical_low_balance = True
+        - STOPS new buys
+        - Monitoring and selling CONTINUE working!
         """
         try:
             client = await self.solana_client.get_client()
             balance_resp = await client.get_balance(self.wallet.pubkey)
             balance_sol = balance_resp.value / 1_000_000_000  # LAMPORTS_PER_SOL
 
-            # CRITICAL BALANCE CHECK: Stop bot completely if balance <= 0.02 SOL
-            # This applies to ALL platforms: PUMP, BONK, BAGS
-            # Use min_sol_balance from config (critical = min - 0.01 for gas reserve)
-            CRITICAL_BALANCE_THRESHOLD = max(0.01, self.min_sol_balance - 0.02)
-            if balance_sol <= CRITICAL_BALANCE_THRESHOLD:
-                logger.error("=" * 70)
-                logger.error(f"🛑 CRITICAL LOW BALANCE: {balance_sol:.4f} SOL <= {CRITICAL_BALANCE_THRESHOLD} SOL")
-                logger.error("🛑 BOT STOPPING - Not enough SOL for gas fees!")
-                logger.error("🛑 Please top up your wallet to continue trading.")
-                logger.error("=" * 70)
-                # Set flag to stop the bot completely
+            # BALANCE CHECK: Stop buying if balance < min_sol_balance
+            # Monitoring and selling will continue regardless of balance!
+            if balance_sol < self.min_sol_balance:
+                logger.warning("=" * 70)
+                logger.warning(f"⛔ LOW BALANCE: {balance_sol:.4f} SOL < {self.min_sol_balance} SOL minimum")
+                logger.warning("⛔ STOPPING NEW BUYS - but monitoring/selling continues!")
+                logger.warning("⛔ Top up wallet to resume buying.")
+                logger.warning("=" * 70)
                 self._critical_low_balance = True
-                return False
-
-            # Simple balance check: don't buy if balance < MIN_BALANCE_FOR_BUY
-            # TSL/SL/TP will still work regardless of balance
-            # Use min_sol_balance from config
-            MIN_BALANCE_FOR_BUY = self.min_sol_balance
-
-            if balance_sol < MIN_BALANCE_FOR_BUY:
-                logger.warning(
-                    f"[BALANCE] LOW BALANCE: {balance_sol:.4f} SOL < {MIN_BALANCE_FOR_BUY} SOL minimum"
-                )
-                logger.warning(f"⛔ Skipping buy - need at least {MIN_BALANCE_FOR_BUY} SOL to buy new tokens")
                 return False
 
             logger.debug(f"Balance OK: {balance_sol:.4f} SOL")
