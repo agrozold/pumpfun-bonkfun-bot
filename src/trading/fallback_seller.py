@@ -527,6 +527,11 @@ class FallbackSeller:
             buy_amount_lamports = int(sol_amount * LAMPORTS_PER_SOL)
             slippage_bps = int(self.slippage * 10000)
 
+
+            # Get dynamic decimals for this token (CRITICAL for non-standard tokens!)
+            rpc_client = await self._get_rpc_client()
+            token_decimals = await get_token_decimals(rpc_client, mint)
+            logger.info(f"[JUPITER] Token {symbol} has {token_decimals} decimals")
             # Use Ultra API if key available, otherwise fallback to v6
             if self.jupiter_api_key:
                 jupiter_url = "https://api.jup.ag/ultra/v1/order"
@@ -571,7 +576,7 @@ class FallbackSeller:
                                 continue
 
                             out_amount = int(order_data.get("outAmount", 0))
-                            out_amount_tokens = out_amount / (10 ** TOKEN_DECIMALS)
+                            out_amount_tokens = out_amount / (10 ** token_decimals)
                             logger.info(f"[JUPITER] Jupiter Ultra expected: ~{out_amount_tokens:,.2f} {symbol}")
 
                             tx_bytes = base64.b64decode(tx_base64)
@@ -618,7 +623,7 @@ class FallbackSeller:
                             quote = await resp.json()
                         
                         out_amount = int(quote.get("outAmount", 0))
-                        out_amount_tokens = out_amount / (10 ** TOKEN_DECIMALS)
+                        out_amount_tokens = out_amount / (10 ** token_decimals)
                         logger.info(f"[JUPITER] Lite API expected: ~{out_amount_tokens:,.2f} {symbol}")
                         
                         swap_body = {
@@ -680,7 +685,7 @@ class FallbackSeller:
                         quote = await resp.json()
 
                     out_amount = int(quote.get("outAmount", 0))
-                    out_amount_tokens = out_amount / (10 ** TOKEN_DECIMALS)
+                    out_amount_tokens = out_amount / (10 ** token_decimals)
                     logger.info(f"[JUPITER] Jupiter expected: ~{out_amount_tokens:,.2f} {symbol}")
 
                     swap_body = {

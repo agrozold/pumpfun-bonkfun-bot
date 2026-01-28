@@ -93,6 +93,8 @@ class WhaleWebhookReceiver:
             "blacklisted": 0,
             "below_min": 0,
             "duplicates": 0,
+            "success": 0,
+            "failed": 0,
         }
         
         # Server

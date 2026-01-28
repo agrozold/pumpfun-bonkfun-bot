@@ -27,13 +27,13 @@ pumpportal:
 
 trade:
   buy_amount: 0.02
-  buy_slippage: 0.3
+  buy_slippage: 0.10
   exit_strategy: tp_sl
   max_hold_time: 0
   min_sol_balance: 0.03
   moon_bag_percentage: 0
   price_check_interval: 1
-  sell_slippage: 0.10
+  sell_slippage: 0.05
   stop_loss_percentage: 0.20
   tsl_enabled: true
   tsl_activation_pct: 0.3

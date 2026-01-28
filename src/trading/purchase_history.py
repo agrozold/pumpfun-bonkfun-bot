@@ -144,3 +144,27 @@ def get_purchase_history_stats() -> dict:
             }
     except Exception as e:
         return {"total_tokens": 0, "file_exists": True, "error": str(e)}
+
+
+def load_purchase_history_full() -> dict:
+    """Load full purchase history with prices and amounts.
+    
+    Returns:
+        Dict mapping mint -> {symbol, price, amount, timestamp, ...}
+    """
+    _ensure_data_dir()
+    
+    if not HISTORY_FILE.exists():
+        return {}
+    
+    try:
+        with open(HISTORY_FILE, 'r') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                data = json.load(f)
+                return data.get("purchased_tokens", {})
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        logger.error(f"[HISTORY] Failed to load full purchase history: {e}")
+        return {}

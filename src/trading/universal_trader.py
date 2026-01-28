@@ -3569,6 +3569,29 @@ class UniversalTrader:
                 continue
 
             logger.info(f"[RESTORE] Restoring position: {position.symbol} on {position.platform}")
+
+            # === SYNC ENTRY PRICE FROM PURCHASE HISTORY ===
+            try:
+                from trading.purchase_history import load_purchase_history_full
+                history = load_purchase_history_full()
+                if mint_str in history:
+                    real_price = history[mint_str].get("price")
+                    if real_price and abs(real_price - position.entry_price) / position.entry_price > 0.01:
+                        logger.warning(
+                            f"[RESTORE] {position.symbol}: Syncing entry_price "
+                            f"{position.entry_price:.10f} -> {real_price:.10f} (from purchase history)"
+                        )
+                        position.entry_price = real_price
+                        # Recalculate TP/SL
+                        if position.take_profit_price and self.take_profit_percentage:
+                            position.take_profit_price = real_price * (1 + self.take_profit_percentage)
+                        if position.stop_loss_price and self.stop_loss_percentage:
+                            position.stop_loss_price = real_price * (1 - self.stop_loss_percentage)
+                        position.high_water_mark = real_price
+                        logger.warning(f"[RESTORE] {position.symbol}: New TP={position.take_profit_price:.10f}, SL={position.stop_loss_price:.10f}")
+            except Exception as e:
+                logger.warning(f"[RESTORE] Failed to sync entry_price for {position.symbol}: {e}")
+            # === END SYNC ===
             self.active_positions.append(position)
 
             # Get creator from bonding curve state for proper sell instruction
