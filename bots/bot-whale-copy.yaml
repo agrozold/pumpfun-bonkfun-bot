@@ -27,7 +27,7 @@ pumpportal:
 
 trade:
   buy_amount: 0.02
-  buy_slippage: 0.20
+  buy_slippage: 0.40
   exit_strategy: tp_sl
   max_hold_time: 0
   min_sol_balance: 0.03

@@ -214,6 +214,7 @@ class WhaleWebhookReceiver:
                 return
                 
             self._stats["swaps_detected"] += 1
+            logger.warning(f"[SWAP] Detected swap in tx {signature[:16]}...")
             
             # ==================== REDIS IDEMPOTENCY CHECK ====================
             state = await self._get_redis_state()
@@ -272,10 +273,12 @@ class WhaleWebhookReceiver:
             
             if not token_received:
                 self._stats["sells_skipped"] += 1
+                logger.info(f"[SKIP] SELL detected (no token received), whale={whale_info.get('label','?')}")
                 return
             
             if sol_spent < self.min_buy_amount:
                 self._stats["below_min"] += 1
+                logger.info(f"[SKIP] Below min: {sol_spent:.4f} SOL < {self.min_buy_amount} SOL, token={token_received[:16]}...")
                 return
             
             if token_received in self.token_blacklist:
@@ -377,6 +380,7 @@ class WhaleWebhookReceiver:
         logger.warning("=" * 70)
         
         self._stats["buys_emitted"] += 1
+        logger.warning(f"[EMIT] Whale BUY signal! {whale_buy.token_symbol} | {whale_buy.amount_sol:.2f} SOL | whale={whale_buy.whale_label}")
         
         if self.on_whale_buy:
             try:

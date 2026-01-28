@@ -555,7 +555,9 @@ class FallbackSeller:
                         "outputMint": str(mint),
                         "amount": buy_amount_lamports,
                         "taker": str(self.wallet.pubkey),
-                        "slippageBps": slippage_bps,
+                        # Use dynamicSlippage for volatile memecoins
+                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
+                        "restrictIntermediateTokens": True,
                     }
 
                     for attempt in range(self.max_retries):
@@ -614,7 +616,9 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "slippageBps": slippage_bps,
+                        # Use dynamic slippage for better success rate
+                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
+                        "restrictIntermediateTokens": True,  # Safer routes
                     }
                     
                     try:
@@ -723,7 +727,9 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "slippageBps": slippage_bps,
+                        # Use dynamic slippage for better success rate
+                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
+                        "restrictIntermediateTokens": True,  # Safer routes
                     }
 
                     async with session.get(jupiter_quote_url, params=quote_params) as resp:
@@ -1147,7 +1153,9 @@ class FallbackSeller:
             "outputMint": str(SOL_MINT),
             "amount": sell_amount,
             "taker": str(self.wallet.pubkey),
-            "slippageBps": slippage_bps,
+            # Use dynamicSlippage for volatile memecoins
+                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
+                        "restrictIntermediateTokens": True,
         }
 
         for attempt in range(self.max_retries):
@@ -1202,7 +1210,9 @@ class FallbackSeller:
             "inputMint": str(mint),
             "outputMint": str(SOL_MINT),
             "amount": str(sell_amount),
-            "slippageBps": slippage_bps,
+            # Use dynamicSlippage for volatile memecoins
+                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
+                        "restrictIntermediateTokens": True,
         }
 
         try:
