@@ -59,6 +59,15 @@ except ImportError as e:
     HELIUS_SYNC_AVAILABLE = False
 # === End Helius Webhook Sync ===
 
+# === PID Lock ===
+try:
+    from utils.pid_lock import acquire_pid_lock
+    PID_LOCK_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"PID lock not available: {e}")
+    PID_LOCK_AVAILABLE = False
+# === End PID Lock ===
+
 # === AutoSweep Import ===
 try:
     from security.auto_sweep import AutoSweeper, SweepConfig, TradingLimiter
@@ -463,6 +472,13 @@ def run_all_bots():
 
 
 def main() -> None:
+    # === PID LOCK CHECK ===
+    if PID_LOCK_AVAILABLE:
+        if not acquire_pid_lock():
+            print("ERROR: Another bot instance is running!")
+            sys.exit(1)
+    # === END PID LOCK ===
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
