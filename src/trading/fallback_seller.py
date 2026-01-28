@@ -549,22 +549,20 @@ class FallbackSeller:
                 rpc_client = await self._get_rpc_client()
 
                 if self.jupiter_api_key:
-                    # Jupiter Ultra API - single request for order
-                    order_body = {
+                    # Jupiter Ultra API - GET /order (not POST!)
+                    # Docs: https://dev.jup.ag/docs/ultra/get-order
+                    order_params = {
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
-                        "amount": buy_amount_lamports,
+                        "amount": str(buy_amount_lamports),
                         "taker": str(self.wallet.pubkey),
-                        # Use dynamicSlippage for volatile memecoins
-                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
-                        "restrictIntermediateTokens": True,
                     }
 
                     for attempt in range(self.max_retries):
                         try:
-                            async with session.post(
+                            async with session.get(
                                 jupiter_url,
-                                json=order_body,
+                                params=order_params,
                                 headers=headers
                             ) as resp:
                                 if resp.status != 200:
@@ -616,9 +614,8 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        # Use dynamic slippage for better success rate
-                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
-                        "restrictIntermediateTokens": True,  # Safer routes
+                        "slippageBps": "4000",  # 40% slippage for volatile memecoins
+                        "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
                     
                     try:
@@ -637,6 +634,8 @@ class FallbackSeller:
                             "userPublicKey": str(self.wallet.pubkey),
                             "wrapAndUnwrapSol": True,
                             "prioritizationFeeLamports": self.priority_fee,
+                            "dynamicComputeUnitLimit": True,  # Better CU estimation
+                            "asLegacyTransaction": False,  # Use versioned TX for Token2022
                         }
                         
                         for lite_attempt in range(self.max_retries):
@@ -727,9 +726,8 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        # Use dynamic slippage for better success rate
-                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
-                        "restrictIntermediateTokens": True,  # Safer routes
+                        "slippageBps": "4000",  # 40% slippage for volatile memecoins
+                        "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
 
                     async with session.get(jupiter_quote_url, params=quote_params) as resp:
@@ -1148,19 +1146,17 @@ class FallbackSeller:
         jupiter_url = "https://api.jup.ag/ultra/v1/order"
         headers = {"x-api-key": self.jupiter_api_key}
 
-        order_body = {
+        order_params = {
             "inputMint": str(mint),
             "outputMint": str(SOL_MINT),
-            "amount": sell_amount,
+            "amount": str(sell_amount),
             "taker": str(self.wallet.pubkey),
             # Use dynamicSlippage for volatile memecoins
-                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
-                        "restrictIntermediateTokens": True,
         }
 
         for attempt in range(self.max_retries):
             try:
-                async with session.post(jupiter_url, json=order_body, headers=headers) as resp:
+                async with session.get(jupiter_url, params=order_params, headers=headers) as resp:
                     if resp.status == 404:
                         return False, None, "404 Not Found"
                     if resp.status != 200:
@@ -1211,8 +1207,6 @@ class FallbackSeller:
             "outputMint": str(SOL_MINT),
             "amount": str(sell_amount),
             # Use dynamicSlippage for volatile memecoins
-                        "dynamicSlippage": {"maxBps": 4000},  # Max 40%
-                        "restrictIntermediateTokens": True,
         }
 
         try:

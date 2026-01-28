@@ -241,6 +241,7 @@ class WhaleWebhookReceiver:
                 
             whale_info = self.whale_wallets.get(fee_payer)
             if not whale_info:
+                logger.debug(f"[SKIP] fee_payer {fee_payer[:16]}... not in whale list")
                 return
             
             token_transfers = tx.get("tokenTransfers", [])
@@ -273,7 +274,7 @@ class WhaleWebhookReceiver:
             
             if not token_received:
                 self._stats["sells_skipped"] += 1
-                logger.info(f"[SKIP] SELL detected (no token received), whale={whale_info.get('label','?')}")
+                logger.warning(f"[SKIP] SELL detected (whale selling, not buying), whale={whale_info.get('label','?')}, tx={signature[:16]}...")
                 return
             
             if sol_spent < self.min_buy_amount:
@@ -297,7 +298,8 @@ class WhaleWebhookReceiver:
             # Check if already have position
             if state and await state.is_connected():
                 if await state.position_exists(token_received):
-                    logger.info(f"[WEBHOOK] Already have position in {token_received[:16]}...")
+                    logger.warning(f"[SKIP] POSITION_EXISTS: Already have position in {token_received[:16]}...")
+                    self._stats["duplicates"] += 1
                     return
             
             source = tx.get("source", "unknown")
@@ -306,6 +308,7 @@ class WhaleWebhookReceiver:
             timestamp = tx.get("timestamp", 0)
             block_time = timestamp if timestamp else None
             
+            logger.warning(f"[READY TO EMIT] whale={whale_info.get('label','?')}, token={token_received[:16]}..., sol={sol_spent:.4f}")
             await self._emit_whale_buy(
                 wallet=fee_payer,
                 token_mint=token_received,
@@ -384,9 +387,12 @@ class WhaleWebhookReceiver:
         
         if self.on_whale_buy:
             try:
+                logger.warning(f"[CALLBACK] Calling on_whale_buy callback for {whale_buy.token_symbol}")
                 asyncio.create_task(self.on_whale_buy(whale_buy))
             except Exception as e:
                 logger.error(f"[WEBHOOK] Callback error: {e}")
+        else:
+            logger.error(f"[WEBHOOK] NO CALLBACK SET! Cannot process whale buy for {whale_buy.token_mint}")
 
     def get_stats(self) -> dict:
         """Get webhook statistics."""
