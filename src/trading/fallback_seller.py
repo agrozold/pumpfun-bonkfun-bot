@@ -658,6 +658,24 @@ class FallbackSeller:
                                 sig = str(result.value)
                                 
                                 real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
+                                
+                                # CRITICAL: Verify transaction actually succeeded (not just sent)
+                                await asyncio.sleep(2)
+                                try:
+                                    from solders.signature import Signature
+                                    tx_resp = await rpc_client.get_transaction(
+                                        Signature.from_string(sig),
+                                        encoding="jsonParsed",
+                                        max_supported_transaction_version=0
+                                    )
+                                    if tx_resp.value and tx_resp.value.transaction:
+                                        meta = tx_resp.value.transaction.meta
+                                        if meta and meta.err:
+                                            logger.error(f"[FAIL] Jupiter Lite BUY TX FAILED: {sig} - error: {meta.err}")
+                                            continue  # Retry next attempt
+                                except Exception as verify_err:
+                                    logger.warning(f"[WARN] Could not verify tx {sig[:20]}...: {verify_err}")
+                                
                                 logger.info(f"[OK] Jupiter Lite BUY SUCCESS: {sig} - {out_amount_tokens:,.2f} tokens @ {real_price:.10f} SOL")
                                 return True, sig, None, out_amount_tokens, real_price
                                 
