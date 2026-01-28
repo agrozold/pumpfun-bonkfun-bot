@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 _sol_cache = {"price": None, "ts": 0}
 _decimals_cache = {}
 SOL_MINT = "So11111111111111111111111111111111111111112"
-QUOTE_API_URL = "https://lite-api.jup.ag/swap/v1/quote"
+QUOTE_API_URL = "https://api.jup.ag/swap/v1/quote"
 
 
 async def _get_sol_usd(session: aiohttp.ClientSession) -> float | None:
@@ -90,9 +90,16 @@ async def get_price_quote_api(mint: str, session: aiohttp.ClientSession) -> floa
             "slippageBps": "100"
         }
         
+        # Add API key header if available
+        headers = {"Accept": "application/json"}
+        api_key = os.getenv("JUPITER_API_KEY")
+        if api_key:
+            headers["x-api-key"] = api_key
+
         async with session.get(
             QUOTE_API_URL, 
             params=params, 
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=5)
         ) as resp:
             if resp.status != 200:
