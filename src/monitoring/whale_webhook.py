@@ -1,10 +1,6 @@
 """
 Whale Webhook Receiver - Real-time whale tracking via Helius Webhooks.
-
-Replaces WhalePoller (30s polling) with instant webhook notifications.
-Receives SWAP events from Helius for 99 whale wallets.
-
-Compatible with existing WhaleBuy interface used by UniversalTrader._on_whale_buy()
+UPGRADED: Redis idempotency for txSignature deduplication.
 """
 
 import asyncio
@@ -18,24 +14,22 @@ from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
-# BLACKLIST - stablecoins and wrapped tokens (skip these)
 TOKEN_BLACKLIST = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
-    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
-    "So11111111111111111111111111111111111111112",   # Wrapped SOL
-    "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",  # mSOL
-    "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj", # stSOL
-    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", # jitoSOL
-    "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1",  # bSOL
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    "So11111111111111111111111111111111111111112",
+    "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
+    "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj",
+    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+    "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1",
 }
 
-# SOL mint for detection
 SOL_MINT = "So11111111111111111111111111111111111111112"
 
 
 @dataclass
 class WhaleBuy:
-    """Whale buy signal - compatible with WhalePoller interface."""
+    """Whale buy signal."""
     whale_wallet: str
     token_mint: str
     amount_sol: float
@@ -49,12 +43,7 @@ class WhaleBuy:
 
 
 class WhaleWebhookReceiver:
-    """
-    Receives real-time whale SWAP notifications via Helius Webhooks.
-    
-    Replaces WhalePoller's 30s polling with instant webhook delivery.
-    Parses enhanced transaction format from Helius.
-    """
+    """Receives real-time whale SWAP notifications via Helius Webhooks."""
     
     def __init__(
         self,
@@ -68,23 +57,19 @@ class WhaleWebhookReceiver:
         self.port = port
         self.min_buy_amount = min_buy_amount
         
-        # Load whale wallets for labels
         self.whale_wallets: dict[str, dict] = {}
         self._load_wallets(wallets_file)
         
-        # Merge blacklist
         self.token_blacklist = TOKEN_BLACKLIST.copy()
         if stablecoin_filter:
             self.token_blacklist.update(set(stablecoin_filter))
         
-        # Callback for whale buy signals
         self.on_whale_buy: Optional[Callable] = None
         
-        # Anti-duplicate
+        # In-memory backup when Redis is down
         self._processed_sigs: set[str] = set()
         self._emitted_tokens: set[str] = set()
         
-        # Stats
         self._stats = {
             "webhooks_received": 0,
             "swaps_detected": 0,
@@ -93,11 +78,11 @@ class WhaleWebhookReceiver:
             "blacklisted": 0,
             "below_min": 0,
             "duplicates": 0,
+            "idempotent_skip": 0,
             "success": 0,
             "failed": 0,
         }
         
-        # Server
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self.running = False
@@ -133,9 +118,19 @@ class WhaleWebhookReceiver:
             logger.exception(f"[WEBHOOK] Error loading wallets: {e}")
 
     def set_callback(self, callback: Callable):
-        """Set callback for whale buy signals (same as WhalePoller)."""
+        """Set callback for whale buy signals."""
         self.on_whale_buy = callback
         logger.info("[WEBHOOK] Callback set")
+
+    async def _get_redis_state(self):
+        """Get Redis state manager."""
+        try:
+            from trading.redis_state import get_redis_state
+            return await get_redis_state()
+        except ImportError:
+            return None
+        except Exception:
+            return None
 
     async def start(self):
         """Start webhook server."""
@@ -143,6 +138,7 @@ class WhaleWebhookReceiver:
         self._app.router.add_post('/webhook', self._handle_webhook)
         self._app.router.add_get('/health', self._health_check)
         self._app.router.add_get('/', self._health_check)
+        self._app.router.add_get('/stats', self._get_stats)
         
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
@@ -156,6 +152,7 @@ class WhaleWebhookReceiver:
         logger.warning(f"[WEBHOOK] Listening on http://{self.host}:{self.port}/webhook")
         logger.warning(f"[WEBHOOK] Tracking {len(self.whale_wallets)} whale wallets")
         logger.warning(f"[WEBHOOK] Min buy amount: {self.min_buy_amount} SOL")
+        logger.warning("[WEBHOOK] Redis idempotency: ENABLED")
         logger.warning("=" * 70)
 
     async def stop(self):
@@ -167,7 +164,25 @@ class WhaleWebhookReceiver:
 
     async def _health_check(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
-        return web.Response(text="OK", status=200)
+        try:
+            state = await self._get_redis_state()
+            redis_ok = state and await state.is_connected()
+            pos_count = await state.get_positions_count() if state else 0
+            
+            health = {
+                "status": "ok",
+                "redis": "connected" if redis_ok else "disconnected",
+                "positions": pos_count,
+                "whales": len(self.whale_wallets),
+                "stats": self._stats,
+            }
+            return web.json_response(health)
+        except Exception as e:
+            return web.json_response({"status": "ok", "error": str(e)})
+
+    async def _get_stats(self, request: web.Request) -> web.Response:
+        """Get statistics endpoint."""
+        return web.json_response(self._stats)
 
     async def _handle_webhook(self, request: web.Request) -> web.Response:
         """Handle incoming webhook from Helius."""
@@ -175,7 +190,6 @@ class WhaleWebhookReceiver:
             self._stats["webhooks_received"] += 1
             data = await request.json()
             
-            # Helius sends array of transactions
             transactions = data if isinstance(data, list) else [data]
             
             for tx in transactions:
@@ -191,46 +205,46 @@ class WhaleWebhookReceiver:
             return web.Response(status=500, text=str(e))
 
     async def _process_transaction(self, tx: dict):
-        """Process single transaction from Helius webhook."""
+        """Process single transaction with Redis idempotency."""
         try:
             tx_type = tx.get("type", "UNKNOWN")
             signature = tx.get("signature", "")
             
-            # Only process SWAP transactions
             if tx_type != "SWAP":
-                logger.info(f"[FILTER] tx_type={tx_type} != SWAP, skipping")
                 return
                 
             self._stats["swaps_detected"] += 1
             
-            # Skip already processed
-            if signature in self._processed_sigs:
-                self._stats["duplicates"] += 1
-                return
-            self._processed_sigs.add(signature)
+            # ==================== REDIS IDEMPOTENCY CHECK ====================
+            state = await self._get_redis_state()
+            if state and await state.is_connected():
+                if await state.is_tx_processed(signature):
+                    self._stats["idempotent_skip"] += 1
+                    logger.debug(f"[IDEMPOTENT] TX already processed: {signature[:20]}...")
+                    return
+                # Mark BEFORE processing to prevent race condition
+                await state.mark_tx_processed(signature)
+            else:
+                # Fallback to in-memory
+                if signature in self._processed_sigs:
+                    self._stats["duplicates"] += 1
+                    return
+                self._processed_sigs.add(signature)
+                if len(self._processed_sigs) > 5000:
+                    self._processed_sigs = set(list(self._processed_sigs)[-2500:])
+            # ==================== END IDEMPOTENCY ====================
             
-            # Cleanup old sigs
-            if len(self._processed_sigs) > 5000:
-                self._processed_sigs = set(list(self._processed_sigs)[-2500:])
-            
-            # Get fee payer (whale wallet)
             fee_payer = tx.get("feePayer", "")
             if not fee_payer:
                 return
                 
-            # Check if this is one of our tracked whales
             whale_info = self.whale_wallets.get(fee_payer)
             if not whale_info:
-                logger.info(f"[FILTER] NOT WHALE: {fee_payer[:20]}...")
-                # Not our whale, skip
                 return
             
-            # Parse token transfers to detect BUY vs SELL
             token_transfers = tx.get("tokenTransfers", [])
             native_transfers = tx.get("nativeTransfers", [])
             
-            # Find: SOL out, Token in = BUY
-            # Find: Token out, SOL in = SELL
             sol_spent = 0.0
             token_received = None
             token_amount = 0.0
@@ -241,39 +255,29 @@ class WhaleWebhookReceiver:
                 to_addr = tt.get("toUserAccount", "")
                 amount = float(tt.get("tokenAmount", 0))
                 
-                # Skip SOL (wrapped)
                 if mint == SOL_MINT:
                     if from_addr == fee_payer:
                         sol_spent += amount
                     continue
                 
-                # Token received by whale = potential BUY
                 if to_addr == fee_payer and mint not in self.token_blacklist:
                     token_received = mint
                     token_amount = amount
             
-            # Also check native transfers for SOL spent
             for nt in native_transfers:
                 from_addr = nt.get("fromUserAccount", "")
-                amount = float(nt.get("amount", 0)) / 1e9  # lamports to SOL
+                amount = float(nt.get("amount", 0)) / 1e9
                 if from_addr == fee_payer:
                     sol_spent += amount
             
-            # Is this a BUY? (whale spent SOL, received token)
             if not token_received:
-                logger.info(f"[FILTER] No token_received (SELL)")
                 self._stats["sells_skipped"] += 1
-                logger.debug(f"[WEBHOOK] Skipping SELL tx: {signature[:20]}...")
                 return
             
-            # Check minimum SOL spent
             if sol_spent < self.min_buy_amount:
-                logger.info(f"[FILTER] Below min: {sol_spent:.3f} < {self.min_buy_amount} SOL")
                 self._stats["below_min"] += 1
-                logger.debug(f"[WEBHOOK] Below min: {sol_spent:.3f} < {self.min_buy_amount} SOL")
                 return
             
-            # Check blacklist
             if token_received in self.token_blacklist:
                 self._stats["blacklisted"] += 1
                 return
@@ -287,15 +291,18 @@ class WhaleWebhookReceiver:
             if len(self._emitted_tokens) > 500:
                 self._emitted_tokens = set(list(self._emitted_tokens)[-400:])
             
-            # Detect platform from source
+            # Check if already have position
+            if state and await state.is_connected():
+                if await state.position_exists(token_received):
+                    logger.info(f"[WEBHOOK] Already have position in {token_received[:16]}...")
+                    return
+            
             source = tx.get("source", "unknown")
             platform = self._map_source_to_platform(source)
             
-            # Get timestamp
             timestamp = tx.get("timestamp", 0)
             block_time = timestamp if timestamp else None
             
-            # Emit whale buy signal!
             await self._emit_whale_buy(
                 wallet=fee_payer,
                 token_mint=token_received,
@@ -339,10 +346,8 @@ class WhaleWebhookReceiver:
         description: str,
     ):
         """Emit whale buy signal to callback."""
-        # Try to extract symbol from description
         token_symbol = ""
         if description:
-            # Helius description format: "X swapped Y SOL for Z TOKEN"
             parts = description.split(" for ")
             if len(parts) > 1:
                 token_symbol = parts[-1].split()[-1] if parts[-1] else ""
@@ -356,12 +361,12 @@ class WhaleWebhookReceiver:
             whale_label=whale_label,
             platform=platform,
             token_symbol=token_symbol,
-            age_seconds=0,  # Real-time!
+            age_seconds=0,
             block_time=block_time,
         )
         
         logger.warning("=" * 70)
-        logger.warning("[WEBHOOK] 🐋 WHALE BUY DETECTED (REAL-TIME)!")
+        logger.warning("[WEBHOOK] WHALE BUY DETECTED (REAL-TIME)!")
         logger.warning(f"  WHALE:    {whale_label}")
         logger.warning(f"  WALLET:   {wallet}")
         logger.warning(f"  TOKEN:    {token_mint}")

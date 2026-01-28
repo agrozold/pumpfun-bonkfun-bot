@@ -3588,16 +3588,26 @@ class UniversalTrader:
                             f"{position.entry_price:.10f} -> {real_price:.10f} (from purchase history)"
                         )
                         position.entry_price = real_price
-                        # Recalculate TP/SL
-                        if position.take_profit_price and self.take_profit_percentage:
+                        # Recalculate TP/SL (FIXED: calculate even if None)
+                        if self.take_profit_percentage:
                             position.take_profit_price = real_price * (1 + self.take_profit_percentage)
-                        if position.stop_loss_price and self.stop_loss_percentage:
+                        if self.stop_loss_percentage:
                             position.stop_loss_price = real_price * (1 - self.stop_loss_percentage)
                         position.high_water_mark = real_price
                         logger.warning(f"[RESTORE] {position.symbol}: New TP={position.take_profit_price:.10f}, SL={position.stop_loss_price:.10f}")
             except Exception as e:
                 logger.warning(f"[RESTORE] Failed to sync entry_price for {position.symbol}: {e}")
             # === END SYNC ===
+            
+            # === ALWAYS CALCULATE TP/SL IF MISSING ===
+            if position.take_profit_price is None and self.take_profit_percentage:
+                position.take_profit_price = position.entry_price * (1 + self.take_profit_percentage)
+                logger.info(f"[RESTORE] {position.symbol}: Calculated TP = {position.take_profit_price:.10f}")
+            if position.stop_loss_price is None and self.stop_loss_percentage:
+                position.stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage)
+                logger.info(f"[RESTORE] {position.symbol}: Calculated SL = {position.stop_loss_price:.10f}")
+            # === END TP/SL FIX ===
+            
             self.active_positions.append(position)
 
             # Get creator from bonding curve state for proper sell instruction

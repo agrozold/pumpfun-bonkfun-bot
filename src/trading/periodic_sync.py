@@ -1,6 +1,6 @@
 """
 Periodic wallet synchronization - runs every 5 minutes.
-Removes phantom positions that don't exist in wallet.
+UPGRADED: Redis integration + RPC failure protection.
 """
 
 import asyncio
@@ -29,18 +29,23 @@ def get_rpc_endpoints():
         endpoints.append(os.getenv("ALCHEMY_RPC_ENDPOINT"))
     if os.getenv("SOLANA_NODE_RPC_ENDPOINT"):
         endpoints.append(os.getenv("SOLANA_NODE_RPC_ENDPOINT"))
-    endpoints.append("https://lb.drpc.live/solana/AhgaFU4IRUa1ppdxz5AANAalFWme-DoR8Ja0vsZj1RAX")
     return endpoints
 
 
 async def get_wallet_tokens_for_sync(wallet: str) -> tuple[set, bool]:
+    """Get wallet tokens. Returns (mints, success)."""
     mints = set()
     for rpc in get_rpc_endpoints():
         try:
             logger.info(f"[SYNC] Trying RPC: {rpc[:50]}...")
             success = False
             for prog_id in ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]:
-                payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner", "params": [wallet, {"programId": prog_id}, {"encoding": "jsonParsed"}]}
+                payload = {
+                    "jsonrpc": "2.0", 
+                    "id": 1, 
+                    "method": "getTokenAccountsByOwner", 
+                    "params": [wallet, {"programId": prog_id}, {"encoding": "jsonParsed"}]
+                }
                 async with aiohttp.ClientSession() as session:
                     async with session.post(rpc, json=payload, timeout=aiohttp.ClientTimeout(total=20)) as resp:
                         data = await resp.json()
@@ -69,22 +74,17 @@ async def get_wallet_tokens_for_sync(wallet: str) -> tuple[set, bool]:
     return mints, False
 
 
-def load_positions_sync() -> list:
-    if not POSITIONS_FILE.exists():
-        return []
+async def _get_redis_state():
+    """Get Redis state manager."""
     try:
-        with open(POSITIONS_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def save_positions_sync(positions: list):
-    with open(POSITIONS_FILE, "w") as f:
-        json.dump(positions, f, indent=2)
+        from trading.redis_state import get_redis_state
+        return await get_redis_state()
+    except:
+        return None
 
 
 async def run_periodic_sync():
+    """Main sync loop."""
     pk = os.getenv("SOLANA_PRIVATE_KEY")
     if not pk:
         logger.error("[SYNC] Missing SOLANA_PRIVATE_KEY")
@@ -92,38 +92,77 @@ async def run_periodic_sync():
     kp = Keypair.from_bytes(base58.b58decode(pk))
     wallet = str(kp.pubkey())
     logger.warning(f"[SYNC] Periodic sync started (every {SYNC_INTERVAL}s)")
+    
     while True:
         await asyncio.sleep(SYNC_INTERVAL)
         try:
             logger.info("[SYNC] Running periodic wallet sync...")
             wallet_mints, rpc_success = await get_wallet_tokens_for_sync(wallet)
+            
             if not rpc_success:
-                logger.warning("[SYNC] RPC FAILED - skipping sync to protect positions")
+                logger.warning("[SYNC] RPC FAILED - skipping sync to PROTECT positions")
                 continue
-            positions = load_positions_sync()
+            
+            # Get positions from Redis first, fallback to JSON
+            state = await _get_redis_state()
+            positions = []
+            use_redis = False
+            
+            if state and await state.is_connected():
+                data = await state.get_all_positions()
+                if data:
+                    positions = data
+                    use_redis = True
+                    logger.info(f"[SYNC] Loaded {len(positions)} positions from Redis")
+            
+            if not positions:
+                # Fallback to JSON
+                if POSITIONS_FILE.exists():
+                    with open(POSITIONS_FILE) as f:
+                        positions = json.load(f)
+                    logger.info(f"[SYNC] Loaded {len(positions)} positions from JSON")
+            
             if not positions:
                 logger.info("[SYNC] No positions to check")
                 continue
+            
             phantoms = []
             valid = []
+            
             for pos in positions:
                 mint = pos.get("mint", "")
                 if mint in wallet_mints:
                     valid.append(pos)
                 else:
                     phantoms.append(pos)
+            
             if phantoms:
                 logger.warning(f"[SYNC] Removing {len(phantoms)} PHANTOM positions:")
                 for p in phantoms:
-                    logger.warning(f"  - {p.get('symbol', '?')} ({p.get('mint', '')[:16]}...)")
-                save_positions_sync(valid)
+                    symbol = p.get('symbol', '?')
+                    mint = p.get('mint', '')
+                    logger.warning(f"  - {symbol} ({mint[:16]}...)")
+                    
+                    # Remove from Redis
+                    if state and use_redis:
+                        await state.remove_position(mint)
+                
+                # Save valid to JSON
+                with open(POSITIONS_FILE, "w") as f:
+                    json.dump(valid, f, indent=2)
                 logger.info(f"[SYNC] Saved {len(valid)} valid positions")
             else:
                 logger.info(f"[SYNC] All {len(positions)} positions OK")
+            
+            # Export Redis to JSON backup
+            if state and use_redis:
+                await state.export_to_json(str(POSITIONS_FILE))
+                
         except Exception as e:
             logger.error(f"[SYNC] Periodic sync error: {e}")
 
 
 def start_periodic_sync():
+    """Start periodic sync task."""
     asyncio.create_task(run_periodic_sync())
     logger.warning("[SYNC] Periodic sync task scheduled (every 5 min)")

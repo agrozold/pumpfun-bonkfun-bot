@@ -122,31 +122,32 @@ class FallbackSeller:
         self._alt_client = None
 
     async def _get_rpc_client(self):
-        """Get RPC client, preferring alternative endpoint if available.
-
+        """Get RPC client - uses dRPC/Chainstack/Alchemy.
+        
         Priority:
-        1. ALCHEMY_RPC_ENDPOINT (if set) - fast, high limits
-        2. Public Solana RPC - official, reliable
-        3. Main client (Helius) - last resort, may be rate limited
+        1. DRPC_RPC_ENDPOINT
+        2. SOLANA_NODE_RPC_ENDPOINT  
+        3. CHAINSTACK_RPC_ENDPOINT
+        4. ALCHEMY_RPC_ENDPOINT
+        5. Public Solana (last resort)
         """
         import os
 
-        # Try alternative RPC first (Alchemy) to avoid rate limits on main RPC
-        alt_endpoint = self.alt_rpc_endpoint or os.getenv("HELIUS_RPC_ENDPOINT")
-        if alt_endpoint:
-            if self._alt_client is None:
-                from solana.rpc.async_api import AsyncClient
-                self._alt_client = AsyncClient(alt_endpoint)
-                logger.info(f"[FALLBACK] Using Helius RPC (for get_program_accounts): {alt_endpoint[:40]}...")
+        if self._alt_client is not None:
             return self._alt_client
 
-        # Fallback to public Solana RPC (official, reliable)
-        # This avoids consuming Helius quota for PumpSwap operations
-        public_rpc = "https://api.mainnet-beta.solana.com"
-        if self._alt_client is None:
-            from solana.rpc.async_api import AsyncClient
-            self._alt_client = AsyncClient(public_rpc)
-            logger.info("[FALLBACK] Using public Solana RPC (no ALCHEMY_RPC_ENDPOINT set)")
+        # Try fast RPCs in order (NO HELIUS!)
+        rpc_url = (
+            os.getenv("DRPC_RPC_ENDPOINT") or
+            os.getenv("SOLANA_NODE_RPC_ENDPOINT") or
+            os.getenv("CHAINSTACK_RPC_ENDPOINT") or
+            os.getenv("ALCHEMY_RPC_ENDPOINT") or
+            "https://api.mainnet-beta.solana.com"
+        )
+        
+        from solana.rpc.async_api import AsyncClient
+        self._alt_client = AsyncClient(rpc_url)
+        logger.info(f"[FALLBACK] Using RPC: {rpc_url[:60]}...")
         return self._alt_client
 
     async def buy_via_pumpswap(
@@ -661,7 +662,7 @@ class FallbackSeller:
                                 real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
                                 
                                 # CRITICAL: Verify transaction actually succeeded (not just sent)
-                                await asyncio.sleep(2)
+                                await asyncio.sleep(5)  # Wait longer for confirmation
                                 try:
                                     from solders.signature import Signature
                                     tx_resp = await rpc_client.get_transaction(
@@ -678,7 +679,34 @@ class FallbackSeller:
                                     logger.warning(f"[WARN] Could not verify tx {sig[:20]}...: {verify_err}")
                                     continue  # CRITICAL: retry if verify failed
                                 
-                                logger.info(f"[OK] Jupiter Lite BUY SUCCESS: {sig} - {out_amount_tokens:,.2f} tokens @ {real_price:.10f} SOL")
+                                # VERIFY TX ON CHAIN BEFORE DECLARING SUCCESS
+                                tx_confirmed = False
+                                for verify_try in range(10):
+                                    await asyncio.sleep(2)
+                                    try:
+                                        from solders.signature import Signature
+                                        verify_resp = await rpc_client.get_transaction(
+                                            Signature.from_string(sig),
+                                            encoding="jsonParsed",
+                                            max_supported_transaction_version=0
+                                        )
+                                        if verify_resp.value:
+                                            tx_meta = verify_resp.value.transaction.meta if verify_resp.value.transaction else None
+                                            if tx_meta and tx_meta.err:
+                                                logger.error(f"[FAIL] Jupiter BUY TX FAILED ON CHAIN: {sig} - {tx_meta.err}")
+                                                break  # TX failed, exit verify loop
+                                            elif tx_meta and not tx_meta.err:
+                                                tx_confirmed = True
+                                                break  # TX confirmed successful
+                                    except Exception as ve:
+                                        logger.debug(f"Verify attempt {verify_try+1}: {ve}")
+                                        continue
+                                
+                                if not tx_confirmed:
+                                    logger.error(f"[FAIL] Jupiter BUY TX NOT CONFIRMED: {sig}")
+                                    continue  # Try next attempt
+                                
+                                logger.info(f"[OK] Jupiter Lite BUY SUCCESS (VERIFIED): {sig} - {out_amount_tokens:,.2f} tokens @ {real_price:.10f} SOL")
                                 return True, sig, None, out_amount_tokens, real_price
                                 
                             except Exception as e:

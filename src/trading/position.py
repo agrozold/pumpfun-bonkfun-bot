@@ -1,22 +1,21 @@
 """
 Position management for take profit/stop loss functionality.
-REFACTORED: Single source of truth - positions.json only
-Redis is backup only, not read on startup.
+UPGRADED: Redis as primary storage, JSON as backup.
 """
 
+import asyncio
 import json
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 from solders.pubkey import Pubkey
 
-from utils.logger import get_logger
+logger = logging.getLogger(__name__)
 
-logger = get_logger(__name__)
-
-# File to store active positions - SINGLE SOURCE OF TRUTH
 POSITIONS_FILE = Path("positions.json")
 
 
@@ -43,7 +42,6 @@ class Position:
     stop_loss_price: float | None = None
     max_hold_time: int | None = None
 
-    # TSL
     tsl_enabled: bool = False
     tsl_activation_pct: float = 0.20
     tsl_trail_pct: float = 0.10
@@ -90,7 +88,6 @@ class Position:
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
         }
-
 
     @classmethod
     def from_dict(cls, data: dict) -> "Position":
@@ -188,9 +185,7 @@ class Position:
             return True, ExitReason.STOP_LOSS
 
         if self.tsl_active and current_price <= self.tsl_trigger_price:
-            # TSL triggered - sell regardless of current profit
-            # The high_water_mark already locked in our best price
-            logger.warning(f"[TSL] {self.symbol} TRIGGERED at {current_price:.10f} (trigger: {self.tsl_trigger_price:.10f})")
+            logger.warning(f"[TSL] {self.symbol} TRIGGERED at {current_price:.10f}")
             return True, ExitReason.TRAILING_STOP
 
         if self.take_profit_price and current_price >= self.take_profit_price:
@@ -203,9 +198,7 @@ class Position:
 
         return False, None
 
-
     def get_pnl(self, current_price: float) -> dict:
-        """Calculate PnL for position at current price."""
         if self.entry_price <= 0:
             return {"price_change_pct": 0.0, "unrealized_pnl_sol": 0.0}
         
@@ -224,35 +217,104 @@ class Position:
         self.exit_time = datetime.utcnow()
 
 
+# ==================== REDIS HELPERS ====================
+
+async def _get_redis():
+    """Get Redis state manager (lazy import)."""
+    try:
+        from trading.redis_state import get_redis_state
+        return await get_redis_state()
+    except ImportError:
+        return None
+    except Exception as e:
+        logger.warning(f"[REDIS] get_redis failed: {e}")
+        return None
+
+
+async def save_position_redis(position: Position) -> bool:
+    """Save single position to Redis atomically."""
+    state = await _get_redis()
+    if state and await state.is_connected():
+        return await state.save_position(str(position.mint), position.to_dict())
+    return False
+
+
+async def load_positions_redis() -> list[Position]:
+    """Load all positions from Redis."""
+    state = await _get_redis()
+    if state and await state.is_connected():
+        data = await state.get_all_positions()
+        return [Position.from_dict(d) for d in data]
+    return []
+
+
+async def remove_position_redis(mint: str) -> bool:
+    """Remove position from Redis."""
+    state = await _get_redis()
+    if state and await state.is_connected():
+        return await state.remove_position(mint)
+    return False
+
+
+# ==================== SYNC FUNCTIONS (backward compatible) ====================
+
 def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -> None:
-    """Save positions to file. Redis is backup only."""
-    # DEDUPLICATE by mint - keep only latest (prevents duplicate entries)
+    """Save positions to Redis + JSON backup."""
     unique_positions = {}
     for p in positions:
         if p.is_active:
             unique_positions[str(p.mint)] = p
     active = [p.to_dict() for p in unique_positions.values()]
     
+    # Always save JSON as backup
     try:
-        # Write to file - SINGLE SOURCE OF TRUTH
         with open(filepath, 'w') as f:
             json.dump(active, f, indent=2)
         logger.info(f"[SAVE] Saved {len(active)} positions to {filepath}")
-        
-        # Backup to Redis (non-blocking, errors ignored)
-        try:
-            import redis
-            r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-            r.setex("positions:backup", 86400, json.dumps(active))
-        except:
-            pass  # Redis is optional backup
-            
     except Exception as e:
-        logger.error(f"[SAVE] Failed to save positions: {e}")
+        logger.error(f"[SAVE] JSON save failed: {e}")
+    
+    # Save to Redis (async in background)
+    async def _save_redis():
+        state = await _get_redis()
+        if state and await state.is_connected():
+            for mint, pos in unique_positions.items():
+                await state.save_position(mint, pos.to_dict())
+    
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(_save_redis())
+    except RuntimeError:
+        pass  # No loop, skip Redis
 
 
 def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
-    """Load positions from FILE ONLY. Redis is not used for loading."""
+    """Load positions - try Redis first, fallback to JSON."""
+    # Try Redis synchronously via new event loop
+    try:
+        async def _load():
+            state = await _get_redis()
+            if state and await state.is_connected():
+                count = await state.get_positions_count()
+                if count > 0:
+                    data = await state.get_all_positions()
+                    logger.info(f"[LOAD] Loaded {len(data)} positions from Redis")
+                    return [Position.from_dict(d) for d in data]
+            return None
+        
+        # Check if loop is running
+        try:
+            loop = asyncio.get_running_loop()
+            # In async context - use JSON fallback
+        except RuntimeError:
+            # No loop - can use asyncio.run
+            result = asyncio.run(_load())
+            if result:
+                return result
+    except Exception as e:
+        logger.warning(f"[LOAD] Redis load failed: {e}")
+    
+    # Fallback to JSON
     if not filepath.exists():
         logger.info("[LOAD] No positions file found")
         return []
@@ -267,22 +329,57 @@ def load_positions(filepath: Path = POSITIONS_FILE) -> list[Position]:
         positions = [Position.from_dict(p) for p in data if p.get("is_active", True)]
         logger.info(f"[LOAD] Loaded {len(positions)} positions from {filepath}")
         return positions
-        
     except Exception as e:
         logger.error(f"[LOAD] Failed to load positions: {e}")
         return []
 
 
 def remove_position(mint: str, filepath: Path = POSITIONS_FILE) -> None:
-    """Remove position by mint."""
-    positions = load_positions(filepath)
-    positions = [p for p in positions if str(p.mint) != mint]
-    save_positions(positions, filepath)
+    """Remove position by mint from both Redis and JSON."""
+    # Remove from JSON
+    try:
+        positions = load_positions(filepath)
+        positions = [p for p in positions if str(p.mint) != mint]
+        save_positions(positions, filepath)
+    except Exception as e:
+        logger.error(f"[REMOVE] JSON remove failed: {e}")
+    
+    # Remove from Redis (async)
+    async def _remove():
+        await remove_position_redis(mint)
+    
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(_remove())
+    except RuntimeError:
+        try:
+            asyncio.run(_remove())
+        except:
+            pass
+    
     logger.info(f"[REMOVE] Removed position {mint[:12]}...")
 
 
 def is_token_in_positions(mint_str: str, filepath: Path = POSITIONS_FILE) -> bool:
     """Check if token is in positions."""
+    # Try Redis first
+    async def _check():
+        state = await _get_redis()
+        if state and await state.is_connected():
+            return await state.position_exists(mint_str)
+        return None
+    
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            result = asyncio.run(_check())
+            if result is not None:
+                return result
+        except:
+            pass
+    
+    # Fallback to JSON check
     try:
         if not filepath.exists():
             return False
@@ -293,12 +390,11 @@ def is_token_in_positions(mint_str: str, filepath: Path = POSITIONS_FILE) -> boo
         return False
 
 
-# Track which positions have active monitors (prevent duplicates)
 _active_monitors: set[str] = set()
 
 
 def register_monitor(mint_str: str) -> bool:
-    """Register monitor for position. Returns False if already monitored."""
+    """Register monitor for position."""
     if mint_str in _active_monitors:
         logger.warning(f"[MONITOR] {mint_str[:12]}... already has active monitor!")
         return False
