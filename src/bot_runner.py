@@ -87,7 +87,7 @@ def setup_logging(bot_name: str):
     log_dir.mkdir(exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = log_dir / f"{bot_name}_{timestamp}.log"
+    log_filename = log_dir / f"{bot_name}.log"
 
     setup_file_logging(str(log_filename))
     setup_trace_logging()  # Enable trace_id in logs
