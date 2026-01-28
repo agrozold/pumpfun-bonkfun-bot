@@ -41,6 +41,7 @@ from config_loader import (
 #DISABLED: from trading.restore_and_monitor import restore_and_monitor_positions
 from trading.universal_trader import UniversalTrader
 from trading.wallet_sync import sync_wallet
+from trading.periodic_sync import start_periodic_sync
 
 # === Metrics Integration ===
 try:
@@ -353,6 +354,10 @@ async def start_bot(config_path: str):
         except Exception as e:
             logger.error(f"[STARTUP] Wallet sync failed: {e}")
         # === END WALLET SYNC ===
+        
+        # === PERIODIC SYNC ===
+        start_periodic_sync()
+        logger.warning("[STARTUP] Periodic sync scheduled (5 min)")
         
         # === HELIUS WEBHOOK SYNC (CRITICAL!) ===
         if HELIUS_SYNC_AVAILABLE and cfg.get("whale_copy", {}).get("enabled", False):

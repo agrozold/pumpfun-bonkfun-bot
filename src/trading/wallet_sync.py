@@ -21,29 +21,71 @@ import base58
 POSITIONS_FILE = Path("positions.json")
 
 # DexScreener для получения цен и символов
-async def get_token_info_dexscreener(mint: str) -> dict | None:
-    """Получить информацию о токене с DexScreener."""
+async def get_token_info_dexscreener(mint: str, max_retries: int = 3) -> dict | None:
+    """Получить информацию о токене с DexScreener с retry."""
     url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+    
+    for attempt in range(max_retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=15) as resp:
+                    if resp.status == 429:
+                        wait = 2 ** attempt
+                        print(f"[DEXSCREENER] Rate limited, waiting {wait}s...")
+                        await asyncio.sleep(wait)
+                        continue
+                    if resp.status != 200:
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(1)
+                            continue
+                        return None
+                    data = await resp.json()
+                    pairs = data.get("pairs", [])
+                    if not pairs:
+                        return await _get_token_info_birdeye(mint)
+                    pair = pairs[0]
+                    return {
+                        "symbol": pair.get("baseToken", {}).get("symbol", "UNKNOWN"),
+                        "name": pair.get("baseToken", {}).get("name", "Unknown"),
+                        "price_sol": float(pair.get("priceNative", 0) or 0),
+                        "dex": pair.get("dexId", "unknown"),
+                    }
+        except asyncio.TimeoutError:
+            print(f"[DEXSCREENER] Timeout, retry {attempt+1}")
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"[DEXSCREENER] Error: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)
+    return None
+
+
+async def _get_token_info_birdeye(mint: str) -> dict | None:
+    """Fallback to Birdeye API."""
+    import os
+    api_key = os.getenv("BIRDEYE_API_KEY")
+    if not api_key:
+        return {"symbol": "UNKNOWN", "name": "Unknown", "price_sol": 0.0001, "dex": "unknown"}
+    
+    url = f"https://public-api.birdeye.so/defi/token_overview?address={mint}"
+    headers = {"X-API-KEY": api_key}
+    
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
+            async with session.get(url, headers=headers, timeout=10) as resp:
                 if resp.status != 200:
-                    return None
+                    return {"symbol": "UNKNOWN", "name": "Unknown", "price_sol": 0.0001, "dex": "unknown"}
                 data = await resp.json()
-                pairs = data.get("pairs", [])
-                if not pairs:
-                    return None
-                # Берём первую пару
-                pair = pairs[0]
+                token_data = data.get("data", {})
                 return {
-                    "symbol": pair.get("baseToken", {}).get("symbol", "UNKNOWN"),
-                    "name": pair.get("baseToken", {}).get("name", "Unknown"),
-                    "price_sol": float(pair.get("priceNative", 0) or 0),
-                    "dex": pair.get("dexId", "unknown"),
+                    "symbol": token_data.get("symbol", "UNKNOWN"),
+                    "name": token_data.get("name", "Unknown"),
+                    "price_sol": float(token_data.get("price", 0) or 0),
+                    "dex": "birdeye",
                 }
-    except Exception as e:
-        print(f"[DEXSCREENER] Error for {mint[:12]}...: {e}")
-        return None
+    except Exception:
+        return {"symbol": "UNKNOWN", "name": "Unknown", "price_sol": 0.0001, "dex": "unknown"}
+
 
 
 async def get_wallet_tokens(rpc: str, wallet: str) -> list[dict]:
