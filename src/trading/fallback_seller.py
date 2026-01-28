@@ -1,3 +1,4 @@
+import asyncio
 """Fallback trading methods for migrated tokens.
 
 Provides Jupiter buy/sell functionality when bonding curve is unavailable.
