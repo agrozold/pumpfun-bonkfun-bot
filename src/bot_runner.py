@@ -50,6 +50,15 @@ except ImportError as e:
     logging.warning(f"Metrics integration not available: {e}")
 # === End Metrics Integration ===
 
+# === Helius Webhook Sync ===
+try:
+    from utils.helius_webhook_sync import sync_helius_webhook
+    HELIUS_SYNC_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Helius webhook sync not available: {e}")
+    HELIUS_SYNC_AVAILABLE = False
+# === End Helius Webhook Sync ===
+
 # === AutoSweep Import ===
 try:
     from security.auto_sweep import AutoSweeper, SweepConfig, TradingLimiter
@@ -336,6 +345,21 @@ async def start_bot(config_path: str):
             logger.error(f"[STARTUP] Wallet sync failed: {e}")
         # === END WALLET SYNC ===
         
+        # === HELIUS WEBHOOK SYNC (CRITICAL!) ===
+        if HELIUS_SYNC_AVAILABLE and cfg.get("whale_copy", {}).get("enabled", False):
+            logger.warning("[STARTUP] Syncing Helius webhook...")
+            try:
+                helius_key = cfg.get("whale_copy", {}).get("helius_api_key") or os.getenv("HELIUS_API_KEY")
+                wallets_file = cfg.get("whale_copy", {}).get("wallets_file", "smart_money_wallets.json")
+                sync_ok = await sync_helius_webhook(wallets_file=wallets_file, helius_api_key=helius_key)
+                if sync_ok:
+                    logger.warning("[STARTUP] Helius webhook synced!")
+                else:
+                    logger.error("[STARTUP] Helius webhook sync FAILED!")
+            except Exception as e:
+                logger.error(f"[STARTUP] Helius sync error: {e}")
+        # === END HELIUS WEBHOOK SYNC ===
+
         await trader.start()
 
     except Exception as e:
