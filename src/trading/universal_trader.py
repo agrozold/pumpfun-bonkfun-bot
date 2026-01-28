@@ -1206,7 +1206,18 @@ class UniversalTrader:
                 pool_address = address_provider.derive_pool_address(mint)
 
                 # Use LetsBonk-specific curve manager for proper parsing
-                letsbonk_curve_manager = LetsBonkCurveManager(self.solana_client)
+                # LetsBonk requires IDL parser - try to create it, skip if fails
+                try:
+                    from utils.idl_parser import IDLParser
+                    idl_path = "src/platforms/letsbonk/idl/bonk_amm.json"
+                    idl_parser = IDLParser(idl_path) if os.path.exists(idl_path) else None
+                    if idl_parser:
+                        letsbonk_curve_manager = LetsBonkCurveManager(self.solana_client, idl_parser)
+                    else:
+                        raise ValueError("LetsBonk IDL not found")
+                except Exception as idl_err:
+                    logger.info(f"[WARN] LetsBonk IDL init failed: {idl_err}, skipping LetsBonk check")
+                    raise ValueError(f"LetsBonk not available: {idl_err}")
                 pool_state = await letsbonk_curve_manager.get_pool_state(pool_address)
 
                 if pool_state and not pool_state.get("complete", False) and pool_state.get("status") != "migrated":

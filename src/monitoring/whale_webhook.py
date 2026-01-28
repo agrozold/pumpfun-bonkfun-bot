@@ -241,7 +241,7 @@ class WhaleWebhookReceiver:
                 
             whale_info = self.whale_wallets.get(fee_payer)
             if not whale_info:
-                logger.debug(f"[SKIP] fee_payer {fee_payer[:16]}... not in whale list")
+                logger.warning(f"[SKIP] fee_payer {fee_payer[:16]}... not in whale list")
                 return
             
             token_transfers = tx.get("tokenTransfers", [])
