@@ -3073,6 +3073,14 @@ class UniversalTrader:
                             self.cleanup_with_priority_fee,
                             self.cleanup_force_close_with_burn,
                         )
+                    
+                        # CRITICAL: Mark position as closed and remove from tracking!
+                        position.is_active = False
+                        self._remove_position(str(token_info.mint))
+                        unregister_monitor(str(token_info.mint))
+                        logger.info(f"[CLEANUP] Position {token_info.symbol} removed from tracking")
+                        
+                        break  # Exit monitoring loop after successful sell
                     else:
                         # Не удалось продать - retry на следующей итерации
                         logger.error(f"[CRITICAL] FAST SELL FAILED for {token_info.symbol}! Retrying...")
@@ -3080,8 +3088,6 @@ class UniversalTrader:
                         sell_retry_count += 1
                         await asyncio.sleep(1)
                         continue
-
-                        break  # Успешно продали - выходим из цикла мониторинга
 
                 # Wait before next price check
                 await asyncio.sleep(self.price_check_interval)
