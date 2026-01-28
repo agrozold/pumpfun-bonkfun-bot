@@ -39,7 +39,7 @@ trade:
   tsl_activation_pct: 0.3
   tsl_trail_pct: 0.3
   tsl_sell_pct: 0.9
-  take_profit_percentage: 100.0
+  take_profit_percentage: 10000.0
 
 pattern_detection:
   enabled: false
@@ -56,6 +56,7 @@ whale_copy:
   enabled: true
   wallets_file: smart_money_wallets.json
   min_buy_amount: 0.4
+  poll_interval: 90
   helius_api_key: ''
 
 dev_check:

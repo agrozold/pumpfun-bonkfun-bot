@@ -60,6 +60,23 @@ TOKEN_BLACKLIST = {
     "USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX",   # USDH
 }
 
+async def _fetch_token_symbol(token_mint: str) -> str:
+    """Fetch token symbol from DexScreener."""
+    import aiohttp
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{token_mint}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("pairs"):
+                        return data["pairs"][0].get("baseToken", {}).get("symbol", "")
+    except Exception:
+        pass
+    return ""
+
+
+
 
 @dataclass
 class WhaleBuy:
@@ -504,6 +521,9 @@ class WhalePoller:
         block_time: int | None,
     ):
         """Emit whale buy signal."""
+        # Fetch token symbol from DexScreener
+        token_symbol = await _fetch_token_symbol(token_mint)
+        
         # Mark token as emitted
         self._emitted_tokens.add(token_mint)
         
@@ -522,6 +542,7 @@ class WhalePoller:
             tx_signature=signature,
             whale_label=whale_label,
             platform=platform,
+            token_symbol=token_symbol,
             age_seconds=age,
             block_time=block_time,
         )
@@ -532,6 +553,7 @@ class WhalePoller:
         logger.warning(f"  WHALE:    {whale_label}")
         logger.warning(f"  WALLET:   {wallet}")
         logger.warning(f"  TOKEN:    {token_mint}")
+        logger.warning(f"  SYMBOL:   {token_symbol or 'unknown'}")
         logger.warning(f"  AMOUNT:   {sol_spent:.4f} SOL")
         logger.warning(f"  PLATFORM: {platform}")
         logger.warning(f"  AGE:      {age:.1f}s ago")

@@ -586,8 +586,9 @@ class FallbackSeller:
                             sig = str(result.value)
 
                             logger.info(f"[SIG] Jupiter Ultra BUY signature: {sig}")
-                            logger.info(f"[OK] Jupiter Ultra BUY sent! Expected ~{out_amount_tokens:,.2f} {symbol}")
-                            return True, sig, None
+                            real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
+                            logger.info(f"[OK] Jupiter Ultra BUY sent! {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                            return True, sig, None, out_amount_tokens, real_price
 
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
@@ -651,8 +652,9 @@ class FallbackSeller:
                                 )
                                 sig = str(result.value)
                                 
-                                logger.info(f"[OK] Jupiter Lite BUY SUCCESS: {sig}")
-                                return True, sig, None
+                                real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
+                                logger.info(f"[OK] Jupiter Lite BUY SUCCESS: {sig} - {out_amount_tokens:,.2f} tokens @ {real_price:.10f} SOL")
+                                return True, sig, None, out_amount_tokens, real_price
                                 
                             except Exception as e:
                                 logger.warning(f"Jupiter Lite attempt {lite_attempt + 1} failed: {e}")
@@ -715,8 +717,9 @@ class FallbackSeller:
                             logger.info(f"[SIG] Jupiter BUY signature: {sig}")
 
                             await rpc_client.confirm_transaction(Signature.from_string(str(sig)), commitment="confirmed")
-                            logger.info(f"[OK] Jupiter BUY confirmed! Got ~{out_amount_tokens:,.2f} {symbol}")
-                            return True, sig, None
+                            real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
+                            logger.info(f"[OK] Jupiter BUY confirmed! {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                            return True, sig, None, out_amount_tokens, real_price
 
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
