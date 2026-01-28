@@ -676,6 +676,7 @@ class FallbackSeller:
                                             continue  # Retry next attempt
                                 except Exception as verify_err:
                                     logger.warning(f"[WARN] Could not verify tx {sig[:20]}...: {verify_err}")
+                                    continue  # CRITICAL: retry if verify failed
                                 
                                 logger.info(f"[OK] Jupiter Lite BUY SUCCESS: {sig} - {out_amount_tokens:,.2f} tokens @ {real_price:.10f} SOL")
                                 return True, sig, None, out_amount_tokens, real_price
