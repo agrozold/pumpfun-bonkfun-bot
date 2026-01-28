@@ -198,6 +198,7 @@ class WhaleWebhookReceiver:
             
             # Only process SWAP transactions
             if tx_type != "SWAP":
+                logger.info(f"[FILTER] tx_type={tx_type} != SWAP, skipping")
                 return
                 
             self._stats["swaps_detected"] += 1
@@ -220,6 +221,7 @@ class WhaleWebhookReceiver:
             # Check if this is one of our tracked whales
             whale_info = self.whale_wallets.get(fee_payer)
             if not whale_info:
+                logger.info(f"[FILTER] NOT WHALE: {fee_payer[:20]}...")
                 # Not our whale, skip
                 return
             
@@ -259,12 +261,14 @@ class WhaleWebhookReceiver:
             
             # Is this a BUY? (whale spent SOL, received token)
             if not token_received:
+                logger.info(f"[FILTER] No token_received (SELL)")
                 self._stats["sells_skipped"] += 1
                 logger.debug(f"[WEBHOOK] Skipping SELL tx: {signature[:20]}...")
                 return
             
             # Check minimum SOL spent
             if sol_spent < self.min_buy_amount:
+                logger.info(f"[FILTER] Below min: {sol_spent:.3f} < {self.min_buy_amount} SOL")
                 self._stats["below_min"] += 1
                 logger.debug(f"[WEBHOOK] Below min: {sol_spent:.3f} < {self.min_buy_amount} SOL")
                 return
