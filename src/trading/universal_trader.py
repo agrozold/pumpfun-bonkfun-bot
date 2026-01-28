@@ -32,6 +32,13 @@ try:
 except ImportError:
     from monitoring.whale_tracker import WhaleTracker as WhalePoller, WhaleBuy
     WHALE_POLLER_AVAILABLE = False
+
+# Webhook-based whale tracking (real-time)
+try:
+    from monitoring.whale_webhook import WhaleWebhookReceiver
+    WHALE_WEBHOOK_AVAILABLE = True
+except ImportError:
+    WHALE_WEBHOOK_AVAILABLE = False
 from monitoring.dev_reputation import DevReputationChecker
 from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolumeAnalysis
@@ -162,6 +169,9 @@ class UniversalTrader:
         whale_wallets_file: str = "smart_money_wallets.json",
         whale_min_buy_amount: float = 0.5,
         whale_all_platforms: bool = False,
+        # Whale webhook mode (real-time instead of polling)
+        whale_webhook_enabled: bool = False,
+        whale_webhook_port: int = 8000,
         stablecoin_filter: list = None,
         helius_api_key: str | None = None,
         birdeye_api_key: str | None = None,
@@ -311,46 +321,53 @@ class UniversalTrader:
         logger.warning("=" * 50)
 
         self.enable_whale_copy = enable_whale_copy
+        self.whale_webhook_enabled = whale_webhook_enabled
+        self.whale_webhook_port = whale_webhook_port
         self.whale_tracker: WhalePoller | None = None
         self.helius_api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
 
         if enable_whale_copy:
             try:
-                # CRITICAL: Use WhalePoller (HTTP polling) instead of WhaleTracker (WSS)
-                # because Solana's logsSubscribe with 'mentions' filter does NOT work
-                # for wallet addresses - only for Program IDs!
-                if WHALE_POLLER_AVAILABLE:
+                # Choose between Webhook (real-time) or Poller (30s interval)
+                if self.whale_webhook_enabled and WHALE_WEBHOOK_AVAILABLE:
+                    logger.warning("[WHALE] Creating WhaleWebhookReceiver (REAL-TIME via Helius)...")
+                    self.whale_tracker = WhaleWebhookReceiver(
+                        host="0.0.0.0",
+                        port=self.whale_webhook_port,
+                        wallets_file=whale_wallets_file,
+                        min_buy_amount=whale_min_buy_amount,
+                        stablecoin_filter=stablecoin_filter or [],
+                    )
+                    logger.warning(f"[WHALE] Webhook server will listen on port {self.whale_webhook_port}")
+                elif WHALE_POLLER_AVAILABLE:
                     logger.warning("[WHALE] Creating WhalePoller instance (HTTP polling)...")
-                    logger.warning("[WHALE] Note: Using HTTP polling because WSS logsSubscribe")
-                    logger.warning("[WHALE]       doesn't support wallet address mentions!")
+                    logger.warning("[WHALE] Note: Using HTTP polling because webhook not enabled")
+                    self.whale_tracker = WhalePoller(
+                        wallets_file=whale_wallets_file,
+                        min_buy_amount=whale_min_buy_amount,
+                        poll_interval=30.0,  # Poll every 30 seconds
+                        max_tx_age=600.0,    # Process transactions up to 10 minutes old
+                        stablecoin_filter=stablecoin_filter or [],
+                    )
+                    logger.warning(f"[WHALE] Poll interval: 30s")
                 else:
-                    logger.warning("[WHALE] WhalePoller not available, falling back to WhaleTracker")
-                    logger.warning("[WHALE] WARNING: WSS-based tracking may not work for wallet addresses!")
+                    logger.error("[WHALE] No whale tracker available (neither Webhook nor Poller)!")
+                    self.whale_tracker = None
 
-                self.whale_tracker = WhalePoller(
-                    wallets_file=whale_wallets_file,
-                    min_buy_amount=whale_min_buy_amount,
-                    poll_interval=30.0,  # Poll every 30 seconds
-                    max_tx_age=600.0,    # Process transactions up to 10 minutes old
-                    stablecoin_filter=stablecoin_filter or [],
-                )
-                self.whale_tracker.set_callback(self._on_whale_buy)
-
-                # Log wallet count
-                wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
-                logger.warning(f"[WHALE] WhalePoller CREATED: {wallet_count} wallets")
-                logger.warning(f"[WHALE] Min buy amount: {whale_min_buy_amount} SOL")
-                logger.warning(f"[WHALE] Poll interval: 30s")
-
-                if wallet_count == 0:
-                    logger.error("[WHALE] ERROR: No whale wallets loaded!")
-                else:
-                    # Log first few wallets
-                    sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
-                    logger.warning(f"[WHALE] Sample wallets: {sample_wallets}")
+                if self.whale_tracker:
+                    self.whale_tracker.set_callback(self._on_whale_buy)
+                    wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
+                    logger.warning(f"[WHALE] Tracker CREATED: {wallet_count} wallets")
+                    logger.warning(f"[WHALE] Min buy amount: {whale_min_buy_amount} SOL")
+                    
+                    if wallet_count == 0:
+                        logger.error("[WHALE] ERROR: No whale wallets loaded!")
+                    else:
+                        sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
+                        logger.warning(f"[WHALE] Sample wallets: {sample_wallets}")
 
             except Exception as e:
-                logger.exception(f"[WHALE] EXCEPTION creating WhalePoller: {e}")
+                logger.exception(f"[WHALE] EXCEPTION creating whale tracker: {e}")
                 self.whale_tracker = None
         else:
             logger.warning("[WHALE] Whale copy: DISABLED in config")

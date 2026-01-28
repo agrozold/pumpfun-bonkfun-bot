@@ -51,3 +51,9 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Private data - NEVER commit
+smart_money_wallets.json
+.env
+*.pem
+*.key
