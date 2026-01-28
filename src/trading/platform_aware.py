@@ -193,6 +193,16 @@ class PlatformAwareBuyer(Trader):
             if success:
                 logger.info(f"Buy transaction confirmed/assumed: {tx_signature}")
 
+                # CRITICAL: Verify transaction actually succeeded (not just confirmed)
+                tx_success, tx_error = await self.client.check_transaction_success(str(tx_signature))
+                if not tx_success:
+                    logger.error(f"[BUY] Transaction FAILED despite confirmation: {tx_error}")
+                    return TradeResult(
+                        success=False,
+                        platform=token_info.platform,
+                        error_message=f"Transaction failed: {tx_error}",
+                    )
+
                 # Fetch actual tokens and SOL spent from transaction
                 # Uses preBalances/postBalances to get exact amounts
                 sol_destination = self._get_sol_destination(

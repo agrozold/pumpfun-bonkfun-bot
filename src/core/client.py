@@ -695,3 +695,28 @@ class SolanaClient:
         except json.JSONDecodeError:
             logger.exception("Failed to decode RPC response")
             return None
+
+    async def check_transaction_success(self, signature: str) -> tuple[bool, str | None]:
+        """Check if transaction was successful (no errors).
+        
+        Args:
+            signature: Transaction signature
+            
+        Returns:
+            Tuple of (success: bool, error_message: str | None)
+        """
+        try:
+            result = await self._get_transaction_result(signature)
+            if not result:
+                return False, "Transaction not found"
+            
+            meta = result.get("meta", {})
+            err = meta.get("err")
+            
+            if err is None:
+                return True, None
+            else:
+                return False, f"Transaction failed: {err}"
+        except Exception as e:
+            logger.warning(f"Failed to check transaction status: {e}")
+            return False, str(e)
