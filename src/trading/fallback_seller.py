@@ -538,8 +538,8 @@ class FallbackSeller:
                 headers = {"x-api-key": self.jupiter_api_key}
                 logger.info("[JUPITER] Using Jupiter Ultra API")
             else:
-                jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
-                jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
+                jupiter_quote_url = "https://public.jupiterapi.com/quote"
+                jupiter_swap_url = "https://public.jupiterapi.com/swap"
                 headers = {}
                 logger.info("[JUPITER] Using Jupiter Lite API (no Ultra key)")
 
@@ -605,8 +605,8 @@ class FallbackSeller:
                     logger.warning("[JUPITER] Ultra API failed, trying Lite API fallback...")
                     
                     # Switch to Lite API
-                    jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
-                    jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
+                    jupiter_quote_url = "https://public.jupiterapi.com/quote"
+                    jupiter_swap_url = "https://public.jupiterapi.com/swap"
                     
                     quote_params = {
                         "inputMint": str(SOL_MINT),
@@ -1147,8 +1147,8 @@ class FallbackSeller:
         """Jupiter Lite API sell."""
         import base64
         
-        jupiter_quote_url = "https://lite-api.jup.ag/swap/v1/quote"
-        jupiter_swap_url = "https://lite-api.jup.ag/swap/v1/swap"
+        jupiter_quote_url = "https://public.jupiterapi.com/quote"
+        jupiter_swap_url = "https://public.jupiterapi.com/swap"
 
         quote_params = {
             "inputMint": str(mint),
