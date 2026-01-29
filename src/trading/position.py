@@ -356,6 +356,12 @@ def remove_position(mint: str, filepath: Path = POSITIONS_FILE) -> None:
             asyncio.run(_remove())
         except:
             pass
+    # Direct Redis cleanup via CLI (fallback)
+    try:
+        import subprocess
+        subprocess.run(["redis-cli", "HDEL", "whale:positions", mint], capture_output=True, timeout=2)
+    except:
+        pass
     
     logger.info(f"[REMOVE] Removed position {mint[:12]}...")
 

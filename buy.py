@@ -727,7 +727,7 @@ async def buy_via_pumpswap(
 
             print(f"🔗 https://solscan.io/tx/{sig}")
 
-            await client.confirm_transaction(sig, commitment="confirmed", sleep_seconds=0.5)
+            await client.confirm_transaction(Signature.from_string(sig) if isinstance(sig, str) else sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             return True
 
@@ -848,7 +848,7 @@ async def buy_via_pumpfun(
 
             print(f"🔗 https://solscan.io/tx/{sig}")
 
-            await client.confirm_transaction(sig, commitment="confirmed", sleep_seconds=0.5)
+            await client.confirm_transaction(Signature.from_string(sig) if isinstance(sig, str) else sig, commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             return True
 

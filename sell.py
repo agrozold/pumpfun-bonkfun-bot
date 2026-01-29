@@ -462,7 +462,7 @@ async def sell_via_jupiter(
                         for p in positions:
                             if str(p.mint) == str(mint):
                                 if percent >= 100:
-                                    remove_position(p.mint)
+                                    remove_position(str(p.mint))
                                     print(f"📝 Removed {p.symbol} from positions.json")
                                 else:
                                     p.quantity = p.quantity * (1 - percent/100)
@@ -758,7 +758,7 @@ async def sell_via_pumpswap(
                     for p in positions:
                         if str(p.mint) == str(mint):
                             if percent >= 100:
-                                remove_position(p.mint)
+                                remove_position(str(p.mint))
                                 print(f"📝 Removed {p.symbol} from positions.json")
                             else:
                                 p.quantity = p.quantity * (1 - percent/100)
@@ -914,7 +914,7 @@ async def sell_via_pumpfun(
                     for p in positions:
                         if str(p.mint) == str(mint):
                             if percent >= 100:
-                                remove_position(p.mint)
+                                remove_position(str(p.mint))
                                 print(f"📝 Removed {p.symbol} from positions.json")
                             else:
                                 p.quantity = p.quantity * (1 - percent/100)
@@ -1023,7 +1023,7 @@ def update_position_after_sell(mint, percent: float):
         for p in positions:
             if str(p.mint) == mint_str:
                 if percent >= 100:
-                    remove_position(p.mint)
+                    remove_position(str(p.mint))
                     print(f"📝 Removed {p.symbol} from positions.json")
                 else:
                     # Update quantity
