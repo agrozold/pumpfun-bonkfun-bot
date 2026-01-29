@@ -228,14 +228,14 @@ async def sync_wallet():
         
         # Создаём позицию с SL/TP
         # ВАЖНО: entry_price = текущая цена (мы не знаем реальную цену покупки)
-        # SL = -20% от текущей, TP = +100%
+        # SL = -20%, TP = +10000%
         new_position = {
             "mint": mint,
             "symbol": symbol,
             "entry_price": price,
             "quantity": amount,
             "entry_time": datetime.utcnow().isoformat(),
-            "take_profit_price": price * 2.0,  # +100%
+            "take_profit_price": price * 100.0,  # +10000% (from config)
             "stop_loss_price": price * 0.8,    # -20%
             "max_hold_time": 0,
             "tsl_enabled": True,
@@ -259,7 +259,7 @@ async def sync_wallet():
         print(f"          Amount: {amount:,.2f}")
         print(f"          Platform: {platform}")
         print(f"          SL: {price * 0.8:.10f} (-20%)")
-        print(f"          TP: {price * 2.0:.10f} (+100%)")
+        print(f"          TP: {price * 100.0:.10f} (+10000%)")
         print()
         
         # Rate limit для DexScreener

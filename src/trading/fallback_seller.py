@@ -614,7 +614,7 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "slippageBps": "4000",  # 40% slippage for volatile memecoins
+                        "slippageBps": "2500",  # 25% slippage for memecoins
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
                     
@@ -726,7 +726,7 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "slippageBps": "4000",  # 40% slippage for volatile memecoins
+                        "slippageBps": "2500",  # 25% slippage for memecoins
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
 
@@ -1287,7 +1287,7 @@ class FallbackSeller:
                     "mint": str(mint),
                     "amount": "100%",
                     "denominatedInSol": "false",
-                    "slippage": 25,
+                    "slippage": 10,  # 10% slippage for sell
                     "priorityFee": 0.0005,
                     "pool": "auto"
                 },
