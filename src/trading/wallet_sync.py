@@ -182,6 +182,18 @@ async def sync_wallet():
     positions = load_positions()
     position_mints = {p.get("mint") for p in positions}
     print(f"[POSITIONS] Current: {len(positions)} positions")
+
+    # === CLEANUP: Удаляем фантомные позиции (токенов нет на кошельке) ===
+    wallet_mints = {t["mint"] for t in wallet_tokens}
+    phantom_positions = [p for p in positions if p.get("mint") not in wallet_mints]
+    
+    if phantom_positions:
+        print(f"\n[CLEANUP] Found {len(phantom_positions)} PHANTOM positions (no tokens on wallet)")
+        for p in phantom_positions:
+            print(f"  [REMOVE] {p.get('symbol', '?')} | {p.get('mint', '')[:20]}...")
+        positions = [p for p in positions if p.get("mint") in wallet_mints]
+        position_mints = {p.get("mint") for p in positions}
+        print(f"[CLEANUP] Removed {len(phantom_positions)} phantom positions")
     
     # Находим потерянные токены
     lost_tokens = []

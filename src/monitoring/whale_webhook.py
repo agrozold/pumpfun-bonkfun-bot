@@ -12,6 +12,7 @@ from typing import Callable, Optional
 
 from aiohttp import web
 
+import aiohttp
 logger = logging.getLogger(__name__)
 
 TOKEN_BLACKLIST = {
@@ -25,6 +26,22 @@ TOKEN_BLACKLIST = {
 }
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
+
+async def _fetch_symbol_dexscreener(mint: str) -> str:
+    """Fetch token symbol from DexScreener."""
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get("pairs", [])
+                    if pairs:
+                        return pairs[0].get("baseToken", {}).get("symbol", "")
+    except Exception:
+        pass
+    return ""
+
 
 
 @dataclass
@@ -358,6 +375,12 @@ class WhaleWebhookReceiver:
             if len(parts) > 1:
                 token_symbol = parts[-1].split()[-1] if parts[-1] else ""
         
+
+        # Fallback to DexScreener if symbol not parsed
+        if not token_symbol:
+            token_symbol = await _fetch_symbol_dexscreener(token_mint)
+            if token_symbol:
+                logger.info(f"[SYMBOL] Fetched from DexScreener: {token_symbol}")
         whale_buy = WhaleBuy(
             whale_wallet=wallet,
             token_mint=token_mint,

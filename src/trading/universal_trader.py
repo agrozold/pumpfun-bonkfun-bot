@@ -64,6 +64,13 @@ from analytics.trace_context import TraceContext, get_current_trace
 from analytics.trace_recorder import init_trace_recorder, shutdown_trace_recorder
 from trading.position import is_token_in_positions
 from utils.logger import get_logger
+# Batch price service for rate-limit-safe price fetching
+from utils.batch_price_service import (
+    init_batch_price_service,
+    watch_token,
+    unwatch_token,
+    get_cached_price,
+)
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
@@ -985,6 +992,7 @@ class UniversalTrader:
 
                 self.active_positions.append(position)
                 save_positions(self.active_positions)
+                watch_token(str(position.mint))  # Add to batch price monitoring
 
                 # Log TP/SL targets
                 if position.take_profit_price:
@@ -1952,6 +1960,7 @@ class UniversalTrader:
                     )
                     self.active_positions.append(position)
                     save_positions(self.active_positions)
+                    watch_token(mint_str)  # Add to batch price monitoring
                     # Mark as BOUGHT (completed) - NEVER buy again!
                     self._bought_tokens.add(mint_str)
                     add_to_purchase_history(
@@ -2074,6 +2083,10 @@ class UniversalTrader:
         logger.info(f"Max token age: {self.max_token_age} seconds")
 
         # Restore saved positions from previous run
+
+        # Initialize batch price service (ONE request for ALL prices)
+        logger.warning("[BATCH] Initializing batch price service...")
+        await init_batch_price_service()
         await self._restore_positions()
 
         try:
@@ -2900,38 +2913,34 @@ class UniversalTrader:
                 break
 
             try:
-                # JUPITER FIRST with timeout - more accurate than DexScreener!
-                from utils.jupiter_price import get_token_price
-                price_source = "unknown"
+                # USE BATCH PRICE SERVICE (rate-limit safe - ONE request for ALL tokens!)
+                mint_str = str(token_info.mint)
+                price_source = "batch_cache"
                 
-                try:
-                    # 3 second timeout for price fetch
-                    dex_price, _source = await asyncio.wait_for(
-                        get_token_price(str(token_info.mint)),
-                        timeout=3.0
-                    )
-                    if dex_price and dex_price > 0:
-                        current_price = dex_price
-                        price_source = _source or "jupiter"
-                    else:
-                        raise ValueError("No price from Jupiter")
-                except (asyncio.TimeoutError, Exception) as price_err:
-                    # Fast fallback to DexScreener directly (not slow curve_manager)
+                # Get price from batch cache (instant, no API call!)
+                current_price = get_cached_price(mint_str)
+                
+                if not current_price or current_price <= 0:
+                    # Cache miss - fallback to direct Jupiter (rare)
+                    price_source = "jupiter_fallback"
                     try:
-                        from utils.dexscreener_price import get_price_from_dexscreener
-                        dex_price = await asyncio.wait_for(
-                            get_price_from_dexscreener(str(token_info.mint)),
-                            timeout=2.0
+                        from utils.jupiter_price import get_token_price
+                        fallback_price, _ = await asyncio.wait_for(
+                            get_token_price(mint_str),
+                            timeout=3.0
                         )
-                        if dex_price and dex_price > 0:
-                            current_price = dex_price
-                            price_source = "dexscreener_fallback"
+                        if fallback_price and fallback_price > 0:
+                            current_price = fallback_price
                         else:
-                            current_price = await curve_manager.calculate_price(pool_address)
-                            price_source = "curve_fallback"
+                            raise ValueError("No Jupiter price")
                     except Exception:
-                        current_price = await curve_manager.calculate_price(pool_address)
+                        # Last resort: curve manager
                         price_source = "curve_fallback"
+                        try:
+                            current_price = await curve_manager.calculate_price(pool_address)
+                        except Exception:
+                            current_price = last_known_price  # Use last known
+                            price_source = "last_known"
                 
                 # Log price source on first check
                 if check_count == 1:
@@ -3011,10 +3020,9 @@ class UniversalTrader:
                     exit_reason = ExitReason.STOP_LOSS
                     pending_stop_loss = True
 
-                # Log status EVERY check when in loss, or every 10 checks otherwise
-                if pnl_pct < 0 or check_count % 10 == 1:
-                    log_level = logger.error if pnl_pct < -20 else (logger.warning if pnl_pct < 0 else logger.info)
-                    log_level(
+                # Log ALL positions as WARNING every check
+                if True:  # Always log
+                    logger.warning(
                         f"[MONITOR] {token_info.symbol}: {current_price:.10f} SOL "
                         f"({pnl_pct:+.2f}%) | TP: {(position.take_profit_price or 0):.10f} | "
                         f"SL: {(position.stop_loss_price or 0):.10f} | "
@@ -3093,11 +3101,24 @@ class UniversalTrader:
                         
                         break  # Exit monitoring loop after successful sell
                     else:
-                        # Не удалось продать - retry на следующей итерации
-                        logger.error(f"[CRITICAL] FAST SELL FAILED for {token_info.symbol}! Retrying...")
-                        pending_stop_loss = True
+                        # Не удалось продать - retry с лимитом
+                        MAX_SELL_RETRIES = 5
                         sell_retry_count += 1
-                        await asyncio.sleep(1)
+                        
+                        if sell_retry_count >= MAX_SELL_RETRIES:
+                            logger.error(f"[GIVE UP] {token_info.symbol}: {MAX_SELL_RETRIES} sell attempts failed!")
+                            logger.error(f"[MANUAL] Position requires MANUAL intervention: {token_info.mint}")
+                            # Mark as failed but dont spam anymore
+                            pending_stop_loss = False
+                            await asyncio.sleep(300)  # Wait 5 min before any retry
+                            sell_retry_count = 0  # Reset for rare retry
+                            continue
+                        
+                        # Exponential backoff: 2s, 4s, 8s, 16s, 32s
+                        backoff = min(2 ** sell_retry_count, 32)
+                        logger.error(f"[RETRY {sell_retry_count}/{MAX_SELL_RETRIES}] {token_info.symbol} sell failed, waiting {backoff}s...")
+                        pending_stop_loss = True
+                        await asyncio.sleep(backoff)
                         continue
 
                 # Wait before next price check
@@ -3553,11 +3574,15 @@ class UniversalTrader:
         """Save position to active positions list and persist to file."""
         self.active_positions.append(position)
         save_positions(self.active_positions)
+        # Add to batch price monitoring
+        watch_token(str(position.mint))
 
     def _remove_position(self, mint: str) -> None:
         """Remove position from active list and file."""
         self.active_positions = [p for p in self.active_positions if str(p.mint) != mint]
         save_positions(self.active_positions)
+        # Remove from batch price monitoring
+        unwatch_token(mint)
 
     async def _restore_positions(self) -> None:
         """Restore and resume monitoring of saved positions on startup."""
