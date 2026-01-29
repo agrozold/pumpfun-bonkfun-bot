@@ -594,7 +594,34 @@ class FallbackSeller:
 
                             logger.info(f"[SIG] Jupiter Ultra BUY signature: {sig}")
                             real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
-                            logger.info(f"[OK] Jupiter Ultra BUY sent! {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                            
+                            # CRITICAL: Verify TX actually succeeded on chain (not just sent!)
+                            tx_confirmed = False
+                            for verify_try in range(10):
+                                await asyncio.sleep(2)
+                                try:
+                                    verify_resp = await rpc_client.get_transaction(
+                                        Signature.from_string(sig),
+                                        encoding="jsonParsed",
+                                        max_supported_transaction_version=0
+                                    )
+                                    if verify_resp.value:
+                                        tx_meta = verify_resp.value.transaction.meta if verify_resp.value.transaction else None
+                                        if tx_meta and tx_meta.err:
+                                            logger.error(f"[FAIL] Jupiter Ultra BUY TX FAILED ON CHAIN: {sig} - {tx_meta.err}")
+                                            break  # TX failed, try next attempt
+                                        elif tx_meta and not tx_meta.err:
+                                            tx_confirmed = True
+                                            break  # TX confirmed successful
+                                except Exception as ve:
+                                    logger.debug(f"Verify attempt {verify_try+1}: {ve}")
+                                    continue
+                            
+                            if not tx_confirmed:
+                                logger.error(f"[FAIL] Jupiter Ultra BUY TX NOT CONFIRMED: {sig}")
+                                continue  # Try next attempt
+                            
+                            logger.info(f"[OK] Jupiter Ultra BUY SUCCESS (VERIFIED): {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
                             return True, sig, None, out_amount_tokens, real_price
 
                         except Exception as e:
