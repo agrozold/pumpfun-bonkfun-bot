@@ -904,6 +904,7 @@ class UniversalTrader:
                     mint_str=mint_str,
                     symbol=whale_buy.token_symbol,
                     sol_amount=self.buy_amount,
+                    jupiter_first=True,  # Skip bonding curves for whale copy
                 )
 
                 if success:
@@ -1128,6 +1129,7 @@ class UniversalTrader:
         mint_str: str,
         symbol: str,
         sol_amount: float,
+        jupiter_first: bool = False,
     ) -> tuple[bool, str | None, str, float, float]:
         """Buy token on ANY available DEX - universal liquidity finder.
 
@@ -1162,7 +1164,7 @@ class UniversalTrader:
         # ============================================
         
         # PUMP.FUN - Check always for whale_all_platforms or if current platform
-        should_check_pumpfun = (self.platform == Platform.PUMP_FUN or 
+        should_check_pumpfun = (not jupiter_first) and (self.platform == Platform.PUMP_FUN or 
                                 getattr(self, 'enable_whale_copy', False))
         if should_check_pumpfun:
             logger.info(f"[CHECK] [1/4] Checking Pump.Fun bonding curve for {symbol}...")
@@ -1229,7 +1231,7 @@ class UniversalTrader:
                 logger.info(f"[WARN] Pump.Fun check failed: {e}")
 
         # LETSBONK - Check always for whale_all_platforms or if current platform
-        should_check_letsbonk = (self.platform == Platform.LETS_BONK or 
+        should_check_letsbonk = (not jupiter_first) and (self.platform == Platform.LETS_BONK or 
                                   getattr(self, 'enable_whale_copy', False))
         if should_check_letsbonk:
             logger.info(f"[CHECK] [1/4] Checking LetsBonk bonding curve for {symbol}...")
@@ -1305,7 +1307,7 @@ class UniversalTrader:
                 logger.info(f"[WARN] LetsBonk check failed: {e}")
 
         # BAGS - Check always for whale_all_platforms or if current platform
-        should_check_bags = (self.platform == Platform.BAGS or 
+        should_check_bags = (not jupiter_first) and (self.platform == Platform.BAGS or 
                               getattr(self, 'enable_whale_copy', False))
         if should_check_bags:
             logger.info(f"[CHECK] [1/4] Checking BAGS (Meteora DBC) pool for {symbol}...")
