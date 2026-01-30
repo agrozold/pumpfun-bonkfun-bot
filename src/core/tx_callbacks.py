@@ -215,11 +215,15 @@ async def on_sell_failure(tx: "PendingTransaction"):
     # Position stays - monitor will retry sell
 
 
+
+
 async def _delayed_symbol_update(mint: str, current_symbol: str, delay: int = 30):
     """Update symbol from DexScreener after delay (for newly indexed tokens)."""
     import aiohttp
-    await asyncio.sleep(delay)
     
+    logger.info(f"[SYMBOL_UPDATE] Scheduled for {mint[:16]}... in {delay}s (current: {current_symbol})")
+    await asyncio.sleep(delay)
+
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
         async with aiohttp.ClientSession() as session:
@@ -229,13 +233,27 @@ async def _delayed_symbol_update(mint: str, current_symbol: str, delay: int = 30
                     pairs = data.get("pairs", [])
                     if pairs:
                         new_symbol = pairs[0].get("baseToken", {}).get("symbol", "")
-                        if new_symbol and new_symbol != current_symbol:
+                        logger.info(f"[SYMBOL_UPDATE] DexScreener: {new_symbol} for {mint[:16]}...")
+                        
+                        if new_symbol and new_symbol.upper() != current_symbol.upper():
                             from trading.position import load_positions, save_positions
                             positions = load_positions()
                             for p in positions:
                                 if str(p.mint) == mint:
-                                    logger.warning(f"[SYMBOL_UPDATE] {current_symbol} -> {new_symbol} for {mint[:16]}...")
+                                    logger.warning(f"[SYMBOL_UPDATE] {current_symbol} -> {new_symbol}")
                                     p.symbol = new_symbol
                             save_positions(positions)
+                            
+                            # Update memory
+                            try:
+                                from trading.trader_registry import get_trader
+                                trader = get_trader()
+                                if trader and hasattr(trader, 'active_positions'):
+                                    for p in trader.active_positions:
+                                        if str(p.mint) == mint:
+                                            p.symbol = new_symbol
+                                            logger.info(f"[SYMBOL_UPDATE] Memory updated: {new_symbol}")
+                            except:
+                                pass
     except Exception as e:
-        logger.debug(f"[SYMBOL_UPDATE] Failed: {e}")
+        logger.warning(f"[SYMBOL_UPDATE] Error: {e}")
