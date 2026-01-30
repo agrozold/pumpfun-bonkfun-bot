@@ -611,7 +611,7 @@ class FallbackSeller:
                 jupiter_quote_url = "https://api.jup.ag/swap/v1/quote"
                 jupiter_swap_url = "https://api.jup.ag/swap/v1/swap"
                 headers = {"x-api-key": self.jupiter_api_key} if self.jupiter_api_key else {}
-                logger.info("[JUPITER] Using Jupiter Lite API (no Ultra key)")
+                logger.info(f"[JUPITER] Using Jupiter Swap API (key: {bool(self.jupiter_api_key)})")
 
             async with aiohttp.ClientSession() as session:
                 rpc_client = await self._get_rpc_client()
