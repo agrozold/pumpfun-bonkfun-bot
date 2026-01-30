@@ -142,7 +142,7 @@ class FallbackSeller:
         self,
         client: "SolanaClient",
         wallet: "Wallet",
-        slippage: float = 0.25,
+        slippage: float = 0.30,  # 30% buy, 10% sell from config
         priority_fee: int = 10000,
         max_retries: int = 3,
         alt_rpc_endpoint: str | None = None,  # Alternative RPC to avoid rate limits
@@ -719,6 +719,7 @@ class FallbackSeller:
                         "amount": str(buy_amount_lamports),
                         "restrictIntermediateTokens": "true",  # Safer routes
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
+                        "slippageBps": str(slippage_bps),  # From config
                     }
                     
                     try:
@@ -840,6 +841,7 @@ class FallbackSeller:
                         "amount": str(buy_amount_lamports),
                         "restrictIntermediateTokens": "true",  # Safer routes
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
+                        "slippageBps": str(slippage_bps),  # From config
                     }
 
                     async with session.get(jupiter_quote_url, params=quote_params, headers=headers) as resp:
@@ -1338,6 +1340,7 @@ class FallbackSeller:
             "outputMint": str(SOL_MINT),
             "amount": str(sell_amount),
             "restrictIntermediateTokens": "true",  # Safer routes
+            "slippageBps": str(slippage_bps),  # From config (10%)
         }
 
         try:
@@ -1420,7 +1423,7 @@ class FallbackSeller:
                     "mint": str(mint),
                     "amount": "100%",
                     "denominatedInSol": "false",
-                    "slippage": 10,  # 10% slippage for sell
+                    "slippage": int(self.slippage * 100),  # From config (sell_slippage)
                     "priorityFee": 0.0005,
                     "pool": "auto"
                 },

@@ -87,7 +87,7 @@ async def get_price_quote_api(mint: str, session: aiohttp.ClientSession) -> floa
             "inputMint": SOL_MINT,
             "outputMint": mint,
             "amount": "1000000",  # 0.001 SOL in lamports
-            "slippageBps": "100"
+            "slippageBps": "1000"  # 10% for price quotes
         }
         
         # Add API key header if available
