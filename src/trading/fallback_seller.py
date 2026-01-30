@@ -740,6 +740,7 @@ class FallbackSeller:
                             "prioritizationFeeLamports": self.priority_fee,
                             "dynamicComputeUnitLimit": True,  # Better CU estimation
                             "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
+            "asLegacyTransaction": False,  # Use versioned TX for Token2022
                             "asLegacyTransaction": False,  # Use versioned TX for Token2022
                         }
                         
@@ -861,6 +862,7 @@ class FallbackSeller:
                         "prioritizationFeeLamports": self.priority_fee,
                         "dynamicComputeUnitLimit": True,  # Better CU estimation
                         "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
+            "asLegacyTransaction": False,  # Use versioned TX for Token2022
                     }
 
                     for attempt in range(self.max_retries):
@@ -1363,6 +1365,7 @@ class FallbackSeller:
             "prioritizationFeeLamports": self.priority_fee,
             "dynamicComputeUnitLimit": True,  # Better CU estimation
             "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
+            "asLegacyTransaction": False,  # Use versioned TX for Token2022
         }
 
         for attempt in range(self.max_retries):
