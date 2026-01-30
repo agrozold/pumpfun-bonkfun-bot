@@ -1047,10 +1047,11 @@ class UniversalTrader:
                         creation_timestamp=0,
                     )
 
-                    # Start monitoring in background task (don't await - let it run)
-                    asyncio.create_task(
-                        self._monitor_whale_position(token_info, position, dex_used)
-                    )
+                    # REMOVED: Position monitoring now handled by:
+                    # 1. TX callback creates position after verification
+                    # 2. _position_monitor_loop monitors all positions
+                    # asyncio.create_task(self._monitor_whale_position(...))
+                    logger.info(f"[WHALE] TX sent, position will be created by callback after verification")
             else:
                 # Clean readable failure log
                 logger.error("=" * 70)
