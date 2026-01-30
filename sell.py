@@ -57,7 +57,7 @@ except ImportError:
 from src.trading.jito_sender import get_jito_sender
 
 # API Keys
-JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY") or os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
+JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY")  # Trade only, no fallback to monitor key!
 
 # Constants
 EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)

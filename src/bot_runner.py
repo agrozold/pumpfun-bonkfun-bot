@@ -283,7 +283,7 @@ async def start_bot(config_path: str):
             whale_all_platforms=cfg.get("whale_all_platforms", False),
             stablecoin_filter=cfg.get("stablecoin_filter", []),
             birdeye_api_key=os.getenv("BIRDEYE_API_KEY"),
-            jupiter_api_key=os.getenv("JUPITER_API_KEY"),
+            jupiter_api_key=os.getenv("JUPITER_TRADE_API_KEY"),  # Trade key for swaps
             # Dev reputation check configuration
             enable_dev_check=cfg.get("dev_check", {}).get("enabled", False),
             dev_max_tokens_created=cfg.get("dev_check", {}).get("max_tokens_created", 50),

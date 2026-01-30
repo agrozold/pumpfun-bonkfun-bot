@@ -221,7 +221,7 @@ class UniversalTrader:
         # Store endpoints and API keys for later use
         self.rpc_endpoint = rpc_endpoint
         self.wss_endpoint = wss_endpoint
-        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY") or os.getenv("JUPITER_API_KEY")
+        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY")  # NO fallback to monitor key!
 
         # Core components
         logger.warning("=== INIT: Creating core components ===")
@@ -917,16 +917,17 @@ class UniversalTrader:
                     await asyncio.sleep(retry_delay)
 
             if success:
-                # Mark as BOUGHT (completed) - NEVER buy again!
-                self._bought_tokens.add(mint_str)
-                add_to_purchase_history(
-                    mint=mint_str,
-                    symbol=whale_buy.token_symbol,
-                    bot_name="whale_copy",
-                    platform=dex_used,
-                    price=price,
-                    amount=token_amount,
-                )
+                # MOVED TO TX_CALLBACK - position/history added after TX verification
+                # self._bought_tokens.add(mint_str)
+                # add_to_purchase_history(
+                #     mint=mint_str,
+                #     symbol=whale_buy.token_symbol,
+                #     bot_name="whale_copy",
+                #     platform=dex_used,
+                #     price=price,
+                #     amount=token_amount,
+                # )
+                pass  # Callback will handle position creation
 
                 # Clean readable success log
                 logger.warning("=" * 70)
@@ -973,32 +974,32 @@ class UniversalTrader:
                 )
                 logger.info(f"[WHALE] Derived bonding_curve: {bonding_curve_derived}")
 
-                position = Position.create_from_buy_result(
-                    mint=mint,
-                    symbol=whale_buy.token_symbol,
-                    entry_price=entry_price,
-                    quantity=token_amount,
-                    take_profit_percentage=self.take_profit_percentage,
-                    stop_loss_percentage=self.stop_loss_percentage,
-                    max_hold_time=self.max_hold_time,
-                    platform=dex_used,
-                    bonding_curve=str(bonding_curve_derived),  # Properly derived!
-                    # TSL parameters
-                    tsl_enabled=self.tsl_enabled,
-                    tsl_activation_pct=self.tsl_activation_pct,
-                    tsl_trail_pct=self.tsl_trail_pct,
-                    tsl_sell_pct=self.tsl_sell_pct,
-                )
+                # MOVED TO TX_CALLBACK - position created after TX verification
+                # position = Position.create_from_buy_result(
+                #     mint=mint,
+                #     symbol=whale_buy.token_symbol,
+                #     entry_price=entry_price,
+                #     quantity=token_amount,
+                #     take_profit_percentage=self.take_profit_percentage,
+                #     stop_loss_percentage=self.stop_loss_percentage,
+                #     max_hold_time=self.max_hold_time,
+                #     platform=dex_used,
+                #     bonding_curve=str(bonding_curve_derived),
+                #     tsl_enabled=self.tsl_enabled,
+                #     tsl_activation_pct=self.tsl_activation_pct,
+                #     tsl_trail_pct=self.tsl_trail_pct,
+                #     tsl_sell_pct=self.tsl_sell_pct,
+                # )
+                # self.active_positions.append(position)
+                # save_positions(self.active_positions)
+                # watch_token(str(position.mint))
+                logger.info(f"[WHALE] Position will be created by TX callback after verification")
 
-                self.active_positions.append(position)
-                save_positions(self.active_positions)
-                watch_token(str(position.mint))  # Add to batch price monitoring
-
-                # Log TP/SL targets
-                if position.take_profit_price:
-                    logger.warning(f"[WHALE] Take profit target: {position.take_profit_price:.10f} SOL")
-                if position.stop_loss_price:
-                    logger.warning(f"[WHALE] Stop loss target: {position.stop_loss_price:.10f} SOL")
+                # Log TP/SL targets - DISABLED (position created by callback)
+                # if position.take_profit_price:
+                #     logger.warning(f"[WHALE] Take profit target: {position.take_profit_price:.10f} SOL")
+                # if position.stop_loss_price:
+                #     logger.warning(f"[WHALE] Stop loss target: {position.stop_loss_price:.10f} SOL")
 
                 self._log_trade(
                     "buy",
@@ -1307,10 +1308,23 @@ class UniversalTrader:
                 jupiter_api_key=self.jupiter_api_key,
             )
 
+            # Position config for callback
+            position_config = {
+                "take_profit_pct": self.take_profit_percentage,
+                "stop_loss_pct": self.stop_loss_percentage,
+                "tsl_enabled": self.tsl_enabled,
+                "tsl_activation_pct": self.tsl_activation_pct,
+                "tsl_trail_pct": self.tsl_trail_pct,
+                "tsl_sell_pct": self.tsl_sell_pct,
+                "max_hold_time": self.max_hold_time,
+                "bot_name": "universal_trader",
+            }
+            
             success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
                 mint=mint,
                 sol_amount=sol_amount,
                 symbol=symbol,
+                position_config=position_config,
             )
 
             if success:
@@ -1338,10 +1352,23 @@ class UniversalTrader:
             )
 
             # Jupiter returns 5 values: success, sig, error, token_amount, price
+            # Position config for callback
+            position_config = {
+                "take_profit_pct": self.take_profit_percentage,
+                "stop_loss_pct": self.stop_loss_percentage,
+                "tsl_enabled": self.tsl_enabled,
+                "tsl_activation_pct": self.tsl_activation_pct,
+                "tsl_trail_pct": self.tsl_trail_pct,
+                "tsl_sell_pct": self.tsl_sell_pct,
+                "max_hold_time": self.max_hold_time,
+                "bot_name": "universal_trader",
+            }
+            
             success, sig, error, token_amount, real_price = await fallback.buy_via_jupiter(
                 mint=mint,
                 sol_amount=sol_amount,
                 symbol=symbol,
+                position_config=position_config,
             )
 
             if success:
@@ -1735,17 +1762,19 @@ class UniversalTrader:
 
             buy_success = await self._handle_token(token_info, skip_checks=False)
 
-            # Mark as BOUGHT only if purchase was successful
+            # MOVED TO TX_CALLBACK - position/history added after TX verification
+            # if buy_success:
+            #     self._bought_tokens.add(mint_str)
+            #     add_to_purchase_history(
+            #         mint=mint_str,
+            #         symbol=analysis.symbol,
+            #         bot_name="volume_analyzer",
+            #         platform=self.platform.value,
+            #         price=0,
+            #         amount=0,
+            #     )
             if buy_success:
-                self._bought_tokens.add(mint_str)
-                add_to_purchase_history(
-                    mint=mint_str,
-                    symbol=analysis.symbol,
-                    bot_name="volume_analyzer",
-                    platform=self.platform.value,
-                    price=0,
-                    amount=0,
-                )
+                logger.info(f"[VOLUME] TX sent, position will be created by callback")
 
         except Exception as e:
             logger.error(f"[VOLUME] Error processing {analysis.symbol}: {e}")
@@ -1939,38 +1968,44 @@ class UniversalTrader:
                 if not market_address:
                     logger.info("[TRENDING] No pair_address, will lookup PumpSwap market via RPC")
 
+                # Position config for callback
+                position_config = {
+                    "take_profit_pct": self.take_profit_percentage,
+                    "stop_loss_pct": self.stop_loss_percentage,
+                    "tsl_enabled": self.tsl_enabled,
+                    "tsl_activation_pct": self.tsl_activation_pct,
+                    "tsl_trail_pct": self.tsl_trail_pct,
+                    "tsl_sell_pct": self.tsl_sell_pct,
+                    "max_hold_time": self.max_hold_time,
+                    "bot_name": "trending_scanner",
+                }
+                
                 success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
                     mint=mint,
                     sol_amount=self.buy_amount,
                     symbol=token.symbol,
                     market_address=market_address,
+                    position_config=position_config,
                 )
 
                 if success:
                     logger.warning(f"[OK] TRENDING PumpSwap BUY: {token.symbol} - {sig}")
                     logger.info(f"[OK] Got {token_amount:,.2f} tokens at price {price:.10f} SOL")
-                    # Save position with REAL price and quantity
-                    position = Position(
-                        mint=mint,
-                        symbol=token.symbol,
-                        entry_price=price,  # REAL price from pool
-                        quantity=token_amount,  # REAL token amount
-                        entry_time=datetime.utcnow(),
-                        platform=self.platform.value,
-                    )
-                    self.active_positions.append(position)
-                    save_positions(self.active_positions)
-                    watch_token(mint_str)  # Add to batch price monitoring
-                    # Mark as BOUGHT (completed) - NEVER buy again!
-                    self._bought_tokens.add(mint_str)
-                    add_to_purchase_history(
-                        mint=mint_str,
-                        symbol=token.symbol,
-                        bot_name="trending_scanner",
-                        platform="pumpswap",
-                        price=price,
-                        amount=token_amount,
-                    )
+                    # MOVED TO TX_CALLBACK - position/history added after TX verification
+                    # position = Position(
+                    #     mint=mint,
+                    #     symbol=token.symbol,
+                    #     entry_price=price,
+                    #     quantity=token_amount,
+                    #     entry_time=datetime.utcnow(),
+                    #     platform=self.platform.value,
+                    # )
+                    # self.active_positions.append(position)
+                    # save_positions(self.active_positions)
+                    # watch_token(mint_str)
+                    # self._bought_tokens.add(mint_str)
+                    # add_to_purchase_history(...)
+                    logger.info(f"[TRENDING] TX sent, position will be created by callback")
                 else:
                     logger.error(f"[FAIL] TRENDING PumpSwap BUY failed: {token.symbol} - {error or 'Unknown error'}")
                 return
@@ -2023,16 +2058,19 @@ class UniversalTrader:
             # Покупаем! skip_checks=False - пусть проходит dev check и другие проверки
             # Scoring уже проверен выше, но _handle_token пропустит повторную проверку
             buy_success = await self._handle_token(token_info, skip_checks=False)
+            # MOVED TO TX_CALLBACK - position/history added after TX verification
+            # if buy_success:
+            #     self._bought_tokens.add(mint_str)
+            #     add_to_purchase_history(
+            #         mint=mint_str,
+            #         symbol=token.symbol,
+            #         bot_name="trending_scanner",
+            #         platform=token.dex_id or "unknown",
+            #         price=0,
+            #         amount=0,
+            #     )
             if buy_success:
-                self._bought_tokens.add(mint_str)
-                add_to_purchase_history(
-                    mint=mint_str,
-                    symbol=token.symbol,
-                    bot_name="trending_scanner",
-                    platform=token.dex_id or "unknown",
-                    price=0,
-                    amount=0,
-                )
+                logger.info(f"[PUMP] TX sent, position will be created by callback")
 
         except Exception as e:
             logger.exception(f"Failed to buy trending token: {e}")
@@ -2364,16 +2402,19 @@ class UniversalTrader:
 
                 try:
                     buy_success = await self._handle_token(token_info)
+                    # MOVED TO TX_CALLBACK - position/history added after TX verification
+                    # if buy_success:
+                    #     self._bought_tokens.add(token_key)
+                    #     add_to_purchase_history(
+                    #         mint=token_key,
+                    #         symbol=token_info.symbol,
+                    #         bot_name="sniper",
+                    #         platform=self.platform.value,
+                    #         price=0,
+                    #         amount=0,
+                    #     )
                     if buy_success:
-                        self._bought_tokens.add(token_key)
-                        add_to_purchase_history(
-                            mint=token_key,
-                            symbol=token_info.symbol,
-                            bot_name="sniper",
-                            platform=self.platform.value,
-                            price=0,
-                            amount=0,
-                        )
+                        logger.info(f"[SNIPER] TX sent, position will be created by callback")
                 finally:
                     # Remove from "buying" set (either succeeded or failed)
                     self._buying_tokens.discard(token_key)

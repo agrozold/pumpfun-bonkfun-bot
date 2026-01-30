@@ -29,6 +29,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Transaction verification (Fire & Forget with background check)
+from core.tx_verifier import get_tx_verifier
+from core.tx_callbacks import on_buy_success, on_buy_failure
+
 # Constants
 TOKEN_DECIMALS = 6  # Default, use get_token_decimals() for dynamic
 LAMPORTS_PER_SOL = 1_000_000_000
@@ -150,7 +154,7 @@ class FallbackSeller:
         self.priority_fee = priority_fee
         self.max_retries = max_retries
         self.alt_rpc_endpoint = alt_rpc_endpoint
-        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY") or os.getenv("JUPITER_API_KEY")
+        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY")  # NO fallback to monitor key!
         self._alt_client = None
 
     async def _get_rpc_client(self):
@@ -188,6 +192,7 @@ class FallbackSeller:
         sol_amount: float,
         symbol: str = "TOKEN",
         market_address: Pubkey | None = None,  # Optional - skip lookup if provided
+        position_config: dict | None = None,  # TSL/TP/SL parameters for callback
     ) -> tuple[bool, str | None, str | None, float, float]:
         """Buy token via PumpSwap AMM - for migrated tokens.
 
@@ -514,24 +519,54 @@ class FallbackSeller:
                         return False, sig, error_msg, 0.0, 0.0
 
                     logger.info(f"PumpSwap BUY SUCCESS! Got ~{expected_tokens:,.2f} {symbol}")
+                    # Schedule callback for position management (TX already verified above)
+                    verifier = await get_tx_verifier()
+                    await verifier.schedule_verification(
+                        signature=sig, mint=str(mint), symbol=symbol, action="buy",
+                        token_amount=expected_tokens, price=price,
+                        on_success=on_buy_success, on_failure=on_buy_failure,
+                        context={"platform": "pumpswap", "bot_name": "fallback_seller", "pre_verified": True, **(position_config or {})},
+                    )
                     return True, sig, None, expected_tokens, price
 
                 except Exception as e:
                     error_str = str(e).lower()
                     # If rate limited, return signature - user can check on solscan
                     if "429" in error_str or "rate" in error_str or "too many" in error_str:
-                        logger.warning(f"RPC rate limited - check tx on solscan: {sig}")
-                        return True, sig, None, expected_tokens, price  # Return calculated amounts
+                        logger.warning(f"RPC rate limited - scheduling background verification: {sig}")
+                        # Schedule background verification instead of assuming success
+                        verifier = await get_tx_verifier()
+                        await verifier.schedule_verification(
+                            signature=sig, mint=str(mint), symbol=symbol, action="buy",
+                            token_amount=expected_tokens, price=price,
+                            on_success=on_buy_success, on_failure=on_buy_failure,
+                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **(position_config or {})},
+                        )
+                        return True, sig, None, expected_tokens, price  # TX sent, verification pending
 
                     error_msg = str(e) if str(e) else f"{type(e).__name__}"
                     logger.warning(f"Status check failed: {error_msg}")
                     if attempt == 2:  # Last attempt
-                        logger.warning(f"Could not verify - check solscan: {sig}")
-                        return True, sig, None, expected_tokens, price  # Return calculated amounts
+                        logger.warning(f"Could not verify - scheduling background verification: {sig}")
+                        verifier = await get_tx_verifier()
+                        await verifier.schedule_verification(
+                            signature=sig, mint=str(mint), symbol=symbol, action="buy",
+                            token_amount=expected_tokens, price=price,
+                            on_success=on_buy_success, on_failure=on_buy_failure,
+                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **(position_config or {})},
+                        )
+                        return True, sig, None, expected_tokens, price  # TX sent, verification pending
 
-            # If we get here, tx was sent but status unknown
-            logger.warning(f"Status unknown - check solscan: {sig}")
-            return True, sig, None, expected_tokens, price  # Return calculated amounts
+            # If we get here, tx was sent but status unknown - schedule background verification
+            logger.warning(f"Status unknown - scheduling background verification: {sig}")
+            verifier = await get_tx_verifier()
+            await verifier.schedule_verification(
+                signature=sig, mint=str(mint), symbol=symbol, action="buy",
+                token_amount=expected_tokens, price=price,
+                on_success=on_buy_success, on_failure=on_buy_failure,
+                context={"platform": "pumpswap", "bot_name": "fallback_seller", **(position_config or {})},
+            )
+            return True, sig, None, expected_tokens, price  # TX sent, verification pending
 
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
@@ -542,7 +577,8 @@ class FallbackSeller:
         mint: Pubkey,
         sol_amount: float,
         symbol: str = "TOKEN",
-    ) -> tuple[bool, str | None, str | None]:
+        position_config: dict | None = None,  # TSL/TP/SL parameters for callback
+    ) -> tuple[bool, str | None, str | None, float, float]:
         """Buy token via Jupiter aggregator - works for any token with liquidity.
 
         Args:
@@ -627,34 +663,22 @@ class FallbackSeller:
                             logger.info(f"[SIG] Jupiter Ultra BUY signature: {sig}")
                             real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
                             
-                            # CRITICAL: Verify TX actually succeeded on chain (not just sent!)
-                            tx_confirmed = False
-                            for verify_try in range(10):
-                                await asyncio.sleep(2)
-                                try:
-                                    verify_resp = await rpc_client.get_transaction(
-                                        Signature.from_string(sig),
-                                        encoding="jsonParsed",
-                                        max_supported_transaction_version=0
-                                    )
-                                    if verify_resp.value:
-                                        tx_meta = verify_resp.value.transaction.meta if verify_resp.value.transaction else None
-                                        if tx_meta and tx_meta.err:
-                                            logger.error(f"[FAIL] Jupiter Ultra BUY TX FAILED ON CHAIN: {sig} - {tx_meta.err}")
-                                            break  # TX failed, try next attempt
-                                        elif tx_meta and not tx_meta.err:
-                                            tx_confirmed = True
-                                            break  # TX confirmed successful
-                                except Exception as ve:
-                                    logger.debug(f"Verify attempt {verify_try+1}: {ve}")
-                                    continue
+
+                            # FIRE & FORGET: Schedule background verification via TxVerifier
+                            logger.info(f"[TX SENT] Jupiter Ultra BUY: {sig}")
+                            logger.info(f"[PENDING] Expected: {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                            logger.info(f"[LINK] https://solscan.io/tx/{sig}")
                             
-                            if not tx_confirmed:
-                                logger.error(f"[FAIL] Jupiter Ultra BUY TX NOT CONFIRMED: {sig}")
-                                continue  # Try next attempt
-                            
-                            logger.info(f"[OK] Jupiter Ultra BUY SUCCESS (VERIFIED): {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                            # TxVerifier will verify in background and call callback
+                            verifier = await get_tx_verifier()
+                            await verifier.schedule_verification(
+                                signature=sig, mint=str(mint), symbol=symbol, action="buy",
+                                token_amount=out_amount_tokens, price=real_price,
+                                on_success=on_buy_success, on_failure=on_buy_failure,
+                                context={"platform": "jupiter_ultra", "bot_name": "fallback_seller", **(position_config or {})},
+                            )
                             return True, sig, None, out_amount_tokens, real_price
+
 
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
@@ -742,35 +766,21 @@ class FallbackSeller:
                                     logger.warning(f"[WARN] Could not verify tx {sig[:20]}...: {verify_err}")
                                     continue  # CRITICAL: retry if verify failed
                                 
-                                # VERIFY TX ON CHAIN BEFORE DECLARING SUCCESS
-                                tx_confirmed = False
-                                for verify_try in range(10):
-                                    await asyncio.sleep(2)
-                                    try:
-                                        from solders.signature import Signature
-                                        verify_resp = await rpc_client.get_transaction(
-                                            Signature.from_string(sig),
-                                            encoding="jsonParsed",
-                                            max_supported_transaction_version=0
-                                        )
-                                        if verify_resp.value:
-                                            tx_meta = verify_resp.value.transaction.meta if verify_resp.value.transaction else None
-                                            if tx_meta and tx_meta.err:
-                                                logger.error(f"[FAIL] Jupiter BUY TX FAILED ON CHAIN: {sig} - {tx_meta.err}")
-                                                break  # TX failed, exit verify loop
-                                            elif tx_meta and not tx_meta.err:
-                                                tx_confirmed = True
-                                                break  # TX confirmed successful
-                                    except Exception as ve:
-                                        logger.debug(f"Verify attempt {verify_try+1}: {ve}")
-                                        continue
-                                
-                                if not tx_confirmed:
-                                    logger.error(f"[FAIL] Jupiter BUY TX NOT CONFIRMED: {sig}")
-                                    continue  # Try next attempt
-                                
-                                logger.info(f"[OK] Jupiter Lite BUY SUCCESS (VERIFIED): {sig} - {out_amount_tokens:,.2f} tokens @ {real_price:.10f} SOL")
+                                # FIRE & FORGET: TxVerifier will verify in background
+                                logger.info(f"[TX SENT] Jupiter Lite BUY: {sig}")
+                                logger.info(f"[PENDING] Expected: {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                                logger.info(f"[LINK] https://solscan.io/tx/{sig}")
+
+                                # Schedule background verification - callback will create position
+                                verifier = await get_tx_verifier()
+                                await verifier.schedule_verification(
+                                    signature=sig, mint=str(mint), symbol=symbol, action="buy",
+                                    token_amount=out_amount_tokens, price=real_price,
+                                    on_success=on_buy_success, on_failure=on_buy_failure,
+                                    context={"platform": "jupiter_lite", "bot_name": "fallback_seller", **(position_config or {})},
+                                )
                                 return True, sig, None, out_amount_tokens, real_price
+
                                 
                             except Exception as e:
                                 logger.warning(f"Jupiter Lite attempt {lite_attempt + 1} failed: {e}")
@@ -835,9 +845,25 @@ class FallbackSeller:
 
                             logger.info(f"[SIG] Jupiter BUY signature: {sig}")
 
-                            await rpc_client.confirm_transaction(Signature.from_string(str(sig)), commitment="confirmed")
+                            # FIRE & FORGET: Schedule background verification (non-blocking)
                             real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
-                            logger.info(f"[OK] Jupiter BUY confirmed! {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                            logger.info(f"[TX SENT] Jupiter BUY: {sig}")
+                            
+                            # Schedule async verification
+                            verifier = await get_tx_verifier()
+                            await verifier.schedule_verification(
+                                signature=sig,
+                                mint=str(mint),
+                                symbol=symbol,
+                                action="buy",
+                                token_amount=out_amount_tokens,
+                                price=real_price,
+                                on_success=on_buy_success,
+                                on_failure=on_buy_failure,
+                                context={"platform": "jupiter", "bot_name": "fallback_seller", **(position_config or {})},
+                            )
+                            
+                            # Return immediately - position added by callback on success
                             return True, sig, None, out_amount_tokens, real_price
 
                         except Exception as e:

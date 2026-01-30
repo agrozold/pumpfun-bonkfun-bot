@@ -43,7 +43,7 @@ from spl.token.instructions import (
 )
 
 # API Keys
-JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY") or os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
+JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY")  # Trade only, no fallback to monitor key!
 
 load_dotenv()
 

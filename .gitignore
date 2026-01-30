@@ -57,3 +57,6 @@ smart_money_wallets.json
 .env
 *.pem
 *.key
+
+# Session backups
+*.before_*
