@@ -129,6 +129,8 @@ async def on_buy_success(tx: "PendingTransaction"):
                 logger.error(f"[TX_CALLBACK] ⚠️ MONITOR FAILED for {symbol} - manual restart may be needed!")
         except Exception as monitor_err:
             logger.error(f"[TX_CALLBACK] Monitor start error: {monitor_err}")
+        # Schedule delayed symbol update (for newly indexed tokens)
+        asyncio.create_task(_delayed_symbol_update(mint, symbol, delay=30))
         logger.warning(f"[TX_CALLBACK] ✅ BUY COMPLETE: {symbol} - {token_amount:,.2f} @ {price:.10f}")
         
     except Exception as e:
@@ -211,3 +213,29 @@ async def on_sell_failure(tx: "PendingTransaction"):
     )
     
     # Position stays - monitor will retry sell
+
+
+async def _delayed_symbol_update(mint: str, current_symbol: str, delay: int = 30):
+    """Update symbol from DexScreener after delay (for newly indexed tokens)."""
+    import aiohttp
+    await asyncio.sleep(delay)
+    
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    pairs = data.get("pairs", [])
+                    if pairs:
+                        new_symbol = pairs[0].get("baseToken", {}).get("symbol", "")
+                        if new_symbol and new_symbol != current_symbol:
+                            from trading.position import load_positions, save_positions
+                            positions = load_positions()
+                            for p in positions:
+                                if str(p.mint) == mint:
+                                    logger.warning(f"[SYMBOL_UPDATE] {current_symbol} -> {new_symbol} for {mint[:16]}...")
+                                    p.symbol = new_symbol
+                            save_positions(positions)
+    except Exception as e:
+        logger.debug(f"[SYMBOL_UPDATE] Failed: {e}")

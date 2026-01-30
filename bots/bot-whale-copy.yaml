@@ -73,6 +73,8 @@ trending_scanner:
 whale_all_platforms: true
 
 stablecoin_filter:
+  - 7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs   # WETH
+  - JuprjznTrTSp2UFa3ZBUFgwdAmtZCq4MQCwysN55USD   # JupUSD
   - EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
   - Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
   - USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX

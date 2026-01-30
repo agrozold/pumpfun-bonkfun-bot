@@ -25,6 +25,7 @@ TOKEN_BLACKLIST = {
     "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1",
 }
 
+
 SOL_MINT = "So11111111111111111111111111111111111111112"
 
 async def _fetch_symbol_dexscreener(mint: str) -> str:
