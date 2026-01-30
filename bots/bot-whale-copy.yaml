@@ -84,3 +84,11 @@ stablecoin_filter:
 
 token_vetting:
   enabled: false
+
+# Jupiter Swap Configuration (added by fix script)
+swap_config:
+  use_dynamic_slippage: true
+  dynamic_compute_limit: true
+  wrap_and_unwrap_sol: false
+  restrict_intermediate_tokens: true
+  max_accounts_in_route: 64

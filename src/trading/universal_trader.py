@@ -221,7 +221,7 @@ class UniversalTrader:
         # Store endpoints and API keys for later use
         self.rpc_endpoint = rpc_endpoint
         self.wss_endpoint = wss_endpoint
-        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_API_KEY")
+        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY") or os.getenv("JUPITER_API_KEY")
 
         # Core components
         logger.warning("=== INIT: Creating core components ===")

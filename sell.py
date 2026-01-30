@@ -57,7 +57,7 @@ except ImportError:
 from src.trading.jito_sender import get_jito_sender
 
 # API Keys
-JUPITER_API_KEY = os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
+JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY") or os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
 
 # Constants
 EXPECTED_DISCRIMINATOR = struct.pack("<Q", 6966180631402821399)
@@ -388,7 +388,9 @@ async def sell_via_jupiter(
         swap_body = {
             "quoteResponse": quote,
             "userPublicKey": str(payer.pubkey()),
-            "wrapAndUnwrapSol": True,
+            "wrapAndUnwrapSol": False,
+            "dynamicComputeUnitLimit": True,
+            "dynamicSlippage": True,
             "prioritizationFeeLamports": priority_fee,
         }
         
@@ -976,7 +978,7 @@ async def sell_token(
         # Decide which method to use
         if curve_state is None or curve_state.complete:
             # Token migrated to Raydium - use PumpSwap
-            return await sell_via_pumpswap(client, payer, mint, percent, slippage, priority_fee, max_retries)
+            return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
         else:
             # Token still on bonding curve - use Pump.fun
             return await sell_via_pumpfun(client, payer, mint, curve_state, percent, slippage, priority_fee, max_retries)

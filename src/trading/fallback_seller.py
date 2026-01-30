@@ -99,6 +99,38 @@ POOL_MAYHEM_MODE_MIN_SIZE = 244
 GLOBALCONFIG_RESERVED_FEE_OFFSET = 72
 
 
+# ============================================================================
+# Transaction Verification Helper
+# ============================================================================
+async def verify_transaction_success(rpc_client, signature: str, max_wait: float = 10.0) -> tuple[bool, str | None]:
+    """
+    Verify transaction was confirmed AND successful on-chain.
+    Returns (success, error_message)
+    """
+    import asyncio
+    from solders.signature import Signature
+    
+    sig = Signature.from_string(signature) if isinstance(signature, str) else signature
+    start_time = asyncio.get_event_loop().time()
+    
+    while asyncio.get_event_loop().time() - start_time < max_wait:
+        try:
+            resp = await rpc_client.get_signature_statuses([sig])
+            if resp.value and resp.value[0]:
+                status = resp.value[0]
+                if status.err:
+                    # Transaction failed on-chain (6001, 6024, etc.)
+                    return False, f"TX failed: {status.err}"
+                if status.confirmation_status:
+                    # Confirmed successfully
+                    return True, None
+        except Exception:
+            pass
+        await asyncio.sleep(0.3)
+    
+    return False, "Confirmation timeout"
+
+
 class FallbackSeller:
     """Handles selling tokens via PumpSwap or Jupiter when bonding curve unavailable."""
 
@@ -118,7 +150,7 @@ class FallbackSeller:
         self.priority_fee = priority_fee
         self.max_retries = max_retries
         self.alt_rpc_endpoint = alt_rpc_endpoint
-        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_API_KEY")
+        self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY") or os.getenv("JUPITER_API_KEY")
         self._alt_client = None
 
     async def _get_rpc_client(self):
@@ -641,7 +673,7 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "slippageBps": "2500",  # 25% slippage for memecoins
+                        "restrictIntermediateTokens": True,  # Safer routes
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
                     
@@ -659,9 +691,10 @@ class FallbackSeller:
                         swap_body = {
                             "quoteResponse": quote,
                             "userPublicKey": str(self.wallet.pubkey),
-                            "wrapAndUnwrapSol": True,
+                            "wrapAndUnwrapSol": False,
                             "prioritizationFeeLamports": self.priority_fee,
                             "dynamicComputeUnitLimit": True,  # Better CU estimation
+                            "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
                             "asLegacyTransaction": False,  # Use versioned TX for Token2022
                         }
                         
@@ -753,7 +786,7 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "slippageBps": "2500",  # 25% slippage for memecoins
+                        "restrictIntermediateTokens": True,  # Safer routes
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
 
@@ -770,8 +803,10 @@ class FallbackSeller:
                     swap_body = {
                         "quoteResponse": quote,
                         "userPublicKey": str(self.wallet.pubkey),
-                        "wrapAndUnwrapSol": True,
+                        "wrapAndUnwrapSol": False,
                         "prioritizationFeeLamports": self.priority_fee,
+                        "dynamicComputeUnitLimit": True,  # Better CU estimation
+                        "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
                     }
 
                     for attempt in range(self.max_retries):
@@ -1178,7 +1213,7 @@ class FallbackSeller:
             "outputMint": str(SOL_MINT),
             "amount": str(sell_amount),
             "taker": str(self.wallet.pubkey),
-            # Use dynamicSlippage for volatile memecoins
+            # Note: Jupiter Ultra has built-in RTSE (Real-Time Slippage Estimator)
         }
 
         for attempt in range(self.max_retries):
@@ -1233,7 +1268,7 @@ class FallbackSeller:
             "inputMint": str(mint),
             "outputMint": str(SOL_MINT),
             "amount": str(sell_amount),
-            # Use dynamicSlippage for volatile memecoins
+            "restrictIntermediateTokens": "true",  # Safer routes
         }
 
         try:
@@ -1252,8 +1287,10 @@ class FallbackSeller:
         swap_body = {
             "quoteResponse": quote,
             "userPublicKey": str(self.wallet.pubkey),
-            "wrapAndUnwrapSol": True,
+            "wrapAndUnwrapSol": False,
             "prioritizationFeeLamports": self.priority_fee,
+            "dynamicComputeUnitLimit": True,  # Better CU estimation
+            "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
         }
 
         for attempt in range(self.max_retries):

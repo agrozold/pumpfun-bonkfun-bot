@@ -43,7 +43,7 @@ from spl.token.instructions import (
 )
 
 # API Keys
-JUPITER_API_KEY = os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
+JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY") or os.environ.get("JUPITER_API_KEY", "YOUR_JUPITER_KEY")
 
 load_dotenv()
 
@@ -394,7 +394,9 @@ async def buy_via_jupiter(
             swap_body = {
                 "quoteResponse": quote,
                 "userPublicKey": str(payer.pubkey()),
-                "wrapAndUnwrapSol": True,
+                "wrapAndUnwrapSol": False,
+                "dynamicComputeUnitLimit": True,
+                "dynamicSlippage": True,
                 "prioritizationFeeLamports": priority_fee,
             }
             
@@ -900,12 +902,12 @@ async def buy_token(
         # Decide which method to use
         if curve_state is None:
             print("🔄 Bonding curve not found - token migrated to Raydium, using PumpSwap AMM...")
-            return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
+            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
         elif curve_state.complete:
             print(f"🔄 Bonding curve COMPLETE (complete={curve_state.complete}) - using PumpSwap AMM...")
             print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
             print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-            return await buy_via_pumpswap(client, payer, mint, amount_sol, slippage, priority_fee, max_retries)
+            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
         else:
             print(f"📈 Token on bonding curve (complete={curve_state.complete}) - using Pump.fun...")
             print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
