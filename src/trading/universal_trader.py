@@ -3047,7 +3047,9 @@ class UniversalTrader:
 
                 # Check if position should be exited (includes config SL check!)
                 # UPDATE: Call update_price() for TSL (Trailing Stop-Loss) support
-                position.update_price(current_price)
+                if position.update_price(current_price):
+                    # HWM changed - save to file (every update to prevent loss on restart)
+                    save_positions(self.active_positions)
                 should_exit, exit_reason = position.should_exit(current_price)
 
                 # ============================================
@@ -3228,7 +3230,8 @@ class UniversalTrader:
                             
                             # Calculate PnL and check SL/TP
                             pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
-                            position.update_price(current_price)
+                            if position.update_price(current_price):
+                                save_positions(self.active_positions)
                             should_exit, exit_reason = position.should_exit(current_price)
                             
                             logger.info(

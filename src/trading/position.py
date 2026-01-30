@@ -161,21 +161,31 @@ class Position:
             high_water_mark=entry_price,
         )
 
-    def update_price(self, current_price: float) -> None:
+    def update_price(self, current_price: float) -> bool:
+        """Update TSL state. Returns True if state changed (needs save)."""
         if not self.is_active or not self.tsl_enabled:
-            return
+            return False
 
         profit_pct = (current_price - self.entry_price) / self.entry_price
+        state_changed = False
 
+        # Activate TSL when profit threshold reached
         if not self.tsl_active and profit_pct >= self.tsl_activation_pct:
             self.tsl_active = True
             self.high_water_mark = current_price
             self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
-            logger.warning(f"[TSL] {self.symbol} ACTIVATED at {current_price:.10f}")
+            logger.warning(f"[TSL] {self.symbol} ACTIVATED at {current_price:.10f}, trigger at {self.tsl_trigger_price:.10f}")
+            state_changed = True
 
+        # Update HWM if price is higher
         if self.tsl_active and current_price > self.high_water_mark:
+            old_hwm = self.high_water_mark
             self.high_water_mark = current_price
             self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+            logger.info(f"[TSL] {self.symbol} HWM: {old_hwm:.10f} -> {current_price:.10f}, new trigger: {self.tsl_trigger_price:.10f}")
+            state_changed = True
+        
+        return state_changed
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
         if not self.is_active:
