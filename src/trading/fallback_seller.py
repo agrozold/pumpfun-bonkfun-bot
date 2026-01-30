@@ -736,7 +736,7 @@ class FallbackSeller:
                         swap_body = {
                             "quoteResponse": quote,
                             "userPublicKey": str(self.wallet.pubkey),
-                            "wrapAndUnwrapSol": False,
+                            "wrapAndUnwrapSol": True,
                             "prioritizationFeeLamports": self.priority_fee,
                             "dynamicComputeUnitLimit": True,  # Better CU estimation
                             "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
@@ -857,7 +857,7 @@ class FallbackSeller:
                     swap_body = {
                         "quoteResponse": quote,
                         "userPublicKey": str(self.wallet.pubkey),
-                        "wrapAndUnwrapSol": False,
+                        "wrapAndUnwrapSol": True,
                         "prioritizationFeeLamports": self.priority_fee,
                         "dynamicComputeUnitLimit": True,  # Better CU estimation
                         "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
@@ -1359,7 +1359,7 @@ class FallbackSeller:
         swap_body = {
             "quoteResponse": quote,
             "userPublicKey": str(self.wallet.pubkey),
-            "wrapAndUnwrapSol": False,
+            "wrapAndUnwrapSol": True,
             "prioritizationFeeLamports": self.priority_fee,
             "dynamicComputeUnitLimit": True,  # Better CU estimation
             "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
