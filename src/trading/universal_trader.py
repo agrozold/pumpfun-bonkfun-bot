@@ -1370,50 +1370,14 @@ class UniversalTrader:
                 logger.info(f"[WARN] BAGS check failed: {e}")
 
         # ============================================
-        # [2/4] TRY PUMPSWAP (for migrated tokens)
+        # [2/4] PUMPSWAP DISABLED - 0% success rate, wastes 10+ seconds
+        # Stats: 15 attempts, 0 successes (2026-01-30)
+        # Jupiter handles all PumpSwap pools via aggregation
+        # To re-enable: see git history or backup file
         # ============================================
-        logger.info(f"[CHECK] [2/4] Trying PumpSwap for {symbol}...")
-
-        try:
-            fallback = FallbackSeller(
-                client=self.solana_client,
-                wallet=self.wallet,
-                slippage=self.buy_slippage,
-                priority_fee=self.priority_fee_manager.fixed_fee,
-                max_retries=self.max_retries,
-                jupiter_api_key=self.jupiter_api_key,
-            )
-
-            # Position config for callback
-            position_config = {
-                "take_profit_pct": self.take_profit_percentage,
-                "stop_loss_pct": self.stop_loss_percentage,
-                "tsl_enabled": self.tsl_enabled,
-                "tsl_activation_pct": self.tsl_activation_pct,
-                "tsl_trail_pct": self.tsl_trail_pct,
-                "tsl_sell_pct": self.tsl_sell_pct,
-                "max_hold_time": self.max_hold_time,
-                "bot_name": "universal_trader",
-            }
-            
-            success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
-                mint=mint,
-                sol_amount=sol_amount,
-                symbol=symbol,
-                position_config=position_config,
-            )
-
-            if success:
-                logger.warning(f"[OK] PumpSwap BUY SUCCESS: {symbol} - {sig}")
-                return True, sig, "pumpswap", token_amount, price
-            else:
-                logger.info(f"[WARN] PumpSwap failed: {error}")
-
-        except Exception as e:
-            logger.info(f"[WARN] PumpSwap error: {e}")
 
         # ============================================
-        # [3/4] TRY JUPITER (universal fallback)
+        # [3/4] TRY JUPITER (universal fallback) - NOW [2/4]
         # ============================================
         logger.info(f"[CHECK] [3/4] Trying Jupiter aggregator for {symbol}...")
 
