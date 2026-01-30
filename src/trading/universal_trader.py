@@ -1194,6 +1194,31 @@ class UniversalTrader:
 
                         if buy_result.success:
                             logger.warning(f"[OK] Pump.Fun BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                            # Schedule TxVerifier for position creation
+                            from core.tx_verifier import get_tx_verifier
+                            from core.tx_callbacks import on_buy_success, on_buy_failure
+                            verifier = await get_tx_verifier()
+                            await verifier.schedule_verification(
+                                signature=buy_result.tx_signature,
+                                mint=mint_str,
+                                symbol=symbol,
+                                action="buy",
+                                token_amount=buy_result.amount or 0,
+                                price=buy_result.price or 0,
+                                on_success=on_buy_success,
+                                on_failure=on_buy_failure,
+                                context={
+                                    "platform": "pump_fun",
+                                    "bot_name": "universal_trader",
+                                    "take_profit_pct": self.take_profit_percentage,
+                                    "stop_loss_pct": self.stop_loss_percentage,
+                                    "tsl_enabled": self.tsl_enabled,
+                                    "tsl_activation_pct": self.tsl_activation_pct,
+                                    "tsl_trail_pct": self.tsl_trail_pct,
+                                    "tsl_sell_pct": self.tsl_sell_pct,
+                                    "max_hold_time": self.max_hold_time,
+                                },
+                            )
                             return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
                         else:
                             logger.warning(f"[WARN] Pump.Fun buy failed: {buy_result.error_message}")
@@ -1245,6 +1270,31 @@ class UniversalTrader:
 
                         if buy_result.success:
                             logger.warning(f"[OK] LetsBonk BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                            # Schedule TxVerifier for position creation
+                            from core.tx_verifier import get_tx_verifier
+                            from core.tx_callbacks import on_buy_success, on_buy_failure
+                            verifier = await get_tx_verifier()
+                            await verifier.schedule_verification(
+                                signature=buy_result.tx_signature,
+                                mint=mint_str,
+                                symbol=symbol,
+                                action="buy",
+                                token_amount=buy_result.amount or 0,
+                                price=buy_result.price or 0,
+                                on_success=on_buy_success,
+                                on_failure=on_buy_failure,
+                                context={
+                                    "platform": "lets_bonk",
+                                    "bot_name": "universal_trader",
+                                    "take_profit_pct": self.take_profit_percentage,
+                                    "stop_loss_pct": self.stop_loss_percentage,
+                                    "tsl_enabled": self.tsl_enabled,
+                                    "tsl_activation_pct": self.tsl_activation_pct,
+                                    "tsl_trail_pct": self.tsl_trail_pct,
+                                    "tsl_sell_pct": self.tsl_sell_pct,
+                                    "max_hold_time": self.max_hold_time,
+                                },
+                            )
                             return True, buy_result.tx_signature, "lets_bonk", buy_result.amount or 0, buy_result.price or 0
                         else:
                             logger.warning(f"[WARN] LetsBonk buy failed: {buy_result.error_message}")
@@ -1285,6 +1335,31 @@ class UniversalTrader:
 
                         if buy_result.success:
                             logger.warning(f"[OK] BAGS BUY SUCCESS: {symbol} - {buy_result.tx_signature}")
+                            # Schedule TxVerifier for position creation
+                            from core.tx_verifier import get_tx_verifier
+                            from core.tx_callbacks import on_buy_success, on_buy_failure
+                            verifier = await get_tx_verifier()
+                            await verifier.schedule_verification(
+                                signature=buy_result.tx_signature,
+                                mint=mint_str,
+                                symbol=symbol,
+                                action="buy",
+                                token_amount=buy_result.amount or 0,
+                                price=buy_result.price or 0,
+                                on_success=on_buy_success,
+                                on_failure=on_buy_failure,
+                                context={
+                                    "platform": "bags",
+                                    "bot_name": "universal_trader",
+                                    "take_profit_pct": self.take_profit_percentage,
+                                    "stop_loss_pct": self.stop_loss_percentage,
+                                    "tsl_enabled": self.tsl_enabled,
+                                    "tsl_activation_pct": self.tsl_activation_pct,
+                                    "tsl_trail_pct": self.tsl_trail_pct,
+                                    "tsl_sell_pct": self.tsl_sell_pct,
+                                    "max_hold_time": self.max_hold_time,
+                                },
+                            )
                             return True, buy_result.tx_signature, "bags", buy_result.amount or 0, buy_result.price or 0
                         else:
                             logger.warning(f"[WARN] BAGS buy failed: {buy_result.error_message}")
