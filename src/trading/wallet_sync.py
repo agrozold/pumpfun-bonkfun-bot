@@ -20,6 +20,12 @@ import base58
 
 POSITIONS_FILE = Path("positions.json")
 
+# Import real entry price finder
+try:
+    from trading.wallet_sync_fix import get_real_entry_price
+except ImportError:
+    get_real_entry_price = None
+
 # DexScreener для получения цен и символов
 async def get_token_info_dexscreener(mint: str, max_retries: int = 3) -> dict | None:
     """Получить информацию о токене с DexScreener с retry."""
@@ -238,23 +244,33 @@ async def sync_wallet():
         else:
             platform = "unknown"
         
+        # Получаем РЕАЛЬНУЮ цену покупки из истории транзакций
+        wallet_address = str(wallet.pubkey()) if hasattr(wallet, 'pubkey') else wallet
+        if get_real_entry_price:
+            entry_price, price_source = await get_real_entry_price(mint, wallet_address, price)
+            print(f"          Entry price source: {price_source}")
+        else:
+            entry_price = price
+            price_source = "current_fallback"
+            print(f"          WARNING: Using current price (no history lookup)")
+        
         # Создаём позицию с SL/TP
-        # ВАЖНО: entry_price = текущая цена (мы не знаем реальную цену покупки)
+        # entry_price = реальная цена покупки (или текущая как fallback)
         # SL = -20%, TP = +10000%
         new_position = {
             "mint": mint,
             "symbol": symbol,
-            "entry_price": price,
+            "entry_price": entry_price,
             "quantity": amount,
             "entry_time": datetime.utcnow().isoformat(),
-            "take_profit_price": price * 100.0,  # +10000% (from config)
-            "stop_loss_price": price * 0.8,    # -20%
+            "take_profit_price": entry_price * 100.0,  # +10000% (from config)
+            "stop_loss_price": entry_price * 0.8,    # -20%
             "max_hold_time": 0,
             "tsl_enabled": True,
             "tsl_activation_pct": 0.3,
             "tsl_trail_pct": 0.3,
             "tsl_active": False,
-            "high_water_mark": price,
+            "high_water_mark": entry_price,
             "tsl_trigger_price": 0.0,
             "tsl_sell_pct": 0.9,
             "is_active": True,
@@ -267,7 +283,8 @@ async def sync_wallet():
         added += 1
         
         print(f"  [ADDED] {symbol}")
-        print(f"          Price: {price:.10f} SOL")
+        print(f"          Entry Price: {entry_price:.10f} SOL (source: {price_source})")
+        print(f"          Current Price: {price:.10f} SOL")
         print(f"          Amount: {amount:,.2f}")
         print(f"          Platform: {platform}")
         print(f"          SL: {price * 0.8:.10f} (-20%)")
