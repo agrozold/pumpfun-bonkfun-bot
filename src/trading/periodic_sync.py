@@ -134,6 +134,20 @@ async def run_periodic_sync():
                 if mint in wallet_mints:
                     valid.append(pos)
                 else:
+                    # Grace period: don't remove positions younger than 60 seconds
+                    # (transaction may not be confirmed yet)
+                    entry_time_str = pos.get("entry_time", "")
+                    if entry_time_str:
+                        try:
+                            from datetime import datetime
+                            entry_time = datetime.fromisoformat(entry_time_str.replace('Z', '+00:00'))
+                            age_seconds = (datetime.now(entry_time.tzinfo) - entry_time).total_seconds()
+                            if age_seconds < 60:
+                                logger.info(f"[SYNC] {pos.get('symbol', '?')} is new ({age_seconds:.0f}s old), keeping despite no tokens on wallet")
+                                valid.append(pos)
+                                continue
+                        except Exception as e:
+                            logger.warning(f"[SYNC] Cannot parse entry_time: {e}")
                     phantoms.append(pos)
             
             if phantoms:
