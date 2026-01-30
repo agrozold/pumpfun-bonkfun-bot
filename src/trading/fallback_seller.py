@@ -717,7 +717,7 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "restrictIntermediateTokens": True,  # Safer routes
+                        "restrictIntermediateTokens": "true",  # Safer routes
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
                     
@@ -838,7 +838,7 @@ class FallbackSeller:
                         "inputMint": str(SOL_MINT),
                         "outputMint": str(mint),
                         "amount": str(buy_amount_lamports),
-                        "restrictIntermediateTokens": True,  # Safer routes
+                        "restrictIntermediateTokens": "true",  # Safer routes
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
 
