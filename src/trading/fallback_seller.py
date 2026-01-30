@@ -602,21 +602,21 @@ class FallbackSeller:
             rpc_client = await self._get_rpc_client()
             token_decimals = await get_token_decimals(rpc_client, mint)
             logger.info(f"[JUPITER] Token {symbol} has {token_decimals} decimals")
-            # Use Ultra API if key available, otherwise fallback to v6
-            if self.jupiter_api_key:
+            # Use Swap API directly (Ultra disabled)
+            if False:  # Ultra disabled
                 jupiter_url = "https://api.jup.ag/ultra/v1/order"
                 headers = {"x-api-key": self.jupiter_api_key}
                 logger.info("[JUPITER] Using Jupiter Ultra API")
             else:
-                jupiter_quote_url = "https://public.jupiterapi.com/quote"
-                jupiter_swap_url = "https://public.jupiterapi.com/swap"
-                headers = {}
+                jupiter_quote_url = "https://api.jup.ag/swap/v1/quote"
+                jupiter_swap_url = "https://api.jup.ag/swap/v1/swap"
+                headers = {"x-api-key": self.jupiter_api_key} if self.jupiter_api_key else {}
                 logger.info("[JUPITER] Using Jupiter Lite API (no Ultra key)")
 
             async with aiohttp.ClientSession() as session:
                 rpc_client = await self._get_rpc_client()
 
-                if self.jupiter_api_key:
+                if False:  # Ultra disabled
                     # Jupiter Ultra API - GET /order (not POST!)
                     # Docs: https://dev.jup.ag/docs/ultra/get-order
                     order_params = {
@@ -663,22 +663,42 @@ class FallbackSeller:
                             logger.info(f"[SIG] Jupiter Ultra BUY signature: {sig}")
                             real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
                             
-
-                            # FIRE & FORGET: Schedule background verification via TxVerifier
-                            logger.info(f"[TX SENT] Jupiter Ultra BUY: {sig}")
-                            logger.info(f"[PENDING] Expected: {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
-                            logger.info(f"[LINK] https://solscan.io/tx/{sig}")
+                            # CRITICAL: Verify TX actually succeeded on chain (not just sent!)
+                            tx_confirmed = False
+                            for verify_try in range(10):
+                                await asyncio.sleep(2)
+                                try:
+                                    verify_resp = await rpc_client.get_transaction(
+                                        Signature.from_string(sig),
+                                        encoding="jsonParsed",
+                                        max_supported_transaction_version=0
+                                    )
+                                    if verify_resp.value:
+                                        tx_meta = verify_resp.value.transaction.meta if verify_resp.value.transaction else None
+                                        if tx_meta and tx_meta.err:
+                                            logger.error(f"[FAIL] Jupiter Ultra BUY TX FAILED ON CHAIN: {sig} - {tx_meta.err}")
+                                            break  # TX failed, try next attempt
+                                        elif tx_meta and not tx_meta.err:
+                                            tx_confirmed = True
+                                            break  # TX confirmed successful
+                                except Exception as ve:
+                                    logger.debug(f"Verify attempt {verify_try+1}: {ve}")
+                                    continue
                             
-                            # TxVerifier will verify in background and call callback
+                            if not tx_confirmed:
+                                logger.error(f"[FAIL] Jupiter Ultra BUY TX NOT CONFIRMED: {sig}")
+                                continue  # Try next attempt
+                            
+                            logger.info(f"[OK] Jupiter Ultra BUY SUCCESS (VERIFIED): {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
+                            # Schedule callback for position management
                             verifier = await get_tx_verifier()
                             await verifier.schedule_verification(
                                 signature=sig, mint=str(mint), symbol=symbol, action="buy",
                                 token_amount=out_amount_tokens, price=real_price,
                                 on_success=on_buy_success, on_failure=on_buy_failure,
-                                context={"platform": "jupiter_ultra", "bot_name": "fallback_seller", **(position_config or {})},
+                                context={"platform": "jupiter_ultra", "bot_name": "fallback_seller", "pre_verified": True, **(position_config or {})},
                             )
                             return True, sig, None, out_amount_tokens, real_price
-
 
                         except Exception as e:
                             error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
@@ -690,8 +710,8 @@ class FallbackSeller:
                     logger.warning("[JUPITER] Ultra API failed, trying Lite API fallback...")
                     
                     # Switch to Lite API
-                    jupiter_quote_url = "https://public.jupiterapi.com/quote"
-                    jupiter_swap_url = "https://public.jupiterapi.com/swap"
+                    jupiter_quote_url = "https://api.jup.ag/swap/v1/quote"
+                    jupiter_swap_url = "https://api.jup.ag/swap/v1/swap"
                     
                     quote_params = {
                         "inputMint": str(SOL_MINT),
@@ -702,7 +722,7 @@ class FallbackSeller:
                     }
                     
                     try:
-                        async with session.get(jupiter_quote_url, params=quote_params) as resp:
+                        async with session.get(jupiter_quote_url, params=quote_params, headers=headers) as resp:
                             if resp.status != 200:
                                 error_text = await resp.text()
                                 return False, None, f"Jupiter Lite quote also failed: {error_text}"
@@ -724,7 +744,7 @@ class FallbackSeller:
                         
                         for lite_attempt in range(self.max_retries):
                             try:
-                                async with session.post(jupiter_swap_url, json=swap_body) as resp:
+                                async with session.post(jupiter_swap_url, json=swap_body, headers=headers) as resp:
                                     if resp.status != 200:
                                         error_text = await resp.text()
                                         logger.warning(f"Jupiter Lite swap failed: {error_text}")
@@ -766,21 +786,43 @@ class FallbackSeller:
                                     logger.warning(f"[WARN] Could not verify tx {sig[:20]}...: {verify_err}")
                                     continue  # CRITICAL: retry if verify failed
                                 
-                                # FIRE & FORGET: TxVerifier will verify in background
-                                logger.info(f"[TX SENT] Jupiter Lite BUY: {sig}")
-                                logger.info(f"[PENDING] Expected: {out_amount_tokens:,.2f} {symbol} @ {real_price:.10f} SOL")
-                                logger.info(f"[LINK] https://solscan.io/tx/{sig}")
-
-                                # Schedule background verification - callback will create position
+                                # VERIFY TX ON CHAIN BEFORE DECLARING SUCCESS
+                                tx_confirmed = False
+                                for verify_try in range(10):
+                                    await asyncio.sleep(2)
+                                    try:
+                                        from solders.signature import Signature
+                                        verify_resp = await rpc_client.get_transaction(
+                                            Signature.from_string(sig),
+                                            encoding="jsonParsed",
+                                            max_supported_transaction_version=0
+                                        )
+                                        if verify_resp.value:
+                                            tx_meta = verify_resp.value.transaction.meta if verify_resp.value.transaction else None
+                                            if tx_meta and tx_meta.err:
+                                                logger.error(f"[FAIL] Jupiter BUY TX FAILED ON CHAIN: {sig} - {tx_meta.err}")
+                                                break  # TX failed, exit verify loop
+                                            elif tx_meta and not tx_meta.err:
+                                                tx_confirmed = True
+                                                break  # TX confirmed successful
+                                    except Exception as ve:
+                                        logger.debug(f"Verify attempt {verify_try+1}: {ve}")
+                                        continue
+                                
+                                if not tx_confirmed:
+                                    logger.error(f"[FAIL] Jupiter BUY TX NOT CONFIRMED: {sig}")
+                                    continue  # Try next attempt
+                                
+                                logger.info(f"[OK] Jupiter Lite BUY SUCCESS (VERIFIED): {sig} - {out_amount_tokens:,.2f} tokens @ {real_price:.10f} SOL")
+                                # Schedule callback for position management
                                 verifier = await get_tx_verifier()
                                 await verifier.schedule_verification(
                                     signature=sig, mint=str(mint), symbol=symbol, action="buy",
                                     token_amount=out_amount_tokens, price=real_price,
                                     on_success=on_buy_success, on_failure=on_buy_failure,
-                                    context={"platform": "jupiter_lite", "bot_name": "fallback_seller", **(position_config or {})},
+                                    context={"platform": "jupiter_lite", "bot_name": "fallback_seller", "pre_verified": True, **(position_config or {})},
                                 )
                                 return True, sig, None, out_amount_tokens, real_price
-
                                 
                             except Exception as e:
                                 logger.warning(f"Jupiter Lite attempt {lite_attempt + 1} failed: {e}")
@@ -800,7 +842,7 @@ class FallbackSeller:
                         "maxAccounts": "64",  # Limit accounts to avoid complex routes
                     }
 
-                    async with session.get(jupiter_quote_url, params=quote_params) as resp:
+                    async with session.get(jupiter_quote_url, params=quote_params, headers=headers) as resp:
                         if resp.status != 200:
                             error_text = await resp.text()
                             return False, None, f"Jupiter quote failed: {error_text}"
@@ -821,7 +863,7 @@ class FallbackSeller:
 
                     for attempt in range(self.max_retries):
                         try:
-                            async with session.post(jupiter_swap_url, json=swap_body) as resp:
+                            async with session.post(jupiter_swap_url, json=swap_body, headers=headers) as resp:
                                 if resp.status != 200:
                                     error_text = await resp.text()
                                     logger.warning(f"Jupiter swap request failed: {error_text}")
@@ -1199,8 +1241,8 @@ class FallbackSeller:
             slippage_bps = int(self.slippage * 10000)
 
             async with aiohttp.ClientSession() as session:
-                # Try Ultra API first if key available
-                if self.jupiter_api_key:
+                # Ultra disabled - go directly to Swap API
+                if False:  # Ultra disabled
                     logger.info("[JUPITER] Trying Ultra API first...")
                     success, sig, error = await self._jupiter_ultra_sell(
                         session, rpc_client, mint, sell_amount, slippage_bps, symbol
@@ -1287,8 +1329,9 @@ class FallbackSeller:
         """Jupiter Lite API sell."""
         import base64
         
-        jupiter_quote_url = "https://public.jupiterapi.com/quote"
-        jupiter_swap_url = "https://public.jupiterapi.com/swap"
+        jupiter_quote_url = "https://api.jup.ag/swap/v1/quote"
+        jupiter_swap_url = "https://api.jup.ag/swap/v1/swap"
+        headers = {"x-api-key": self.jupiter_api_key} if self.jupiter_api_key else {}
 
         quote_params = {
             "inputMint": str(mint),
@@ -1298,7 +1341,7 @@ class FallbackSeller:
         }
 
         try:
-            async with session.get(jupiter_quote_url, params=quote_params) as resp:
+            async with session.get(jupiter_quote_url, params=quote_params, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     return False, None, f"Jupiter Lite quote failed: {error_text}"
@@ -1321,7 +1364,7 @@ class FallbackSeller:
 
         for attempt in range(self.max_retries):
             try:
-                async with session.post(jupiter_swap_url, json=swap_body) as resp:
+                async with session.post(jupiter_swap_url, json=swap_body, headers=headers) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.warning(f"Jupiter Lite swap failed: {error_text}")
