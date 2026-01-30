@@ -107,6 +107,28 @@ async def on_buy_success(tx: "PendingTransaction"):
         # 4. Add to _bought_tokens set if trader instance available
         # This is handled by the context if needed
         
+
+        # 5. START POSITION MONITOR (CRITICAL!)
+        try:
+            from trading.trader_registry import start_monitor_for_position
+            monitor_started = await start_monitor_for_position(
+                mint=mint,
+                symbol=symbol,
+                position_data={
+                    "entry_price": price,
+                    "quantity": token_amount,
+                    "take_profit_price": take_profit_price,
+                    "stop_loss_price": stop_loss_price,
+                    "tsl_enabled": tsl_enabled,
+                    "bonding_curve": bonding_curve,
+                }
+            )
+            if monitor_started:
+                logger.warning(f"[TX_CALLBACK] ✅ MONITOR STARTED for {symbol}")
+            else:
+                logger.error(f"[TX_CALLBACK] ⚠️ MONITOR FAILED for {symbol} - manual restart may be needed!")
+        except Exception as monitor_err:
+            logger.error(f"[TX_CALLBACK] Monitor start error: {monitor_err}")
         logger.warning(f"[TX_CALLBACK] ✅ BUY COMPLETE: {symbol} - {token_amount:,.2f} @ {price:.10f}")
         
     except Exception as e:

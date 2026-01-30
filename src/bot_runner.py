@@ -42,6 +42,7 @@ from config_loader import (
 from trading.universal_trader import UniversalTrader
 from trading.wallet_sync import sync_wallet
 from trading.periodic_sync import start_periodic_sync
+from trading.trader_registry import register_trader
 
 # === Metrics Integration ===
 try:
@@ -374,6 +375,10 @@ async def start_bot(config_path: str):
                 logger.error(f"[STARTUP] Helius sync error: {e}")
         # === END HELIUS WEBHOOK SYNC ===
 
+        # === REGISTER TRADER FOR TX CALLBACKS ===
+        register_trader(trader)
+        logger.warning("[STARTUP] Trader registered for position monitoring")
+        # === END REGISTER ===
         await trader.start()
 
     except Exception as e:
