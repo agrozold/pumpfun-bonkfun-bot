@@ -110,9 +110,9 @@ class UniversalTrader:
         max_hold_time: int | None = None,
         # Trailing Stop-Loss parameters
         tsl_enabled: bool = False,
-        tsl_activation_pct: float = 0.20,  # Activate after +20% profit
-        tsl_trail_pct: float = 0.10,  # Trail 10% below high
-        tsl_sell_pct: float = 0.50,  # Sell 50% when TSL triggers
+        tsl_activation_pct: float = 0.10,  # Activate after +20% profit
+        tsl_trail_pct: float = 0.20,  # Trail 10% below high
+        tsl_sell_pct: float = 0.90,  # Sell 50% when TSL triggers
         # Token Vetting (security)
         token_vetting_enabled: bool = False,
         vetting_require_freeze_revoked: bool = True,
@@ -633,7 +633,37 @@ class UniversalTrader:
                 logger.warning(f"[DEDUP] Failed to release: {e}")
     # === END DEDUP HELPER METHODS ===
 
-
+    async def _get_token_balance(self, mint: str) -> float | None:
+        """Get real token balance from on-chain (handles both Token and Token2022)."""
+        import aiohttp
+        try:
+            rpc_url = "https://lb.drpc.live/solana/AhgaFU4IRUa1ppdxz5AANAZ44rYj-6YR8LLieho1c5bd"
+            wallet = str(self.wallet.pubkey)
+            
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [
+                        wallet,
+                        {"mint": mint},
+                        {"encoding": "jsonParsed", "commitment": "confirmed"}
+                    ]
+                }
+                async with session.post(rpc_url, json=payload, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        accounts = data.get("result", {}).get("value", [])
+                        if accounts:
+                            info = accounts[0]["account"]["data"]["parsed"]["info"]
+                            ui_amount = info["tokenAmount"].get("uiAmount")
+                            if ui_amount is not None:
+                                return float(ui_amount)
+            return None
+        except Exception as e:
+            logger.warning(f"[BALANCE] Error getting balance for {mint[:8]}...: {e}")
+            return None
 
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
@@ -2969,7 +2999,7 @@ class UniversalTrader:
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
-        HARD_STOP_LOSS_PCT = 20.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
+        HARD_STOP_LOSS_PCT = 10.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
         EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
 
         # Счётчик неудачных попыток продажи для агрессивного retry
@@ -3156,7 +3186,7 @@ class UniversalTrader:
                     logger.error(f"[SELL] {token_info.symbol}: PnL {pnl_pct:.1f}% - FAST SELL MODE")
                     
                     sell_success = await self._fast_sell_with_timeout(
-                        token_info, position, current_price
+                        token_info, position, current_price, sell_quantity
                     )
                     
                     if sell_success:
@@ -3455,7 +3485,7 @@ class UniversalTrader:
 
 
     async def _fast_sell_with_timeout(
-        self, token_info: TokenInfo, position: Position, current_price: float
+        self, token_info: TokenInfo, position: Position, current_price: float, sell_quantity: float = None
     ) -> bool:
         """
         Ultra-fast sell with 5s timeout per method, 10s total max.
@@ -3467,7 +3497,19 @@ class UniversalTrader:
         
         mint_str = str(token_info.mint)
         is_pumpfun = mint_str.endswith("pump")
-        sell_quantity = position.quantity
+        # Use passed sell_quantity or fallback to full position
+        if sell_quantity is None:
+            sell_quantity = position.quantity
+        
+        # CRITICAL: Check real balance before selling (quote != actual due to slippage)
+        try:
+            real_balance = await self._get_token_balance(mint_str)
+            if real_balance is not None and real_balance > 0:
+                if sell_quantity > real_balance:
+                    logger.warning(f"[FAST SELL] Adjusting quantity: {sell_quantity:.2f} -> {real_balance:.2f} (real balance)")
+                    sell_quantity = real_balance
+        except Exception as e:
+            logger.warning(f"[FAST SELL] Could not check balance: {e}")
         
         logger.warning(f"[FAST SELL] Starting for {token_info.symbol} ({sell_quantity:.2f} tokens)")
         
@@ -3518,8 +3560,16 @@ class UniversalTrader:
         
         # PHASE 1: Parallel attempts (5s)
         if is_pumpfun:
-            logger.info(f"[FAST SELL] Pump.fun token - PumpPortal + Jupiter parallel")
-            results = await asyncio.gather(try_pumpportal(), try_jupiter(), return_exceptions=True)
+            logger.info(f"[FAST SELL] Pump.fun token - Jupiter only (PumpPortal disabled)")
+            # PumpPortal disabled - use Jupiter only
+            success, sig, error = await try_jupiter()
+            if success:
+                logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
+                position.close_position(current_price, ExitReason.STOP_LOSS)
+                self._remove_position(mint_str)
+                return True
+            logger.warning(f"[FAST SELL] Jupiter failed: {error}")
+            results = []  # Skip the loop below
             
             for i, result in enumerate(results):
                 method = "PumpPortal" if i == 0 else "Jupiter"

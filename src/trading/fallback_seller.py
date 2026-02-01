@@ -739,8 +739,7 @@ class FallbackSeller:
                             "wrapAndUnwrapSol": True,
                             "prioritizationFeeLamports": self.priority_fee,
                             "dynamicComputeUnitLimit": True,  # Better CU estimation
-                            "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
-            "asLegacyTransaction": False,  # Use versioned TX for Token2022
+                            # "dynamicSlippage": True,  # DISABLED - use fixed slippage  # Let Jupiter calculate optimal slippage
                             "asLegacyTransaction": False,  # Use versioned TX for Token2022
                         }
                         
@@ -861,8 +860,8 @@ class FallbackSeller:
                         "wrapAndUnwrapSol": True,
                         "prioritizationFeeLamports": self.priority_fee,
                         "dynamicComputeUnitLimit": True,  # Better CU estimation
-                        "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
-            "asLegacyTransaction": False,  # Use versioned TX for Token2022
+                        # "dynamicSlippage": True,  # DISABLED - use fixed slippage  # Let Jupiter calculate optimal slippage
+                        "asLegacyTransaction": False,  # Use versioned TX for Token2022
                     }
 
                     for attempt in range(self.max_retries):
@@ -1364,7 +1363,7 @@ class FallbackSeller:
             "wrapAndUnwrapSol": True,
             "prioritizationFeeLamports": self.priority_fee,
             "dynamicComputeUnitLimit": True,  # Better CU estimation
-            "dynamicSlippage": True,  # Let Jupiter calculate optimal slippage
+            # "dynamicSlippage": True,  # DISABLED - use fixed slippage  # Let Jupiter calculate optimal slippage
             "asLegacyTransaction": False,  # Use versioned TX for Token2022
         }
 
@@ -1424,7 +1423,7 @@ class FallbackSeller:
                     "publicKey": str(self.wallet.pubkey),
                     "action": "sell",
                     "mint": str(mint),
-                    "amount": "100%",
+                    "amount": str(int(token_amount)),  # Exact amount, not 100%,
                     "denominatedInSol": "false",
                     "slippage": int(self.slippage * 100),  # From config (sell_slippage)
                     "priorityFee": 0.0005,

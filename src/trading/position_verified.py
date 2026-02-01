@@ -44,8 +44,8 @@ class Position:
     
     # TSL
     tsl_enabled: bool = False
-    tsl_activation_pct: float = 0.30
-    tsl_trail_pct: float = 0.30
+    tsl_activation_pct: float = 0.10
+    tsl_trail_pct: float = 0.20
     tsl_sell_pct: float = 0.90
     tsl_active: bool = False
     high_water_mark: float = 0.0
@@ -133,7 +133,7 @@ class Position:
         # 1. Hard Stop Loss (ALWAYS check first)
         if self.entry_price > 0:
             pnl_pct = (current_price - self.entry_price) / self.entry_price
-            if pnl_pct <= -0.20:  # -20% hard stop
+            if pnl_pct <= -0.10:  # -20% hard stop
                 return True, ExitReason.STOP_LOSS
         
         # 2. Config Stop Loss
@@ -196,8 +196,8 @@ class Position:
             stop_loss_price=data.get("stop_loss_price"),
             max_hold_time=data.get("max_hold_time"),
             tsl_enabled=data.get("tsl_enabled", False),
-            tsl_activation_pct=data.get("tsl_activation_pct", 0.30),
-            tsl_trail_pct=data.get("tsl_trail_pct", 0.30),
+            tsl_activation_pct=data.get("tsl_activation_pct", 0.10),
+            tsl_trail_pct=data.get("tsl_trail_pct", 0.20),
             tsl_sell_pct=data.get("tsl_sell_pct", 0.90),
             tsl_active=data.get("tsl_active", False),
             high_water_mark=data.get("high_water_mark", data["entry_price"]),
@@ -224,8 +224,8 @@ class Position:
         platform: str = "pump_fun",
         bonding_curve: str = None,
         tsl_enabled: bool = False,
-        tsl_activation_pct: float = 0.30,
-        tsl_trail_pct: float = 0.30,
+        tsl_activation_pct: float = 0.10,
+        tsl_trail_pct: float = 0.20,
         tsl_sell_pct: float = 0.90,
     ) -> "Position":
         """Create position from successful buy."""

@@ -374,7 +374,9 @@ class WhaleWebhookReceiver:
         if description:
             parts = description.split(" for ")
             if len(parts) > 1:
-                token_symbol = parts[-1].split()[-1] if parts[-1] else ""
+                parsed_symbol = parts[-1].split()[-1] if parts[-1] else ""
+                # Dont use SOL as symbol - triggers DexScreener fallback
+                token_symbol = parsed_symbol if parsed_symbol.upper() != "SOL" else ""
         
 
         # Fallback to DexScreener if symbol not parsed
