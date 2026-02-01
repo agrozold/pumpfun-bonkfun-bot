@@ -34,7 +34,7 @@ trade:
   moon_bag_percentage: 10
   price_check_interval: 1
   sell_slippage: 0.20
-  stop_loss_percentage: 0.10
+  stop_loss_percentage: 0.30
   tsl_enabled: true
   tsl_activation_pct: 0.1
   tsl_trail_pct: 0.2
