@@ -3787,7 +3787,7 @@ class UniversalTrader:
                     from trading.fallback_seller import FallbackSeller
                     from solders.pubkey import Pubkey
                     
-                    seller = FallbackSeller(self.wallet, slippage=0.25)  # Higher slippage for retry
+                    seller = FallbackSeller(self.client, self.wallet, slippage=0.25, priority_fee=500000)  # Higher slippage for retry
                     success, sig, error = await seller._sell_via_jupiter(
                         Pubkey.from_string(mint_str),
                         remaining,
