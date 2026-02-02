@@ -3510,7 +3510,18 @@ class UniversalTrader:
                     sell_quantity = real_balance
         except Exception as e:
             logger.warning(f"[FAST SELL] Could not check balance: {e}")
-        
+        # MIN SELL CHECK: Skip dust/moonbags
+        MIN_SELL_TOKENS = 1.0
+        MIN_SELL_VALUE_SOL = 0.0001
+        estimated_value = sell_quantity * current_price if current_price > 0 else 0
+        if sell_quantity < MIN_SELL_TOKENS:
+            logger.warning(f"[FAST SELL] SKIP DUST: {token_info.symbol} has only {sell_quantity:.4f} tokens (min: {MIN_SELL_TOKENS})")
+            self._remove_position(mint_str)
+            return True
+        if estimated_value < MIN_SELL_VALUE_SOL:
+            logger.warning(f"[FAST SELL] SKIP LOW VALUE: {token_info.symbol} value {estimated_value:.6f} SOL < min {MIN_SELL_VALUE_SOL}")
+            self._remove_position(mint_str)
+            return True
         logger.warning(f"[FAST SELL] Starting for {token_info.symbol} ({sell_quantity:.2f} tokens)")
         
         # Create fallback seller once
@@ -3565,8 +3576,22 @@ class UniversalTrader:
             success, sig, error = await try_jupiter()
             if success:
                 logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
+                # Wait and check real balance after sell
+                await asyncio.sleep(3)
+                remaining = await self._get_token_balance(mint_str)
+                if remaining is not None and remaining > 0:
+                    logger.warning(f"[FAST SELL] Moon bag remaining: {remaining:.2f} tokens - removing from tracking")
                 position.close_position(current_price, ExitReason.STOP_LOSS)
                 self._remove_position(mint_str)
+                # Also remove from Redis to prevent restore
+                try:
+                    from trading.redis_state import get_redis_state
+                    state = await get_redis_state()
+                    if state:
+                        await state.remove_position(mint_str)
+                        logger.info(f"[FAST SELL] Removed from Redis: {mint_str[:16]}...")
+                except Exception as e:
+                    logger.warning(f"[FAST SELL] Could not remove from Redis: {e}")
                 return True
             logger.warning(f"[FAST SELL] Jupiter failed: {error}")
             results = []  # Skip the loop below
@@ -3585,8 +3610,20 @@ class UniversalTrader:
             success, sig, error = await try_jupiter()
             if success:
                 logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
+                await asyncio.sleep(3)
+                remaining = await self._get_token_balance(mint_str)
+                if remaining is not None and remaining > 0:
+                    logger.warning(f"[FAST SELL] Moon bag remaining: {remaining:.2f} tokens - removing from tracking")
                 position.close_position(current_price, ExitReason.STOP_LOSS)
                 self._remove_position(mint_str)
+                try:
+                    from trading.redis_state import get_redis_state
+                    state = await get_redis_state()
+                    if state:
+                        await state.remove_position(mint_str)
+                        logger.info(f"[FAST SELL] Removed from Redis: {mint_str[:16]}...")
+                except Exception as e:
+                    logger.warning(f"[FAST SELL] Could not remove from Redis: {e}")
                 return True
             logger.warning(f"[FAST SELL] Jupiter failed: {error}")
         
@@ -3600,8 +3637,19 @@ class UniversalTrader:
         success, sig, error = await try_pumpswap()
         if success:
             logger.info(f"[FAST SELL] PumpSwap SUCCESS: {sig}")
+            await asyncio.sleep(3)
+            remaining = await self._get_token_balance(mint_str)
+            if remaining is not None and remaining > 0:
+                logger.warning(f"[FAST SELL] Moon bag remaining: {remaining:.2f} tokens - removing from tracking")
             position.close_position(current_price, ExitReason.STOP_LOSS)
             self._remove_position(mint_str)
+            try:
+                from trading.redis_state import get_redis_state
+                state = await get_redis_state()
+                if state:
+                    await state.remove_position(mint_str)
+            except:
+                pass
             return True
         
         logger.error(f"[FAST SELL] All methods failed for {token_info.symbol}!")
