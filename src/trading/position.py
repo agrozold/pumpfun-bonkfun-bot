@@ -44,7 +44,7 @@ class Position:
 
     tsl_enabled: bool = False
     tsl_activation_pct: float = 0.20
-    tsl_trail_pct: float = 0.10
+    tsl_trail_pct: float = 0.50
     tsl_sell_pct: float = 0.50
     tsl_active: bool = False
     high_water_mark: float = 0.0
@@ -102,7 +102,7 @@ class Position:
             max_hold_time=data.get("max_hold_time"),
             tsl_enabled=data.get("tsl_enabled", False),
             tsl_activation_pct=data.get("tsl_activation_pct", 0.20),
-            tsl_trail_pct=data.get("tsl_trail_pct", 0.10),
+            tsl_trail_pct=data.get("tsl_trail_pct", 0.50),
             tsl_active=data.get("tsl_active", False),
             high_water_mark=data.get("high_water_mark", data["entry_price"]),
             tsl_trigger_price=data.get("tsl_trigger_price", 0.0),
@@ -126,7 +126,7 @@ class Position:
         bonding_curve: str | None = None,
         tsl_enabled: bool = False,
         tsl_activation_pct: float = 0.20,
-        tsl_trail_pct: float = 0.10,
+        tsl_trail_pct: float = 0.50,
         tsl_sell_pct: float = 0.50,
     ) -> "Position":
         if entry_price <= 0:
