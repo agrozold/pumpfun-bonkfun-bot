@@ -26,7 +26,7 @@ pumpportal:
   url: wss://pumpportal.fun/api/data
 
 trade:
-  buy_amount: 0.005
+  buy_amount: 0.01
   buy_slippage: 0.30
   exit_strategy: tp_sl
   max_hold_time: 0

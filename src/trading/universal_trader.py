@@ -3569,10 +3569,9 @@ class UniversalTrader:
             if success:
                 logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
                 # Wait and check real balance after sell
-                await asyncio.sleep(3)
-                remaining = await self._get_token_balance(mint_str)
-                if remaining is not None and remaining > 0:
-                    logger.warning(f"[FAST SELL] Moon bag remaining: {remaining:.2f} tokens - removing from tracking")
+                # Start background verification (non-blocking)
+                original_qty = getattr(position, 'quantity', sell_quantity)
+                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol))
                 position.close_position(current_price, ExitReason.STOP_LOSS)
                 self._remove_position(mint_str)
                 # Also remove from Redis to prevent restore
@@ -3602,10 +3601,9 @@ class UniversalTrader:
             success, sig, error = await try_jupiter()
             if success:
                 logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
-                await asyncio.sleep(3)
-                remaining = await self._get_token_balance(mint_str)
-                if remaining is not None and remaining > 0:
-                    logger.warning(f"[FAST SELL] Moon bag remaining: {remaining:.2f} tokens - removing from tracking")
+                # Start background verification (non-blocking)
+                original_qty = getattr(position, 'quantity', sell_quantity)
+                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol))
                 position.close_position(current_price, ExitReason.STOP_LOSS)
                 self._remove_position(mint_str)
                 try:
@@ -3752,6 +3750,40 @@ class UniversalTrader:
         save_positions(self.active_positions)
         # Add to batch price monitoring
         watch_token(str(position.mint))
+
+    async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str):
+        """Background task to verify sell actually worked. If not - restore to monitoring."""
+        try:
+            await asyncio.sleep(5)  # Wait for TX to confirm
+            
+            remaining = await self._get_token_balance(mint_str)
+            
+            if remaining is not None and remaining >= original_qty * 0.9:
+                # SELL FAILED! Tokens still there
+                logger.error(f"[VERIFY] {symbol}: SELL FAILED! Balance {remaining:.2f} unchanged (was {original_qty:.2f})")
+                logger.error(f"[VERIFY] {symbol}: Removing from sold_mints, will need manual intervention")
+                
+                # Remove from sold_mints so it can be sold again
+                try:
+                    import redis.asyncio as redis
+                    r = redis.Redis(host='localhost', port=6379, db=0)
+                    removed = await r.srem("sold_mints", mint_str)
+                    await r.aclose()
+                    if removed:
+                        logger.info(f"[VERIFY] {symbol}: Removed from sold_mints")
+                except Exception as e:
+                    logger.error(f"[VERIFY] Failed to remove from sold_mints: {e}")
+                
+                return False
+            else:
+                sold_amount = original_qty - (remaining or 0)
+                logger.info(f"[VERIFY] {symbol}: Sell CONFIRMED! Sold {sold_amount:.2f} tokens")
+                return True
+                
+        except Exception as e:
+            logger.error(f"[VERIFY] Error verifying sell for {symbol}: {e}")
+            return None
+
 
     def _remove_position(self, mint: str) -> None:
         """Remove position from active list and file - FORGET FOREVER."""
