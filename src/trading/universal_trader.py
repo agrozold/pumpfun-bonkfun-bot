@@ -121,8 +121,8 @@ class UniversalTrader:
         # Priority fee configuration
         enable_dynamic_priority_fee: bool = False,
         enable_fixed_priority_fee: bool = True,
-        fixed_priority_fee: int = 200_000,
-        sell_fixed_priority_fee: int = 10000,
+        fixed_priority_fee: int = 500_000,
+        sell_fixed_priority_fee: int = 500000,
         extra_priority_fee: float = 0.0,
         hard_cap_prior_fee: int = 200_000,
         priority_fee_strategy: str = "aggressive",
