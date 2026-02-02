@@ -3763,11 +3763,21 @@ class UniversalTrader:
         watch_token(str(position.mint))
 
     def _remove_position(self, mint: str) -> None:
-        """Remove position from active list and file."""
+        """Remove position from active list and file - FORGET FOREVER."""
         self.active_positions = [p for p in self.active_positions if str(p.mint) != mint]
         save_positions(self.active_positions)
         # Remove from batch price monitoring
         unwatch_token(mint)
+        # FORGET FOREVER - add to sold_mints so never restored
+        asyncio.create_task(self._forget_position_async(mint))
+    
+    async def _forget_position_async(self, mint: str) -> None:
+        """Async helper to forget position forever."""
+        try:
+            from trading.redis_state import forget_position_forever
+            await forget_position_forever(mint, reason="position_removed")
+        except Exception as e:
+            logger.warning(f"[FORGET] Error: {e}")
 
     async def _restore_positions(self) -> None:
         """Restore and resume monitoring of saved positions on startup."""
