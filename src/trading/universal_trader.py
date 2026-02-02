@@ -3752,38 +3752,88 @@ class UniversalTrader:
         watch_token(str(position.mint))
 
     async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str):
-        """Background task to verify sell actually worked. If not - restore to monitoring."""
+        """Background task to verify sell. If failed - retry up to 3 times."""
         try:
             await asyncio.sleep(5)  # Wait for TX to confirm
-            
-            remaining = await self._get_token_balance(mint_str)
-            
-            if remaining is not None and remaining >= original_qty * 0.9:
-                # SELL FAILED! Tokens still there
-                logger.error(f"[VERIFY] {symbol}: SELL FAILED! Balance {remaining:.2f} unchanged (was {original_qty:.2f})")
-                logger.error(f"[VERIFY] {symbol}: Removing from sold_mints, will need manual intervention")
-                
-                # Remove from sold_mints so it can be sold again
-                try:
-                    import redis.asyncio as redis
-                    r = redis.Redis(host='localhost', port=6379, db=0)
-                    removed = await r.srem("sold_mints", mint_str)
-                    await r.aclose()
-                    if removed:
-                        logger.info(f"[VERIFY] {symbol}: Removed from sold_mints")
-                except Exception as e:
-                    logger.error(f"[VERIFY] Failed to remove from sold_mints: {e}")
-                
+
+            # Try to get balance (with retries)
+            remaining = None
+            for balance_attempt in range(3):
+                remaining = await self._get_token_balance(mint_str)
+                if remaining is not None:
+                    break
+                logger.warning(f"[VERIFY] {symbol}: Balance check attempt {balance_attempt+1}/3 failed")
+                await asyncio.sleep(2)
+
+            # If couldn't get balance - assume failed, remove from sold_mints
+            if remaining is None:
+                logger.error(f"[VERIFY] {symbol}: Could not get balance - removing from sold_mints")
+                await self._remove_from_sold_mints(mint_str, symbol)
                 return False
-            else:
-                sold_amount = original_qty - (remaining or 0)
+
+            # Check if sell succeeded (less than 10% remaining)
+            if remaining < original_qty * 0.1:
+                sold_amount = original_qty - remaining
                 logger.info(f"[VERIFY] {symbol}: Sell CONFIRMED! Sold {sold_amount:.2f} tokens")
                 return True
+
+            # SELL FAILED - tokens still there, retry selling up to 3 times
+            logger.error(f"[VERIFY] {symbol}: SELL FAILED! Balance {remaining:.2f} (was {original_qty:.2f})")
+            
+            for retry in range(3):
+                logger.warning(f"[VERIFY] {symbol}: Retry sell attempt {retry+1}/3...")
                 
+                try:
+                    from trading.fallback_seller import FallbackSeller
+                    from solders.pubkey import Pubkey
+                    
+                    seller = FallbackSeller(self.wallet, slippage=0.25)  # Higher slippage for retry
+                    success, sig, error = await seller._sell_via_jupiter(
+                        Pubkey.from_string(mint_str),
+                        remaining,
+                        symbol
+                    )
+                    
+                    if success:
+                        logger.info(f"[VERIFY] {symbol}: Retry sell TX sent: {sig}")
+                        await asyncio.sleep(5)
+                        
+                        # Verify the retry worked
+                        new_remaining = await self._get_token_balance(mint_str)
+                        if new_remaining is not None and new_remaining < remaining * 0.5:
+                            logger.info(f"[VERIFY] {symbol}: Retry sell CONFIRMED!")
+                            return True
+                        else:
+                            logger.warning(f"[VERIFY] {symbol}: Retry TX sent but balance unchanged")
+                    else:
+                        logger.warning(f"[VERIFY] {symbol}: Retry {retry+1} failed: {error}")
+                        
+                except Exception as e:
+                    logger.error(f"[VERIFY] {symbol}: Retry {retry+1} error: {e}")
+                
+                await asyncio.sleep(3)
+            
+            # All retries failed - remove from sold_mints so monitoring can retry later
+            logger.error(f"[VERIFY] {symbol}: All 3 retry attempts failed - removing from sold_mints")
+            await self._remove_from_sold_mints(mint_str, symbol)
+            return False
+
         except Exception as e:
             logger.error(f"[VERIFY] Error verifying sell for {symbol}: {e}")
-            return None
+            await self._remove_from_sold_mints(mint_str, symbol)
+            return False
 
+    async def _remove_from_sold_mints(self, mint_str: str, symbol: str):
+        """Helper to remove mint from sold_mints Redis set."""
+        try:
+            import redis.asyncio as redis
+            r = redis.Redis(host='localhost', port=6379, db=0)
+            removed = await r.srem("sold_mints", mint_str)
+            await r.aclose()
+            if removed:
+                logger.info(f"[VERIFY] {symbol}: Removed from sold_mints")
+        except Exception as e:
+            logger.error(f"[VERIFY] Failed to remove {symbol} from sold_mints: {e}")
 
     def _remove_position(self, mint: str) -> None:
         """Remove position from active list and file - FORGET FOREVER."""
