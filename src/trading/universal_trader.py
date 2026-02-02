@@ -3501,15 +3501,7 @@ class UniversalTrader:
         if sell_quantity is None:
             sell_quantity = position.quantity
         
-        # CRITICAL: Check real balance before selling (quote != actual due to slippage)
-        try:
-            real_balance = await self._get_token_balance(mint_str)
-            if real_balance is not None and real_balance > 0:
-                if sell_quantity > real_balance:
-                    logger.warning(f"[FAST SELL] Adjusting quantity: {sell_quantity:.2f} -> {real_balance:.2f} (real balance)")
-                    sell_quantity = real_balance
-        except Exception as e:
-            logger.warning(f"[FAST SELL] Could not check balance: {e}")
+        # NOTE: Balance check removed for speed - Jupiter will handle insufficient balance
         # MIN SELL CHECK: Skip dust/moonbags
         MIN_SELL_TOKENS = 1.0
         MIN_SELL_VALUE_SOL = 0.0001
