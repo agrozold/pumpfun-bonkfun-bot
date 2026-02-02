@@ -30,7 +30,7 @@ SOL_MINT = "So11111111111111111111111111111111111111112"
 class BatchPriceService:
     """Centralized price service - ONE request for ALL tokens."""
     
-    def __init__(self, update_interval: float = 2.0):
+    def __init__(self, update_interval: float = 1.0):
         self.update_interval = max(1.0, update_interval)
         self._prices: Dict[str, float] = {}
         self._prices_usd: Dict[str, float] = {}
@@ -298,7 +298,7 @@ def get_batch_price_service() -> BatchPriceService:
     """Get or create the global BatchPriceService instance."""
     global _service
     if _service is None:
-        _service = BatchPriceService(update_interval=2.0)
+        _service = BatchPriceService(update_interval=1.0)
     return _service
 
 
