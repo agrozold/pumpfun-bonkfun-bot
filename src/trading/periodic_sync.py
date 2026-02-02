@@ -129,8 +129,15 @@ async def run_periodic_sync():
             phantoms = []
             valid = []
             
+            # Get sold mints to skip
+            from trading.redis_state import is_sold_mint
+            
             for pos in positions:
                 mint = pos.get("mint", "")
+                # Skip sold tokens
+                if await is_sold_mint(mint):
+                    logger.info(f"[SYNC] Skipping SOLD: {pos.get('symbol', '?')} - already sold")
+                    continue
                 if mint in wallet_mints:
                     valid.append(pos)
                 else:

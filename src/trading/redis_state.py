@@ -310,3 +310,76 @@ async def init_redis_state() -> bool:
     except Exception as e:
         logger.error(f"[REDIS] init_redis_state failed: {e}")
         return False
+
+
+# === SOLD MINTS TRACKING ===
+SOLD_MINTS_KEY = "sold_mints"
+
+class RedisState:
+    # Add these methods to RedisState class
+    pass
+
+async def add_sold_mint(mint: str) -> bool:
+    """Add mint to sold set - will be ignored forever."""
+    try:
+        state = await get_redis_state()
+        if state and state._connected:
+            await state._redis.sadd(SOLD_MINTS_KEY, mint)
+            return True
+    except:
+        pass
+    return False
+
+async def is_sold_mint(mint: str) -> bool:
+    """Check if mint was already sold."""
+    try:
+        state = await get_redis_state()
+        if state and state._connected:
+            return await state._redis.sismember(SOLD_MINTS_KEY, mint)
+    except:
+        pass
+    return False
+
+async def get_all_sold_mints() -> set:
+    """Get all sold mints."""
+    try:
+        state = await get_redis_state()
+        if state and state._connected:
+            return await state._redis.smembers(SOLD_MINTS_KEY)
+    except:
+        pass
+    return set()
+
+
+# === FORGET POSITION FOREVER ===
+async def forget_position_forever(mint: str, reason: str = "sold") -> bool:
+    """
+    Completely forget a position - never track again.
+    Called after ANY sell (TSL, SL, TP, manual).
+    
+    1. Remove from Redis positions
+    2. Add to sold_mints (permanent ignore list)
+    3. Returns True if successful
+    """
+    try:
+        from utils.logger import get_logger
+        logger = get_logger(__name__)
+        
+        state = await get_redis_state()
+        if not state or not state._connected:
+            logger.warning(f"[FORGET] Redis not connected for {mint[:16]}...")
+            return False
+        
+        # 1. Remove from positions
+        await state.remove_position(mint)
+        
+        # 2. Add to sold_mints (permanent)
+        await state._redis.sadd(SOLD_MINTS_KEY, mint)
+        
+        logger.warning(f"[FORGET] Position forgotten forever: {mint[:16]}... (reason: {reason})")
+        return True
+        
+    except Exception as e:
+        from utils.logger import get_logger
+        get_logger(__name__).error(f"[FORGET] Error: {e}")
+        return False

@@ -3587,9 +3587,9 @@ class UniversalTrader:
                 try:
                     from trading.redis_state import get_redis_state
                     state = await get_redis_state()
-                    if state:
-                        await state.remove_position(mint_str)
-                        logger.info(f"[FAST SELL] Removed from Redis: {mint_str[:16]}...")
+                    # FORGET FOREVER - remove from Redis + add to sold_mints
+                    from trading.redis_state import forget_position_forever
+                    await forget_position_forever(mint_str, reason="tsl_or_sl")
                 except Exception as e:
                     logger.warning(f"[FAST SELL] Could not remove from Redis: {e}")
                 return True
@@ -3620,8 +3620,9 @@ class UniversalTrader:
                     from trading.redis_state import get_redis_state
                     state = await get_redis_state()
                     if state:
-                        await state.remove_position(mint_str)
-                        logger.info(f"[FAST SELL] Removed from Redis: {mint_str[:16]}...")
+                        # FORGET FOREVER - remove from Redis + add to sold_mints
+                    from trading.redis_state import forget_position_forever
+                    await forget_position_forever(mint_str, reason="tsl_or_sl")
                 except Exception as e:
                     logger.warning(f"[FAST SELL] Could not remove from Redis: {e}")
                 return True
@@ -3794,6 +3795,11 @@ class UniversalTrader:
                 logger.info(f"[RESTORE] Skipping closed position {position.symbol}")
                 continue
 
+            # Check if already sold - skip forever
+            from trading.redis_state import is_sold_mint
+            if await is_sold_mint(mint_str):
+                logger.info(f"[RESTORE] Skipping SOLD position {position.symbol} - already sold")
+                continue
             logger.info(f"[RESTORE] Restoring position: {position.symbol} on {position.platform}")
 
             # === SYNC ENTRY PRICE FROM PURCHASE HISTORY ===
