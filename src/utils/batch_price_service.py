@@ -261,6 +261,18 @@ class BatchPriceService:
                     # Only watch tokens with balance > 1 (skip dust)
                     if amount >= 1 and mint:
                         wallet_mints.add(mint)
+
+            # FILTER OUT SOLD MINTS (moonbags) - don't monitor them!
+            try:
+                from trading.redis_state import get_all_sold_mints
+                sold_mints = await get_all_sold_mints()
+                before_count = len(wallet_mints)
+                wallet_mints = wallet_mints - sold_mints
+                filtered = before_count - len(wallet_mints)
+                if filtered > 0:
+                    logger.warning(f"[BATCH] Filtered out {filtered} sold moonbags from wallet")
+            except Exception as e:
+                logger.warning(f"[BATCH] Could not filter sold_mints: {e}")
             
             # Watch all wallet tokens
             for mint in wallet_mints:
