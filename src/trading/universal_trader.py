@@ -3619,8 +3619,7 @@ class UniversalTrader:
                 try:
                     from trading.redis_state import get_redis_state
                     state = await get_redis_state()
-                    if state:
-                        # FORGET FOREVER - remove from Redis + add to sold_mints
+                    # FORGET FOREVER - remove from Redis + add to sold_mints
                     from trading.redis_state import forget_position_forever
                     await forget_position_forever(mint_str, reason="tsl_or_sl")
                 except Exception as e:
