@@ -1170,6 +1170,7 @@ class UniversalTrader:
         symbol: str,
         sol_amount: float,
         jupiter_first: bool = False,
+        is_dca: bool = False,
     ) -> tuple[bool, str | None, str, float, float]:
         """Buy token on ANY available DEX - universal liquidity finder.
 
@@ -1193,8 +1194,9 @@ class UniversalTrader:
 
         # ============================================
         # CROSS-BOT DUPLICATE CHECK (reads positions.json)
+        # Skip this check for DCA - we WANT to buy more of existing position!
         # ============================================
-        if is_token_in_positions(mint_str):
+        if not is_dca and is_token_in_positions(mint_str):
             logger.info(f"[SKIP] {symbol} already in positions.json (another bot bought it)")
             return False, None, "skip", 0.0, 0.0
 
@@ -3119,6 +3121,7 @@ class UniversalTrader:
                                 symbol=token_info.symbol,
                                 sol_amount=dca_buy_amount,
                                 jupiter_first=True,
+                                is_dca=True,  # Skip duplicate check - this IS the same token!
                             )
                             
                             if success:

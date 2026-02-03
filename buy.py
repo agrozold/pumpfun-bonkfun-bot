@@ -43,7 +43,9 @@ from spl.token.instructions import (
 )
 
 # API Keys
-JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY")  # Trade only, no fallback to monitor key!
+from dotenv import load_dotenv
+load_dotenv()
+JUPITER_API_KEY = os.environ.get("JUPITER_TRADE_API_KEY")  # Trade only!
 
 load_dotenv()
 
@@ -347,9 +349,11 @@ async def buy_via_jupiter(
     slippage_bps = int(slippage * 10000)
     
     headers = {
-        "x-api-key": JUPITER_API_KEY,
         "Content-Type": "application/json",
+        "Accept": "application/json",
     }
+    if JUPITER_API_KEY:
+        headers["x-api-key"] = JUPITER_API_KEY
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -579,7 +583,7 @@ async def buy_via_pumpswap(
     """Buy tokens via PumpSwap/Raydium AMM, fallback to Jupiter for other DEXes."""
     
     # Get RPC endpoint for Jupiter fallback
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     
     # Find market via RPC first
     market = await get_market_address_by_base_mint(client, mint)
@@ -759,7 +763,7 @@ async def buy_via_pumpfun(
 ) -> bool:
     """Buy tokens via Pump.fun bonding curve."""
     # Get RPC endpoint for blockhash cache
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     token_program_id = await get_token_program_id(client, mint)
     bonding_curve, _ = get_bonding_curve_address(mint)
     
@@ -877,7 +881,7 @@ async def buy_token(
     """Buy tokens - автоматически выбирает Pump.fun или PumpSwap."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
     # Use Alchemy for manual scripts to avoid rate limits from bot
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
