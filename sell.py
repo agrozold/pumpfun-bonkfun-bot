@@ -388,9 +388,9 @@ async def sell_via_jupiter(
         swap_body = {
             "quoteResponse": quote,
             "userPublicKey": str(payer.pubkey()),
-            "wrapAndUnwrapSol": False,
+            "wrapAndUnwrapSol": True,
             "dynamicComputeUnitLimit": True,
-            "dynamicSlippage": True,
+            
             "prioritizationFeeLamports": priority_fee,
         }
         
@@ -455,6 +455,13 @@ async def sell_via_jupiter(
                 print(f"🔗 https://solscan.io/tx/{sig}")
 
                 await retry_rpc_call(client.confirm_transaction, Signature.from_string(str(sig)), commitment="confirmed", sleep_seconds=0.5)
+                # Verify TX actually succeeded
+                tx_status = await client.get_signature_statuses([Signature.from_string(str(sig))])
+                if tx_status.value and tx_status.value[0]:
+                    err = tx_status.value[0].err
+                    if err:
+                        print(f"❌ SELL FAILED! TX error: {err}")
+                        return False
                 print("✅ Transaction confirmed!")
                 
                 # Update positions.json
@@ -597,7 +604,7 @@ async def sell_via_pumpswap(
     """Sell tokens via PumpSwap/Raydium AMM, fallback to Jupiter for other DEXes."""
     
     # Get RPC endpoint for blockhash cache
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 
     # Find market via RPC first
     market = await get_market_address_by_base_mint(client, mint)
@@ -805,7 +812,7 @@ async def sell_via_pumpfun(
     """Sell tokens via Pump.fun bonding curve."""
     token_program_id = await get_token_program_id(client, mint)
     # Get RPC endpoint for blockhash cache
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     bonding_curve, _ = get_bonding_curve_address(mint)
     
     # Get token balance
@@ -958,14 +965,14 @@ async def sell_token(
     """Sell tokens - автоматически выбирает Pump.fun или PumpSwap."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
     # Use Alchemy for manual scripts to avoid rate limits from bot
-    rpc_endpoint = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
 
     
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
         return False
     if not rpc_endpoint:
-        print("❌ ALCHEMY_RPC_ENDPOINT or SOLANA_NODE_RPC_ENDPOINT not set in .env")
+        print("❌ DRPC_RPC_ENDPOINT or ALCHEMY_RPC_ENDPOINT or SOLANA_NODE_RPC_ENDPOINT not set in .env")
         return False
 
     payer = Keypair.from_bytes(base58.b58decode(private_key))
@@ -988,7 +995,7 @@ def main():
     parser = argparse.ArgumentParser(description="Quick sell token by contract address")
     parser.add_argument("token", help="Token mint address")
     parser.add_argument("percent", type=float, help="Percentage to sell (100=all, 50=half, 10=10%%)")
-    parser.add_argument("--slippage", type=float, default=0.25, help="Slippage tolerance (default: 0.25 = 25%%)")
+    parser.add_argument("--slippage", type=float, default=0.30, help="Slippage tolerance (default: 0.25 = 25%%)")
     parser.add_argument("--priority-fee", type=int, default=10000, help="Priority fee in microlamports (default: 100000)")
     args = parser.parse_args()
     

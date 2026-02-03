@@ -3149,6 +3149,10 @@ class UniversalTrader:
                                 logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-30% from avg)")
                                 
                                 # Сохраняем
+
+                                # CRITICAL: Пересчитываем PnL после DCA чтобы HARD SL не сработал по старой цене
+                                pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+                                logger.warning(f"[DCA] Recalculated PnL: {pnl_pct:+.1f}% (from new avg price)")
                                 save_positions(self.active_positions)
                             else:
                                 logger.error(f"[DCA] ❌ FAILED to buy more {token_info.symbol}")
