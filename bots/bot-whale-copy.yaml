@@ -31,7 +31,7 @@ trade:
   sell_slippage: 0.2
   stop_loss_percentage: 0.3
   tsl_enabled: true
-  tsl_activation_pct: 0.5
+  tsl_activation_pct: 0.3
   tsl_trail_pct: 0.5
   tsl_sell_pct: 0.7
   take_profit_percentage: 10000.0
