@@ -930,10 +930,20 @@ class UniversalTrader:
                     f"Searching for liquidity for {mint_str[:8]}..."
                 )
 
+                # DCA: Покупаем только часть позиции сначала (50%)
+                dca_enabled = True  # TODO: move to config
+                dca_first_buy_pct = 0.50  # 50% первая покупка
+                
+                if dca_enabled:
+                    actual_buy_amount = self.buy_amount * dca_first_buy_pct
+                    logger.warning(f"[DCA] First buy: {actual_buy_amount:.4f} SOL (50% of {self.buy_amount:.4f})")
+                else:
+                    actual_buy_amount = self.buy_amount
+                
                 success, tx_sig, dex_used, token_amount, price = await self._buy_any_dex(
                     mint_str=mint_str,
                     symbol=whale_buy.token_symbol,
-                    sol_amount=self.buy_amount,
+                    sol_amount=actual_buy_amount,
                     jupiter_first=True,  # Skip bonding curves for whale copy
                 )
 
@@ -1434,6 +1444,11 @@ class UniversalTrader:
                 "tsl_sell_pct": self.tsl_sell_pct,
                 "max_hold_time": self.max_hold_time,
                 "bot_name": "universal_trader",
+                # DCA parameters
+                "dca_enabled": getattr(self, 'dca_enabled', True),
+                "dca_pending": getattr(self, 'dca_enabled', True),  # If DCA enabled, wait for dip
+                "dca_trigger_pct": 0.20,  # -20% for second buy
+                "dca_first_buy_pct": 0.50,  # 50% first buy
             }
             
             success, sig, error, token_amount, real_price = await fallback.buy_via_jupiter(
@@ -2852,6 +2867,9 @@ class UniversalTrader:
         elif hasattr(token_info, "pool_state") and token_info.pool_state:
             bonding_curve_str = str(token_info.pool_state)
 
+        # DCA settings
+        dca_enabled = True  # Enable DCA by default
+        
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
@@ -2868,6 +2886,15 @@ class UniversalTrader:
             tsl_trail_pct=self.tsl_trail_pct,
             tsl_sell_pct=self.tsl_sell_pct,
         )
+        
+        # Set DCA flags after creation
+        if dca_enabled:
+            position.dca_enabled = True
+            position.dca_pending = True
+            position.dca_trigger_pct = 0.20
+            position.dca_first_buy_pct = 0.50
+            position.original_entry_price = buy_result.price
+            logger.warning(f"[DCA] Position created with DCA enabled, waiting for -20% dip")
 
         logger.info(f"Created position: {position}")
         if position.take_profit_price:
@@ -3069,6 +3096,67 @@ class UniversalTrader:
 
                 # Calculate current PnL FIRST (needed for all checks)
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+                
+                # ============================================
+                # DCA: ДОКУПКА НА ОТКАТЕ -20%
+                # ============================================
+                if position.dca_enabled and position.dca_pending and not position.dca_bought:
+                    dca_trigger_price = position.original_entry_price * (1 - position.dca_trigger_pct)
+                    
+                    if current_price <= dca_trigger_price:
+                        logger.warning(
+                            f"[DCA] {token_info.symbol}: Price {current_price:.10f} <= trigger {dca_trigger_price:.10f} "
+                            f"(-{position.dca_trigger_pct*100:.0f}% from entry)"
+                        )
+                        logger.warning(f"[DCA] Executing second buy for {token_info.symbol}...")
+                        
+                        # Докупаем оставшиеся 50%
+                        dca_buy_amount = self.buy_amount * (1 - position.dca_first_buy_pct)
+                        
+                        try:
+                            success, tx_sig, dex_used, dca_tokens, dca_price = await self._buy_any_dex(
+                                mint_str=str(token_info.mint),
+                                symbol=token_info.symbol,
+                                sol_amount=dca_buy_amount,
+                                jupiter_first=True,
+                            )
+                            
+                            if success:
+                                # Пересчитываем среднюю цену входа
+                                old_cost = position.entry_price * position.quantity
+                                new_cost = dca_price * dca_tokens
+                                total_quantity = position.quantity + dca_tokens
+                                new_avg_price = (old_cost + new_cost) / total_quantity
+                                
+                                logger.warning(
+                                    f"[DCA] ✅ SUCCESS! Bought {dca_tokens:.2f} more tokens at {dca_price:.10f}"
+                                )
+                                logger.warning(
+                                    f"[DCA] Average price: {position.entry_price:.10f} -> {new_avg_price:.10f}"
+                                )
+                                
+                                # Обновляем позицию
+                                position.quantity = total_quantity
+                                position.entry_price = new_avg_price
+                                position.dca_bought = True
+                                position.dca_pending = False
+                                
+                                # Пересчитываем SL от новой средней цены (30% вместо 40%)
+                                position.stop_loss_price = new_avg_price * 0.70  # -30% SL после DCA
+                                logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-30% from avg)")
+                                
+                                # Сохраняем
+                                save_positions(self.active_positions)
+                            else:
+                                logger.error(f"[DCA] ❌ FAILED to buy more {token_info.symbol}")
+                        except Exception as e:
+                            logger.error(f"[DCA] Error during second buy: {e}")
+                    
+                    # Отменяем DCA если цена выросла на +30% (уже в хорошем профите)
+                    elif pnl_pct >= 30:
+                        logger.warning(f"[DCA] {token_info.symbol}: +{pnl_pct:.1f}% profit, canceling DCA wait")
+                        position.dca_pending = False
+                        save_positions(self.active_positions)
 
                 # ============================================
                 # STOP LOSS CHECKS - ORDER MATTERS!

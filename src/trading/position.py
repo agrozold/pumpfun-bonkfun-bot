@@ -52,6 +52,14 @@ class Position:
 
     is_active: bool = True
     is_moonbag: bool = False
+    
+    # DCA (Dollar Cost Averaging) fields
+    dca_enabled: bool = False
+    dca_pending: bool = False  # True если ждём откат для докупки
+    dca_trigger_pct: float = 0.20  # Докупаем при -20%
+    dca_bought: bool = False  # True после докупки
+    dca_first_buy_pct: float = 0.50  # Первая покупка 50%
+    original_entry_price: float = 0.0  # Цена первой покупки
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
@@ -86,6 +94,12 @@ class Position:
             "tsl_sell_pct": self.tsl_sell_pct,
             "is_active": self.is_active,
             "is_moonbag": self.is_moonbag,
+            "dca_enabled": self.dca_enabled,
+            "dca_pending": self.dca_pending,
+            "dca_trigger_pct": self.dca_trigger_pct,
+            "dca_bought": self.dca_bought,
+            "dca_first_buy_pct": self.dca_first_buy_pct,
+            "original_entry_price": self.original_entry_price,
             "state": self.state,
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
@@ -111,6 +125,12 @@ class Position:
             tsl_sell_pct=data.get("tsl_sell_pct", 0.50),
             is_active=data.get("is_active", True),
             is_moonbag=data.get("is_moonbag", False),
+            dca_enabled=data.get("dca_enabled", False),
+            dca_pending=data.get("dca_pending", False),
+            dca_trigger_pct=data.get("dca_trigger_pct", 0.20),
+            dca_bought=data.get("dca_bought", False),
+            dca_first_buy_pct=data.get("dca_first_buy_pct", 0.50),
+            original_entry_price=data.get("original_entry_price", 0.0),
             platform=data.get("platform", "pump_fun"),
             bonding_curve=data.get("bonding_curve"),
         )
