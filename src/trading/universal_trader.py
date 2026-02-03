@@ -1842,7 +1842,7 @@ class UniversalTrader:
             if self.platform == Platform.PUMP_FUN:
                 from platforms.pumpfun.bonding_curve_address_provider import get_bonding_curve_address
                 bc = get_bonding_curve_address(token_info.mint)
-                bc_exists = await self.client.check_account_exists(bc)
+                bc_exists = await self.solana_client.check_account_exists(bc)
                 if not bc_exists:
                     logger.warning(f"[VOLUME] {analysis.symbol} not on pump_fun (graduated/raydium), skipping")
                     return
@@ -3026,7 +3026,7 @@ class UniversalTrader:
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
-        HARD_STOP_LOSS_PCT = 40.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
+        HARD_STOP_LOSS_PCT = 30.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
         EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
 
         # Счётчик неудачных попыток продажи для агрессивного retry
@@ -3905,7 +3905,7 @@ class UniversalTrader:
                     from trading.fallback_seller import FallbackSeller
                     from solders.pubkey import Pubkey
                     
-                    seller = FallbackSeller(self.client, self.wallet, slippage=0.25, priority_fee=500000)  # Higher slippage for retry
+                    seller = FallbackSeller(self.solana_client, self.wallet, slippage=0.25, priority_fee=500000)  # Higher slippage for retry
                     success, sig, error = await seller._sell_via_jupiter(
                         Pubkey.from_string(mint_str),
                         remaining,
