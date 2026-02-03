@@ -2999,7 +2999,7 @@ class UniversalTrader:
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
-        HARD_STOP_LOSS_PCT = 30.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
+        HARD_STOP_LOSS_PCT = 40.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
         EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
 
         # Счётчик неудачных попыток продажи для агрессивного retry
@@ -3195,6 +3195,36 @@ class UniversalTrader:
                         # Log final PnL
                         final_pnl = position.get_pnl(current_price)
                         logger.info(f"[FINAL] PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)")
+
+                        # ========== MOONBAG LOGIC FOR TSL ==========
+                        if exit_reason == ExitReason.TRAILING_STOP and position.tsl_sell_pct < 1.0:
+                            # TSL partial sell - convert remaining to moonbag
+                            remaining_quantity = position.quantity * (1 - position.tsl_sell_pct)
+                            
+                            if remaining_quantity > 1.0:  # Only keep moonbag if > 1 token
+                                position.quantity = remaining_quantity
+                                position.is_moonbag = True
+                                position.tsl_enabled = False  # Disable TSL for moonbag
+                                position.tsl_active = False
+                                position.stop_loss_price = None  # No SL for moonbag
+                                position.entry_price = current_price  # Reset entry to current
+                                position.high_water_mark = current_price
+                                
+                                # Save updated position
+                                self._save_position(position)
+                                
+                                logger.warning(
+                                    f"[MOONBAG] {token_info.symbol}: Converted to moonbag! "
+                                    f"Keeping {remaining_quantity:.2f} tokens ({(1-position.tsl_sell_pct)*100:.0f}%) "
+                                    f"for potential moon 🌙"
+                                )
+                                
+                                # Continue monitoring (no break, no cleanup)
+                                continue
+                            else:
+                                logger.info(f"[MOONBAG] {token_info.symbol}: Remaining {remaining_quantity:.4f} too small, closing fully")
+                        
+                        # ========== FULL EXIT (SL, TP, or tiny moonbag) ==========
                         
                         # Close ATA if enabled
                         await handle_cleanup_after_sell(

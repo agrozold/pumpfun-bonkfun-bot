@@ -51,6 +51,7 @@ class Position:
     tsl_trigger_price: float = 0.0
 
     is_active: bool = True
+    is_moonbag: bool = False
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
@@ -84,6 +85,7 @@ class Position:
             "tsl_trigger_price": self.tsl_trigger_price,
             "tsl_sell_pct": self.tsl_sell_pct,
             "is_active": self.is_active,
+            "is_moonbag": self.is_moonbag,
             "state": self.state,
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
@@ -108,6 +110,7 @@ class Position:
             tsl_trigger_price=data.get("tsl_trigger_price", 0.0),
             tsl_sell_pct=data.get("tsl_sell_pct", 0.50),
             is_active=data.get("is_active", True),
+            is_moonbag=data.get("is_moonbag", False),
             platform=data.get("platform", "pump_fun"),
             bonding_curve=data.get("bonding_curve"),
         )

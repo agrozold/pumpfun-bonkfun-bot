@@ -3,7 +3,6 @@ env_file: .env
 name: bot-whale-copy
 platform: pump_fun
 separate_process: true
-
 filters:
   bro_address: null
   listener_type: fallback
@@ -11,39 +10,33 @@ filters:
   max_token_age: 315360000
   yolo_mode: true
   sniper_enabled: false
-
 rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
 wss_endpoint: ${CHAINSTACK_WSS_ENDPOINT}
 private_key: ${SOLANA_PRIVATE_KEY}
-
 priority_fees:
   enable_dynamic: false
   enable_fixed: true
   fixed_amount: 500000
   max_fee: 5000000
-
 pumpportal:
   url: wss://pumpportal.fun/api/data
-
 trade:
   buy_amount: 0.01
-  buy_slippage: 0.30
+  buy_slippage: 0.3
   exit_strategy: tp_sl
   max_hold_time: 0
   min_sol_balance: 0.05
   moon_bag_percentage: 10
   price_check_interval: 1
-  sell_slippage: 0.20
-  stop_loss_percentage: 0.30
+  sell_slippage: 0.2
+  stop_loss_percentage: 0.4
   tsl_enabled: true
-  tsl_activation_pct: 0.05
-  tsl_trail_pct: 0.5
-  tsl_sell_pct: 0.9
+  tsl_activation_pct: 0.3
+  tsl_trail_pct: 0.4
+  tsl_sell_pct: 0.5
   take_profit_percentage: 10000.0
-
 pattern_detection:
   enabled: false
-
 scoring:
   enabled: false
   min_score: 75
@@ -51,43 +44,34 @@ scoring:
   buy_pressure_weight: 35
   momentum_weight: 20
   liquidity_weight: 15
-
 whale_copy:
   enabled: true
   wallets_file: smart_money_wallets.json
-  min_buy_amount: 0.4
+  min_buy_amount: 0.7
   poll_interval: 90
   helius_api_key: ''
-  # Webhook mode (real-time instead of polling)
   webhook_enabled: true
   webhook_port: 8000
-
 dev_check:
   enabled: false
   max_tokens_created: 20
   min_account_age_days: 1
-
 trending_scanner:
   enabled: false
-
 whale_all_platforms: true
-
 stablecoin_filter:
-  - 7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs   # WETH
-  - JuprjznTrTSp2UFa3ZBUFgwdAmtZCq4MQCwysN55USD   # JupUSD
-  - EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
-  - Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
-  - USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX
-  - USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA
-  - 2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo
-  - F3hW1kkYVXhMz9FRV8t3mEfwmLQygF7PtPSsofPCdmXR
-  - So11111111111111111111111111111111111111112
-  - USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB   # USD1
-
+- 7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs
+- JuprjznTrTSp2UFa3ZBUFgwdAmtZCq4MQCwysN55USD
+- EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+- Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
+- USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX
+- USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA
+- 2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo
+- F3hW1kkYVXhMz9FRV8t3mEfwmLQygF7PtPSsofPCdmXR
+- So11111111111111111111111111111111111111112
+- USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB
 token_vetting:
   enabled: false
-
-# Jupiter Swap Configuration (added by fix script)
 swap_config:
   use_dynamic_slippage: false
   dynamic_compute_limit: true
