@@ -95,6 +95,12 @@ async def on_buy_success(tx: "PendingTransaction"):
                 tsl_trail_pct=tsl_trail_pct,
                 tsl_sell_pct=tsl_sell_pct,
                 bonding_curve=bonding_curve,
+                # DCA parameters - enable by default for whale copy
+                dca_enabled=True,
+                dca_pending=True,
+                dca_trigger_pct=0.20,
+                dca_first_buy_pct=0.50,
+                original_entry_price=price,
             )
             positions.append(position)
             save_positions(positions)
