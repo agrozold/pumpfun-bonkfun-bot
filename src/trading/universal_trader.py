@@ -3029,7 +3029,7 @@ class UniversalTrader:
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
         HARD_STOP_LOSS_PCT = 30.0  # 25% убыток = НЕМЕДЛЕННАЯ продажа (жёстче чем обычный SL)
-        EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
+        EMERGENCY_STOP_LOSS_PCT = 30.0  # 40% убыток = ЭКСТРЕННАЯ продажа с максимальным приоритетом
 
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
@@ -3696,7 +3696,7 @@ class UniversalTrader:
                 # Wait and check real balance after sell
                 # Start background verification (non-blocking)
                 original_qty = getattr(position, 'quantity', sell_quantity)
-                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol))
+                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity))
                 position.close_position(current_price, ExitReason.STOP_LOSS)
                 self._remove_position(mint_str)
                 # Also remove from Redis to prevent restore
@@ -3728,7 +3728,7 @@ class UniversalTrader:
                 logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
                 # Start background verification (non-blocking)
                 original_qty = getattr(position, 'quantity', sell_quantity)
-                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol))
+                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity))
                 position.close_position(current_price, ExitReason.STOP_LOSS)
                 self._remove_position(mint_str)
                 try:
@@ -3876,7 +3876,7 @@ class UniversalTrader:
         # Add to batch price monitoring
         watch_token(str(position.mint))
 
-    async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str):
+    async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None):
         """Background task to verify sell. If failed - retry up to 3 times."""
         try:
             await asyncio.sleep(5)  # Wait for TX to confirm
@@ -3896,14 +3896,30 @@ class UniversalTrader:
                 await self._remove_from_sold_mints(mint_str, symbol)
                 return False
 
-            # Check if sell succeeded (less than 10% remaining)
-            if remaining < original_qty * 0.1:
-                sold_amount = original_qty - remaining
-                logger.info(f"[VERIFY] {symbol}: Sell CONFIRMED! Sold {sold_amount:.2f} tokens")
-                return True
+            # Check if sell succeeded
+            # If sell_quantity provided (partial sell like TSL), check if we sold approximately that amount
+            # Otherwise check if less than 10% remaining (full sell)
+            if sell_quantity is not None:
+                expected_remaining = original_qty - sell_quantity
+                # Allow 20% tolerance for partial sells (moonbag scenario)
+                if remaining <= expected_remaining * 1.5 and remaining >= expected_remaining * 0.5:
+                    sold_amount = original_qty - remaining
+                    logger.info(f"[VERIFY] {symbol}: Partial sell CONFIRMED! Sold {sold_amount:.2f} tokens, keeping {remaining:.2f} as moonbag")
+                    return True
+                # Also OK if sold more than expected (full sell instead of partial)
+                if remaining < original_qty * 0.1:
+                    sold_amount = original_qty - remaining
+                    logger.info(f"[VERIFY] {symbol}: Full sell CONFIRMED! Sold {sold_amount:.2f} tokens")
+                    return True
+            else:
+                # Full sell - check less than 10% remaining
+                if remaining < original_qty * 0.1:
+                    sold_amount = original_qty - remaining
+                    logger.info(f"[VERIFY] {symbol}: Sell CONFIRMED! Sold {sold_amount:.2f} tokens")
+                    return True
 
             # SELL FAILED - tokens still there, retry selling up to 3 times
-            logger.error(f"[VERIFY] {symbol}: SELL FAILED! Balance {remaining:.2f} (was {original_qty:.2f})")
+            logger.error(f"[VERIFY] {symbol}: SELL FAILED! Balance {remaining:.2f} (was {original_qty:.2f}, expected to sell {sell_quantity or original_qty:.2f})")
             
             for retry in range(3):
                 logger.warning(f"[VERIFY] {symbol}: Retry sell attempt {retry+1}/3...")

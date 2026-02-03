@@ -67,6 +67,10 @@ async def on_buy_success(tx: "PendingTransaction"):
         
         # Check if already exists (shouldn't happen but be safe)
         existing = [p for p in positions if str(p.mint) == mint]
+        # Calculate TP/SL prices (needed for monitor start)
+        take_profit_price = price * take_profit_pct if take_profit_pct else None
+        stop_loss_price = price * (1 - stop_loss_pct) if stop_loss_pct else None
+
         if existing:
             logger.warning(f"[TX_CALLBACK] Position already exists for {symbol}, updating quantity...")
             for p in existing:
@@ -75,10 +79,6 @@ async def on_buy_success(tx: "PendingTransaction"):
         else:
             # Create new position with full parameters
             from solders.pubkey import Pubkey
-            
-            # Calculate TP/SL prices
-            take_profit_price = price * take_profit_pct if take_profit_pct else None
-            stop_loss_price = price * (1 - stop_loss_pct) if stop_loss_pct else None
             
             position = Position(
                 mint=Pubkey.from_string(mint),
