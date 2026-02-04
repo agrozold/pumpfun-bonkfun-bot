@@ -1,29 +1,39 @@
-# Whale Copy Trading Bot
+# 🐋 Whale Copy Trading Bot for Solana
 
-Bot for copying whale trades on Solana (Pump.fun, PumpSwap, Raydium).
+Автоматический бот для копирования сделок крупных трейдеров (китов) на Solana.
 
-## Quick Start
+## ✨ Возможности
 
-git clone, pip install -r requirements.txt, configure .env, run bot.
+- **Whale Copy Trading** — отслеживание 140+ китов через Helius webhooks
+- **Stop Loss / TSL / Take Profit** — автоматическое управление позициями
+- **DCA** — усреднение при просадке
+- **Moonbag** — сохранение 10% после TSL
+- **Redis** — быстрая синхронизация позиций
 
-## Commands
+## 💱 Поддержка DEX
 
-- bot-start/stop/restart/status
-- bot-logs, bot-trades, bot-errors
-- buy TOKEN SOL, sell TOKEN PCT
-- buysync TOKEN SOL, wsync
+Pump.fun, PumpSwap, Jupiter, Raydium
 
-## Config (bots/bot-whale-copy.yaml)
+## 🚀 Установка
 
-- buy_amount: 0.02
-- stop_loss: 20%
-- take_profit: 10000%
-- tsl_activation: 20%
-- tsl_trail: 50%
-- moon_bag: 10%
+git clone https://github.com/agrozold/pumpfun-bonkfun-bot.git cd pumpfun-bonkfun-bot python3 -m venv venv && source venv/bin/activate pip install -r requirements.txt cp .env.example .env
 
-## Important
 
-Never commit .env or private keys!
+## 📋 Команды
 
-MIT License
+| Команда | Описание |
+|---------|----------|
+| bot-start | Запуск |
+| bot-stop | Остановка |
+| bot-restart | Перезапуск |
+| bot-logs | Логи |
+| bot-health | Статус |
+| wsync | Синхронизация |
+| buy MINT SOL | Покупка |
+| sell MINT | Продажа |
+| whale-add | Добавить кита |
+| whale-list | Список китов |
+
+## ⚠️ Disclaimer
+
+Торговля криптовалютами связана с риском.
