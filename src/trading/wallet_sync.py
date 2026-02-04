@@ -202,12 +202,23 @@ async def sync_wallet():
         print(f"[CLEANUP] Removed {len(phantom_positions)} phantom positions")
     
     # Находим потерянные токены
+    # Import Jupiter price
+    from utils.jupiter_price import get_token_price
+    
     lost_tokens = []
     for token in wallet_tokens:
         if token["mint"] not in position_mints:
-            # DUST FILTER: Skip tokens worth < 0.002 SOL (~$0.40)
-            token_value = token.get("amount", 0) * token.get("price", 0)
-            if token_value < 0.002:
+            # DUST FILTER: Get real price via Jupiter
+            token_price = token.get("price", 0)
+            if token_price <= 0:
+                try:
+                    token_price, _ = await get_token_price(token["mint"])
+                    token_price = token_price or 0
+                except:
+                    token_price = 0
+            
+            token_value = token.get("amount", 0) * token_price
+            if token_value < 0.003:  # < ~$0.60
                 print(f"  [DUST] Skipping {token.get('symbol', token['mint'][:8])} - value {token_value:.6f} SOL")
                 continue
             lost_tokens.append(token)
@@ -237,10 +248,20 @@ async def sync_wallet():
             for p in positions:
                 mint = p.get("mint")
                 if mint:
-                    # DUST FILTER: Skip positions worth < 0.002 SOL
+                    # DUST FILTER: Skip positions worth < 0.003 SOL
                     qty = p.get("quantity", 0)
                     price = p.get("entry_price", 0)
-                    if qty * price < 0.002 and qty * price > 0:
+                    # Get current price if entry_price seems wrong
+                    try:
+                        current_price, _ = await get_token_price(mint)
+                        if current_price and current_price > 0:
+                            value = qty * current_price
+                        else:
+                            value = qty * price
+                    except:
+                        value = qty * price
+                    if value < 0.003 and value > 0:
+                        print(f"  [DUST] Skipping {p.get('symbol', mint[:8])} from Redis - value {value:.6f} SOL")
                         continue
                     subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
             print(f"[SYNCED] Redis updated")
