@@ -1116,7 +1116,7 @@ def main():
                         "tsl_enabled": True,
                         "tsl_activation_pct": 0.3,
                         "tsl_trail_pct": 0.3,
-                        "tsl_sell_pct": 0.9,
+                        "tsl_sell_pct": 0.7,
                         "tsl_active": False,
                         "tsl_trigger_price": 0,
                         "high_water_mark": current_price,

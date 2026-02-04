@@ -4050,26 +4050,10 @@ class UniversalTrader:
             logger.info(f"[RESTORE] Restoring position: {position.symbol} on {position.platform}")
 
             # === SYNC ENTRY PRICE FROM PURCHASE HISTORY ===
-            try:
-                from trading.purchase_history import load_purchase_history_full
-                history = load_purchase_history_full()
-                if mint_str in history:
-                    real_price = history[mint_str].get("price")
-                    if real_price and abs(real_price - position.entry_price) / position.entry_price > 0.01:
-                        logger.warning(
-                            f"[RESTORE] {position.symbol}: Syncing entry_price "
-                            f"{position.entry_price:.10f} -> {real_price:.10f} (from purchase history)"
-                        )
-                        position.entry_price = real_price
-                        # Recalculate TP/SL (FIXED: calculate even if None)
-                        if self.take_profit_percentage:
-                            position.take_profit_price = real_price * (1 + self.take_profit_percentage)
-                        if self.stop_loss_percentage:
-                            position.stop_loss_price = real_price * (1 - self.stop_loss_percentage)
-                        position.high_water_mark = real_price
-                        logger.warning(f"[RESTORE] {position.symbol}: New TP={position.take_profit_price:.10f}, SL={position.stop_loss_price:.10f}")
-            except Exception as e:
-                logger.warning(f"[RESTORE] Failed to sync entry_price for {position.symbol}: {e}")
+            # DISABLED: This caused issues - was overwriting SL from old purchase_history
+            # positions.json has correct entry_price and SL set by buy.py
+            # We TRUST positions.json now
+            logger.info(f"[RESTORE] {position.symbol}: Using saved entry={position.entry_price:.10f}, SL={position.stop_loss_price}")
             # === END SYNC ===
             
             # === ALWAYS CALCULATE TP/SL IF MISSING ===
