@@ -205,6 +205,11 @@ async def sync_wallet():
     lost_tokens = []
     for token in wallet_tokens:
         if token["mint"] not in position_mints:
+            # DUST FILTER: Skip tokens worth < 0.002 SOL (~$0.40)
+            token_value = token.get("amount", 0) * token.get("price", 0)
+            if token_value < 0.002:
+                print(f"  [DUST] Skipping {token.get('symbol', token['mint'][:8])} - value {token_value:.6f} SOL")
+                continue
             lost_tokens.append(token)
     
     # UPDATE existing positions with real wallet balance
@@ -232,6 +237,11 @@ async def sync_wallet():
             for p in positions:
                 mint = p.get("mint")
                 if mint:
+                    # DUST FILTER: Skip positions worth < 0.002 SOL
+                    qty = p.get("quantity", 0)
+                    price = p.get("entry_price", 0)
+                    if qty * price < 0.002 and qty * price > 0:
+                        continue
                     subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
             print(f"[SYNCED] Redis updated")
         print("\n[OK] All tokens are tracked!")
