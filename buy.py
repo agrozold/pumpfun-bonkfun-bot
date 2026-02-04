@@ -479,7 +479,7 @@ async def buy_via_jupiter(
                                 print(f"❌ Jupiter BUY FAILED! TX error: {err}")
                                 return False
                         print(f"✅ Jupiter BUY confirmed! Got ~{out_amount_tokens:,.2f} tokens")
-                        return True
+                        return out_amount_tokens  # Return actual tokens bought
                     except Exception as e:
                         print(f"⚠️ Jupiter attempt {attempt + 1} failed: {e}")
                         if attempt < max_retries - 1:
@@ -955,7 +955,16 @@ def main():
     print(f"🎯 Buying token: {mint}")
     print(f"=" * 50)
     
-    success = asyncio.run(buy_token(mint, args.amount, args.slippage, args.priority_fee))
+    bought_tokens_result = asyncio.run(buy_token(mint, args.amount, args.slippage, args.priority_fee))
+    if isinstance(bought_tokens_result, (int, float)) and bought_tokens_result > 0:
+        bought_tokens = bought_tokens_result
+        success = True
+    elif bought_tokens_result == True:
+        bought_tokens = 0
+        success = True
+    else:
+        bought_tokens = 0
+        success = False
     
     # После успешной покупки - добавляем в purchase_history и positions
     if success:
@@ -984,19 +993,34 @@ def main():
             except Exception as e:
                 print(f"⚠️ DexScreener error: {e}")
 
-            # Ждём обновления RPC и получаем баланс
-            import time; time.sleep(3)
+            # Получаем существующий баланс из Redis и добавляем купленные токены
+            existing_qty = 0
             try:
-                payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-                           "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]}
-                resp = requests.post(rpc, json=payload, timeout=30)
-                data = resp.json()
-                accounts = data.get("result", {}).get("value", [])
-                if accounts:
-                    info = accounts[0]["account"]["data"]["parsed"]["info"]
-                    balance = float(info.get("tokenAmount", {}).get("uiAmount") or 0)
-            except Exception as e:
-                print(f"⚠️ RPC error: {e}")
+                result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
+                if result.stdout.strip():
+                    existing_pos = json.loads(result.stdout.strip())
+                    existing_qty = existing_pos.get("quantity", 0)
+            except:
+                pass
+            
+            # Баланс = существующий + только что купленные
+            if bought_tokens and bought_tokens > 0:
+                balance = existing_qty + bought_tokens
+                print(f"📊 Баланс: {existing_qty:.2f} + {bought_tokens:.2f} = {balance:.2f}")
+            else:
+                # Fallback на RPC если bought_tokens не доступен
+                import time; time.sleep(5)
+                try:
+                    payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                               "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]}
+                    resp = requests.post(rpc, json=payload, timeout=30)
+                    data = resp.json()
+                    accounts = data.get("result", {}).get("value", [])
+                    if accounts:
+                        info = accounts[0]["account"]["data"]["parsed"]["info"]
+                        balance = float(info.get("tokenAmount", {}).get("uiAmount") or 0)
+                except Exception as e:
+                    print(f"⚠️ RPC error: {e}")
 
             print(f"📊 {symbol}: balance={balance:.2f}, price={entry_price:.10f}")
 
