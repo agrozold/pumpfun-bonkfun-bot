@@ -1082,7 +1082,87 @@ def main():
 
                     print(f"✅ Синхронизировано: {real_balance:,.2f}")
                 else:
-                    print("⚠️ Новый токен - запусти wsync")
+                    # НОВЫЙ ТОКЕН - создаём позицию!
+                    print("📝 Создаю новую позицию...")
+                    
+                    # Получаем цену
+                    current_price = 0
+                    try:
+                        price_resp = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{mint_addr}", timeout=10)
+                        pairs = price_resp.json().get("pairs", [])
+                        if pairs:
+                            current_price = float(pairs[0].get("priceNative", 0) or 0)
+                            symbol = pairs[0].get("baseToken", {}).get("symbol", "UNKNOWN")
+                        else:
+                            symbol = "UNKNOWN"
+                    except:
+                        symbol = "UNKNOWN"
+                    
+                    if current_price <= 0:
+                        current_price = args.amount / max(real_balance, 1)
+                    
+                    # Создаём новую позицию
+                    from datetime import datetime
+                    new_pos = {
+                        "mint": mint_addr,
+                        "symbol": symbol,
+                        "entry_price": current_price,
+                        "quantity": real_balance,
+                        "entry_time": datetime.utcnow().isoformat(),
+                        "platform": "jupiter",
+                        "take_profit_price": current_price * 100,
+                        "stop_loss_price": current_price * 0.7,
+                        "max_hold_time": 0,
+                        "tsl_enabled": True,
+                        "tsl_activation_pct": 0.3,
+                        "tsl_trail_pct": 0.3,
+                        "tsl_sell_pct": 0.9,
+                        "tsl_active": False,
+                        "tsl_trigger_price": 0,
+                        "high_water_mark": current_price,
+                        "is_active": True,
+                        "dca_enabled": True,
+                        "dca_pending": True,
+                        "dca_bought": False,
+                        "dca_trigger_pct": 0.25,
+                        "dca_first_buy_pct": 0.5,
+                        "original_entry_price": current_price,
+                    }
+                    
+                    # Сохраняем в Redis
+                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(new_pos)], capture_output=True)
+                    
+                    # Сохраняем в positions.json
+                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
+                        positions = json.load(f)
+                    positions.append(new_pos)
+                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
+                        json.dump(positions, f, indent=2)
+                    
+                    # Сохраняем в history
+                    try:
+                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
+                            history = json.load(f)
+                        if "purchased_tokens" not in history:
+                            history["purchased_tokens"] = {}
+                        history["purchased_tokens"][mint_addr] = {
+                            "symbol": symbol,
+                            "bot_name": "manual_buy",
+                            "platform": "jupiter",
+                            "price": current_price,
+                            "amount": real_balance,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
+                            json.dump(history, f, indent=2)
+                    except:
+                        pass
+                    
+                    print(f"✅ Новая позиция создана:")
+                    print(f"   Symbol: {symbol}")
+                    print(f"   Qty: {real_balance:,.2f}")
+                    print(f"   Entry: {current_price:.10f}")
+                    print(f"   SL: {current_price * 0.7:.10f} (-30%)")
             else:
                 print(f"⚠️ RPC не обновился. Текущий баланс: {real_balance:,.2f}")
                 print(f"   Запусти: wsync && bot-restart")
