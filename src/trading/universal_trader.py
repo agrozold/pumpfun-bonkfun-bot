@@ -3095,6 +3095,21 @@ class UniversalTrader:
                 # Log price source on first check
                 if check_count == 1:
                     logger.info(f"[PRICE] {token_info.symbol}: {current_price:.10f} SOL (source: {price_source})")
+                
+                # DUST FILTER: Skip monitoring if position value < $0.2
+                # SOL price ~$200, so $0.2 = 0.001 SOL
+                position_value_sol = position.quantity * current_price
+                if position_value_sol < 0.001 and check_count == 1:
+                    logger.info(f"[DUST] {token_info.symbol}: Value {position_value_sol:.6f} SOL < 0.001 SOL, skipping monitor")
+                    position.is_active = False
+                    # Remove from positions
+                    try:
+                        from trading.position import remove_position
+                        remove_position(str(token_info.mint))
+                        logger.info(f"[DUST] Removed {token_info.symbol} from positions")
+                    except:
+                        pass
+                    break)
                 if pending_stop_loss:
                     logger.warning(
                         f"[RETRY SL] Pending stop loss for {token_info.symbol}, "
