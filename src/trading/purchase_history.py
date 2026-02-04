@@ -67,6 +67,8 @@ def add_to_purchase_history(
     platform: str = "unknown",
     price: float = 0.0,
     amount: float = 0.0,
+    whale_wallet: str = None,
+    whale_label: str = None,
 ) -> bool:
     """Add token to purchase history.
 
