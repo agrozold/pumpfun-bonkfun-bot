@@ -1449,7 +1449,7 @@ class UniversalTrader:
                 # DCA parameters
                 "dca_enabled": getattr(self, 'dca_enabled', True),
                 "dca_pending": getattr(self, 'dca_enabled', True),  # If DCA enabled, wait for dip
-                "dca_trigger_pct": 0.20,  # -20% for second buy
+                "dca_trigger_pct": 0.25,  # -25% for second buy
                 "dca_first_buy_pct": 0.50,  # 50% first buy
             }
             
@@ -2893,7 +2893,7 @@ class UniversalTrader:
         if dca_enabled:
             position.dca_enabled = True
             position.dca_pending = True
-            position.dca_trigger_pct = 0.20
+            position.dca_trigger_pct = 0.25
             position.dca_first_buy_pct = 0.50
             position.original_entry_price = buy_result.price
             logger.warning(f"[DCA] Position created with DCA enabled, waiting for -20% dip")
@@ -3100,17 +3100,27 @@ class UniversalTrader:
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
                 
                 # ============================================
-                # DCA: ДОКУПКА НА ОТКАТЕ -20%
+                # DCA: ДОКУПКА НА -25% ИЛИ +25%
+                # Только 2 покупки! После DCA - SL/TSL от НОВОЙ цены
                 # ============================================
                 if position.dca_enabled and position.dca_pending and not position.dca_bought:
-                    dca_trigger_price = position.original_entry_price * (1 - position.dca_trigger_pct)
+                    dca_down_trigger = position.original_entry_price * (1 - position.dca_trigger_pct)  # -25%
+                    dca_up_trigger = position.original_entry_price * (1 + position.dca_trigger_pct)    # +25%
                     
-                    if current_price <= dca_trigger_price:
-                        logger.warning(
-                            f"[DCA] {token_info.symbol}: Price {current_price:.10f} <= trigger {dca_trigger_price:.10f} "
-                            f"(-{position.dca_trigger_pct*100:.0f}% from entry)"
-                        )
-                        logger.warning(f"[DCA] Executing second buy for {token_info.symbol}...")
+                    dca_triggered = False
+                    dca_reason = ""
+                    
+                    if current_price <= dca_down_trigger:
+                        dca_triggered = True
+                        dca_reason = f"-{position.dca_trigger_pct*100:.0f}%"
+                        logger.warning(f"[DCA] {token_info.symbol}: Price {current_price:.10f} <= {dca_down_trigger:.10f} ({dca_reason})")
+                    elif current_price >= dca_up_trigger:
+                        dca_triggered = True
+                        dca_reason = f"+{position.dca_trigger_pct*100:.0f}%"
+                        logger.warning(f"[DCA] {token_info.symbol}: Price {current_price:.10f} >= {dca_up_trigger:.10f} ({dca_reason})")
+                    
+                    if dca_triggered:
+                        logger.warning(f"[DCA] Executing second buy for {token_info.symbol} ({dca_reason})...")
                         
                         # Докупаем оставшиеся 50%
                         dca_buy_amount = self.buy_amount * (1 - position.dca_first_buy_pct)
@@ -3121,49 +3131,39 @@ class UniversalTrader:
                                 symbol=token_info.symbol,
                                 sol_amount=dca_buy_amount,
                                 jupiter_first=True,
-                                is_dca=True,  # Skip duplicate check - this IS the same token!
+                                is_dca=True,
                             )
                             
                             if success:
-                                # Пересчитываем среднюю цену входа
-                                old_cost = position.entry_price * position.quantity
-                                new_cost = dca_price * dca_tokens
                                 total_quantity = position.quantity + dca_tokens
-                                new_avg_price = (old_cost + new_cost) / total_quantity
                                 
-                                logger.warning(
-                                    f"[DCA] ✅ SUCCESS! Bought {dca_tokens:.2f} more tokens at {dca_price:.10f}"
-                                )
-                                logger.warning(
-                                    f"[DCA] Average price: {position.entry_price:.10f} -> {new_avg_price:.10f}"
-                                )
+                                logger.warning(f"[DCA] ✅ SUCCESS! Bought {dca_tokens:.2f} more at {dca_price:.10f}")
+                                logger.warning(f"[DCA] Total tokens: {position.quantity:.2f} -> {total_quantity:.2f}")
                                 
-                                # Обновляем позицию
+                                # Entry = НОВАЯ цена (не средняя!)
                                 position.quantity = total_quantity
-                                position.entry_price = new_avg_price
+                                position.entry_price = dca_price
                                 position.dca_bought = True
                                 position.dca_pending = False
                                 
-                                # Пересчитываем SL от новой средней цены (30% вместо 40%)
-                                position.stop_loss_price = new_avg_price * 0.70  # -30% SL после DCA
-                                logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-30% from avg)")
+                                # SL/TSL от НОВОЙ цены
+                                position.stop_loss_price = dca_price * 0.70  # -30% SL
+                                position.high_water_mark = dca_price
+                                position.tsl_active = False
+                                position.tsl_trigger_price = 0
                                 
-                                # Сохраняем
-
-                                # CRITICAL: Пересчитываем PnL после DCA чтобы HARD SL не сработал по старой цене
+                                logger.warning(f"[DCA] New entry: {dca_price:.10f}")
+                                logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-30%)")
+                                logger.warning(f"[DCA] TSL reset")
+                                
                                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
-                                logger.warning(f"[DCA] Recalculated PnL: {pnl_pct:+.1f}% (from new avg price)")
+                                logger.warning(f"[DCA] New PnL: {pnl_pct:+.1f}%")
+                                
                                 save_positions(self.active_positions)
                             else:
                                 logger.error(f"[DCA] ❌ FAILED to buy more {token_info.symbol}")
                         except Exception as e:
                             logger.error(f"[DCA] Error during second buy: {e}")
-                    
-                    # Отменяем DCA если цена выросла на +30% (уже в хорошем профите)
-                    elif pnl_pct >= 30:
-                        logger.warning(f"[DCA] {token_info.symbol}: +{pnl_pct:.1f}% profit, canceling DCA wait")
-                        position.dca_pending = False
-                        save_positions(self.active_positions)
 
                 # ============================================
                 # STOP LOSS CHECKS - ORDER MATTERS!
