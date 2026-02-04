@@ -966,143 +966,55 @@ def main():
         bought_tokens = 0
         success = False
     
-    # После успешной покупки - добавляем в purchase_history и positions
+    # После успешной покупки - синхронизируем через wsync (берёт реальный баланс с кошелька)
     if success:
+        print("")
+        print("🔄 Синхронизация позиции...")
+        import time
+        time.sleep(3)
+        
         try:
-            import json
-            import requests
-            from datetime import datetime
-            import subprocess
-
-            mint_str = str(mint)
-            wallet = str(Keypair.from_bytes(base58.b58decode(os.environ.get("SOLANA_PRIVATE_KEY"))).pubkey())
-            rpc = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT")
-
-            symbol = "UNKNOWN"
-            entry_price = 0
-            balance = 0
-
-            # Получаем символ и цену
-            try:
-                resp = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{mint_str}", timeout=10)
-                data = resp.json()
-                pairs = data.get("pairs", [])
-                if pairs:
-                    symbol = pairs[0].get("baseToken", {}).get("symbol", "UNKNOWN")
-                    entry_price = float(pairs[0].get("priceNative", 0) or 0)
-            except Exception as e:
-                print(f"⚠️ DexScreener error: {e}")
-
-            # Получаем существующий баланс из Redis и добавляем купленные токены
-            existing_qty = 0
-            try:
-                result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
-                if result.stdout.strip():
-                    existing_pos = json.loads(result.stdout.strip())
-                    existing_qty = existing_pos.get("quantity", 0)
-            except:
-                pass
+            import subprocess, json, requests, base58, os
+            from solders.keypair import Keypair
             
-            # Баланс = существующий + только что купленные
-            if bought_tokens and bought_tokens > 0:
-                balance = existing_qty + bought_tokens
-                print(f"📊 Баланс: {existing_qty:.2f} + {bought_tokens:.2f} = {balance:.2f}")
-            else:
-                # Fallback на RPC если bought_tokens не доступен
-                import time; time.sleep(5)
-                try:
-                    payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-                               "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]}
-                    resp = requests.post(rpc, json=payload, timeout=30)
-                    data = resp.json()
-                    accounts = data.get("result", {}).get("value", [])
-                    if accounts:
-                        info = accounts[0]["account"]["data"]["parsed"]["info"]
-                        balance = float(info.get("tokenAmount", {}).get("uiAmount") or 0)
-                except Exception as e:
-                    print(f"⚠️ RPC error: {e}")
-
-            print(f"📊 {symbol}: balance={balance:.2f}, price={entry_price:.10f}")
-
-            if balance > 0 and entry_price > 0:
-                # 1. Обновляем purchase_history
-                try:
-                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
-                        history = json.load(f)
-                    if "purchased_tokens" not in history:
-                        history["purchased_tokens"] = {}
-                    history["purchased_tokens"][mint_str] = {
-                        "price": entry_price, "symbol": symbol, "amount": balance,
-                        "time": datetime.now().isoformat(), "source": "buy_script"
-                    }
-                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
-                        json.dump(history, f)
-                    print(f"📝 Purchase history обновлён")
-                except Exception as e:
-                    print(f"⚠️ Purchase history error: {e}")
-
-                # 2. Обновляем positions.json (с сохранением существующей позиции)
-                try:
-                    # Сначала проверяем Redis на существующую позицию
-                    existing_pos = None
-                    try:
-                        result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
-                        if result.stdout.strip():
-                            existing_pos = json.loads(result.stdout.strip())
-                            print(f"📊 Найдена существующая позиция: qty={existing_pos.get('quantity', 0):.2f}")
-                    except Exception as e:
-                        print(f"⚠️ Redis read error: {e}")
-
+            pk = os.environ.get("SOLANA_PRIVATE_KEY")
+            rpc = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+            wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
+            
+            resp = requests.post(rpc, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner", 
+                "params": [wallet, {"mint": str(mint)}, {"encoding": "jsonParsed"}]}, timeout=30)
+            accounts = resp.json().get("result", {}).get("value", [])
+            
+            if accounts:
+                real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
+                print(f"📊 Реальный баланс: {real_balance:,.2f}")
+                
+                result = subprocess.run(["redis-cli", "HGET", "whale:positions", str(mint)], capture_output=True, text=True)
+                if result.stdout.strip():
+                    pos = json.loads(result.stdout.strip())
+                    old_qty = pos.get("quantity", 0)
+                    pos["quantity"] = real_balance
+                    subprocess.run(["redis-cli", "HSET", "whale:positions", str(mint), json.dumps(pos)], capture_output=True)
+                    print(f"✅ Redis: {old_qty:.2f} -> {real_balance:.2f}")
+                    
                     with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
                         positions = json.load(f)
-                    positions = [p for p in positions if p.get("mint") != mint_str]
-                    
-                    if existing_pos and existing_pos.get("quantity", 0) > 0:
-                        # ДОКУПКА: обновляем существующую позицию
-                        # balance уже содержит ОБЩИЙ баланс с кошелька (старые + новые токены)
-                        new_position = existing_pos.copy()
-                        new_position["quantity"] = balance  # Актуальный баланс с чейна
-                        new_position["entry_price"] = entry_price  # Текущая цена
-                        new_position["stop_loss_price"] = entry_price * 0.7  # Пересчитываем SL
-                        new_position["high_water_mark"] = max(entry_price, existing_pos.get("high_water_mark", entry_price))
-                        new_position["is_active"] = True
-                        new_position["state"] = "open"
-                        print(f"📊 Докупка: обновлён баланс {existing_pos.get('quantity', 0):.2f} -> {balance:.2f}")
-                    else:
-                        # НОВАЯ ПОЗИЦИЯ
-                        new_position = {
-                            "mint": mint_str, "symbol": symbol, "entry_price": entry_price,
-                            "quantity": balance, "entry_time": datetime.now().isoformat(),
-                            "take_profit_price": entry_price * 10000, "stop_loss_price": entry_price * 0.7,
-                            "max_hold_time": 0, "tsl_enabled": True, "tsl_activation_pct": 0.3,
-                            "tsl_trail_pct": 0.5, "tsl_active": False, "high_water_mark": entry_price,
-                            "tsl_trigger_price": 0.0, "tsl_sell_pct": 0.7, "is_active": True,
-                            "is_moonbag": False, "dca_enabled": True, "dca_pending": False,
-                            "dca_trigger_pct": 0.2, "dca_bought": False, "dca_first_buy_pct": 0.5,
-                            "original_entry_price": entry_price, "state": "open",
-                            "platform": "pump_fun", "bonding_curve": None,
-                            "created_at": datetime.now().isoformat()
-                        }
-                    positions.append(new_position)
+                    for p in positions:
+                        if p.get("mint") == str(mint):
+                            p["quantity"] = real_balance
+                            break
                     with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
-                        json.dump(positions, f, indent=2, default=str)
-                    print(f"📝 Position добавлена: {symbol} ({balance:,.2f} @ {entry_price:.10f} SOL)")
-                except Exception as e:
-                    print(f"⚠️ Positions error: {e}")
-
-                # 4. Обновляем Redis whale:positions
-                try:
-                    position_json = json.dumps(new_position, default=str)
-                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_str, position_json], capture_output=True)
-                    print(f"📝 Redis position обновлена")
-                except Exception as e:
-                    print(f"⚠️ Redis error: {e}")
-
-                # 3. Удаляем из sold_mints
-                subprocess.run(["redis-cli", "SREM", "sold_mints", mint_str], capture_output=True)
-                print(f"✅ Готово! Перезапусти бота: bot-restart")
+                        json.dump(positions, f, indent=2)
+                    print("✅ Синхронизировано")
+                else:
+                    print("⚠️ Новый токен - запусти wsync после bot-restart")
+            else:
+                print("⚠️ Токен не найден")
         except Exception as e:
-            print(f"⚠️ Post-buy error: {e}")
+            print(f"⚠️ Sync error: {e}")
+
+        print("")
+        print("💡 Перезапусти бота: bot-restart")
 
     sys.exit(0 if success else 1)
 

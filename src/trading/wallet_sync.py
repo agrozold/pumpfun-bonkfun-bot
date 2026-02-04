@@ -207,8 +207,34 @@ async def sync_wallet():
         if token["mint"] not in position_mints:
             lost_tokens.append(token)
     
+    # UPDATE existing positions with real wallet balance
+    updated = 0
+    wallet_tokens_dict = {t["mint"]: t for t in wallet_tokens}
+    for p in positions:
+        mint = p.get("mint")
+        if mint in wallet_tokens_dict:
+            real_qty = wallet_tokens_dict[mint]["amount"]
+            old_qty = p.get("quantity", 0)
+            if abs(real_qty - old_qty) > 0.01:
+                p["quantity"] = real_qty
+                updated += 1
+                print(f"  [UPDATE] {p.get('symbol', mint[:8]+'...')} qty: {old_qty:.2f} -> {real_qty:.2f}")
+    if updated:
+        print(f"[UPDATED] {updated} positions with new quantities")
+        save_positions(positions)
+
     if not lost_tokens:
-        print("\n[OK] All tokens are tracked! No sync needed.")
+        # Sync Redis even if no new tokens
+        if updated:
+            import subprocess
+            import json as js
+            subprocess.run(["redis-cli", "DEL", "whale:positions"], capture_output=True)
+            for p in positions:
+                mint = p.get("mint")
+                if mint:
+                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
+            print(f"[SYNCED] Redis updated")
+        print("\n[OK] All tokens are tracked!")
         return
     
     print(f"\n[ALERT] Found {len(lost_tokens)} UNTRACKED tokens!")
