@@ -997,8 +997,11 @@ def main():
             rpcs = [r for r in rpcs if r]  # Убираем None
             
             real_balance = old_balance
-            print(f"   Ожидание 10 сек...")
-            time.sleep(10)
+            # Retry до 3 раз с увеличивающейся задержкой
+            for sync_attempt in range(3):
+                delay = 10 + sync_attempt * 5  # 10, 15, 20 сек
+                print(f"   Ожидание {delay} сек... (попытка {sync_attempt+1}/3)")
+                time.sleep(delay)
             
             for attempt, rpc_url in enumerate(rpcs):
                 if not rpc_url:
@@ -1023,30 +1026,60 @@ def main():
             # Обновляем Redis, positions.json и history
             if abs(real_balance - old_balance) > 1:
                 if result.stdout.strip():
-                    pos["quantity"] = real_balance
-                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(pos)], capture_output=True)
+                    # Получаем текущую цену через DexScreener (Jupiter decimals ненадёжны)
+                    current_price = 0
+                    try:
+                        price_resp = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{mint_addr}", timeout=10)
+                        pairs = price_resp.json().get("pairs", [])
+                        if pairs:
+                            current_price = float(pairs[0].get("priceNative", 0) or 0)
+                    except:
+                        pass
                     
+                    pos["quantity"] = real_balance
+                    
+                    # Обновляем entry_price, SL, TSL
+                    if current_price > 0:
+                        old_entry = pos.get("entry_price", 0)
+                        pos["entry_price"] = current_price
+                        pos["stop_loss_price"] = current_price * 0.7
+                        pos["high_water_mark"] = current_price
+                        pos["tsl_active"] = False
+                        pos["tsl_trigger_price"] = 0
+                        print(f"📊 Entry: {old_entry:.10f} -> {current_price:.10f}")
+                        print(f"📊 SL: {current_price * 0.7:.10f} (-30%)")
+                    
+                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(pos)], capture_output=True)
+
                     # positions.json
                     with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
                         positions = json.load(f)
                     for p in positions:
                         if p.get("mint") == mint_addr:
                             p["quantity"] = real_balance
+                            if current_price > 0:
+                                p["entry_price"] = current_price
+                                p["stop_loss_price"] = current_price * 0.7
+                                p["high_water_mark"] = current_price
+                                p["tsl_active"] = False
+                                p["tsl_trigger_price"] = 0
                             break
                     with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
                         json.dump(positions, f, indent=2)
-                    
+
                     # purchased_tokens_history.json
                     try:
                         with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
                             history = json.load(f)
                         if mint_addr in history.get("purchased_tokens", {}):
                             history["purchased_tokens"][mint_addr]["amount"] = real_balance
+                            if current_price > 0:
+                                history["purchased_tokens"][mint_addr]["price"] = current_price
                             with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
                                 json.dump(history, f, indent=2)
                     except:
                         pass
-                        
+
                     print(f"✅ Синхронизировано: {real_balance:,.2f}")
                 else:
                     print("⚠️ Новый токен - запусти wsync")

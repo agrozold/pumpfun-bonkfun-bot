@@ -115,6 +115,90 @@ class BondingCurveState:
         self.is_mayhem_mode = bool(data[offset + 32]) if len(data) >= offset + 33 else False
 
 
+def sync_position_after_sell(mint_str: str, percent: float):
+    """Sync position with REAL wallet balance after sell."""
+    import time
+    import subprocess
+    import json
+    import requests
+    import base58
+    import os
+    from solders.keypair import Keypair
+    
+    if percent >= 100:
+        # Полная продажа
+        try:
+            subprocess.run(["redis-cli", "HDEL", "whale:positions", mint_str], capture_output=True)
+            subprocess.run(["redis-cli", "SADD", "sold_mints", mint_str], capture_output=True)
+            if POSITIONS_AVAILABLE:
+                remove_position(mint_str)
+            print(f"📝 Позиция удалена полностью")
+        except Exception as e:
+            print(f"⚠️ Ошибка: {e}")
+        return
+    
+    # Частичная продажа - ждём и берём реальный баланс
+    print(f"🔄 Синхронизация...")
+    time.sleep(15)  # Ждём обновления RPC
+    
+    try:
+        pk = os.environ.get("SOLANA_PRIVATE_KEY")
+        rpcs = [r for r in [
+            os.environ.get("DRPC_RPC_ENDPOINT"),
+            os.environ.get("ALCHEMY_RPC_ENDPOINT"),
+            os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+        ] if r]
+        wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
+        
+        real_balance = 0
+        for rpc_url in rpcs:
+            try:
+                resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                    "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]}, timeout=30)
+                accounts = resp.json().get("result", {}).get("value", [])
+                if accounts:
+                    real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
+                    if real_balance > 0:
+                        break
+            except:
+                continue
+        
+        if real_balance > 0:
+            # Redis
+            result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
+            if result.stdout.strip():
+                pos = json.loads(result.stdout.strip())
+                old_qty = pos.get("quantity", 0)
+                pos["quantity"] = real_balance
+                subprocess.run(["redis-cli", "HSET", "whale:positions", mint_str, json.dumps(pos)], capture_output=True)
+                
+                # positions.json
+                if POSITIONS_AVAILABLE:
+                    positions = load_positions()
+                    for p in positions:
+                        if str(p.mint) == mint_str:
+                            p.quantity = real_balance
+                            break
+                    save_positions(positions)
+                
+                # history
+                try:
+                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
+                        history = json.load(f)
+                    if mint_str in history.get("purchased_tokens", {}):
+                        history["purchased_tokens"][mint_str]["amount"] = real_balance
+                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
+                            json.dump(history, f, indent=2)
+                except:
+                    pass
+                
+                print(f"✅ Баланс: {old_qty:,.2f} -> {real_balance:,.2f}")
+        else:
+            print(f"⚠️ Не удалось получить баланс")
+    except Exception as e:
+        print(f"⚠️ Sync error: {e}")
+
+
 def get_bonding_curve_address(mint: Pubkey) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address([b"bonding-curve", bytes(mint)], PUMP_PROGRAM)
 
@@ -464,22 +548,8 @@ async def sell_via_jupiter(
                         return False
                 print("✅ Transaction confirmed!")
                 
-                # Update positions.json
-                if POSITIONS_AVAILABLE:
-                    try:
-                        positions = load_positions()
-                        for p in positions:
-                            if str(p.mint) == str(mint):
-                                if percent >= 100:
-                                    remove_position(str(p.mint))
-                                    print(f"📝 Removed {p.symbol} from positions.json")
-                                else:
-                                    p.quantity = p.quantity * (1 - percent/100)
-                                    save_positions(positions)
-                                    print(f"📝 Updated position: {p.quantity:.2f} remaining")
-                                break
-                    except Exception as e:
-                        print(f"⚠️ positions.json update failed: {e}")
+                # Sync with real balance
+                sync_position_after_sell(str(mint), percent)
                 
                 return True
 
@@ -760,22 +830,8 @@ async def sell_via_pumpswap(
             await retry_rpc_call(client.confirm_transaction, Signature.from_string(str(sig)), commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             
-            # Update positions.json
-            if POSITIONS_AVAILABLE:
-                try:
-                    positions = load_positions()
-                    for p in positions:
-                        if str(p.mint) == str(mint):
-                            if percent >= 100:
-                                remove_position(str(p.mint))
-                                print(f"📝 Removed {p.symbol} from positions.json")
-                            else:
-                                p.quantity = p.quantity * (1 - percent/100)
-                                save_positions(positions)
-                                print(f"📝 Updated position: {p.quantity:.2f} remaining")
-                            break
-                except Exception as e:
-                    print(f"⚠️ positions.json update failed: {e}")
+            # Sync with real balance
+            sync_position_after_sell(str(mint), percent)
             
             return True
 
@@ -916,22 +972,8 @@ async def sell_via_pumpfun(
             await retry_rpc_call(client.confirm_transaction, Signature.from_string(str(sig)), commitment="confirmed", sleep_seconds=0.5)
             print("✅ Transaction confirmed!")
             
-            # Update positions.json
-            if POSITIONS_AVAILABLE:
-                try:
-                    positions = load_positions()
-                    for p in positions:
-                        if str(p.mint) == str(mint):
-                            if percent >= 100:
-                                remove_position(str(p.mint))
-                                print(f"📝 Removed {p.symbol} from positions.json")
-                            else:
-                                p.quantity = p.quantity * (1 - percent/100)
-                                save_positions(positions)
-                                print(f"📝 Updated position: {p.quantity:.2f} remaining")
-                            break
-                except Exception as e:
-                    print(f"⚠️ positions.json update failed: {e}")
+            # Sync with real balance
+            sync_position_after_sell(str(mint), percent)
             
             return True
 
@@ -1021,24 +1063,89 @@ if __name__ == "__main__":
 
 
 def update_position_after_sell(mint, percent: float):
-    """Remove or update position in positions.json after successful sell."""
-    if not POSITIONS_AVAILABLE:
+    """Remove or update position with REAL balance from wallet."""
+    import time
+    import subprocess
+    import json
+    import requests
+    import base58
+    import os
+    from solders.keypair import Keypair
+    
+    mint_str = str(mint)
+    
+    if percent >= 100:
+        # Полная продажа - удаляем позицию
+        try:
+            subprocess.run(["redis-cli", "HDEL", "whale:positions", mint_str], capture_output=True)
+            subprocess.run(["redis-cli", "SADD", "sold_mints", mint_str], capture_output=True)
+            if POSITIONS_AVAILABLE:
+                remove_position(mint_str)
+            print(f"📝 Позиция удалена")
+        except Exception as e:
+            print(f"⚠️ Ошибка удаления: {e}")
         return
     
+    # Частичная продажа - синхронизируем реальный баланс
+    print(f"🔄 Синхронизация после продажи...")
+    time.sleep(10)
+    
     try:
-        positions = load_positions()
-        mint_str = str(mint)
+        pk = os.environ.get("SOLANA_PRIVATE_KEY")
+        rpcs = [
+            os.environ.get("DRPC_RPC_ENDPOINT"),
+            os.environ.get("ALCHEMY_RPC_ENDPOINT"),
+            os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+        ]
+        rpcs = [r for r in rpcs if r]
+        wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
         
-        for p in positions:
-            if str(p.mint) == mint_str:
-                if percent >= 100:
-                    remove_position(str(p.mint))
-                    print(f"📝 Removed {p.symbol} from positions.json")
-                else:
-                    # Update quantity
-                    p.quantity = p.quantity * (1 - percent/100)
+        real_balance = 0
+        for rpc_url in rpcs:
+            try:
+                resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                    "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]}, timeout=30)
+                accounts = resp.json().get("result", {}).get("value", [])
+                if accounts:
+                    real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
+                    break
+            except:
+                continue
+        
+        if real_balance > 0:
+            # Обновляем Redis
+            result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
+            if result.stdout.strip():
+                pos = json.loads(result.stdout.strip())
+                old_qty = pos.get("quantity", 0)
+                pos["quantity"] = real_balance
+                subprocess.run(["redis-cli", "HSET", "whale:positions", mint_str, json.dumps(pos)], capture_output=True)
+                
+                # Обновляем positions.json
+                if POSITIONS_AVAILABLE:
+                    positions = load_positions()
+                    for p in positions:
+                        if str(p.mint) == mint_str:
+                            p.quantity = real_balance
+                            break
                     save_positions(positions)
-                    print(f"📝 Updated position: {p.quantity:.2f} tokens remaining")
-                return
+                
+                # Обновляем history
+                try:
+                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
+                        history = json.load(f)
+                    if mint_str in history.get("purchased_tokens", {}):
+                        history["purchased_tokens"][mint_str]["amount"] = real_balance
+                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
+                            json.dump(history, f, indent=2)
+                except:
+                    pass
+                
+                print(f"✅ Баланс: {old_qty:.2f} -> {real_balance:.2f}")
+            else:
+                print(f"⚠️ Позиция не найдена в Redis")
+        else:
+            print(f"⚠️ Не удалось получить баланс")
     except Exception as e:
-        print(f"⚠️ Could not update positions.json: {e}")
+        print(f"⚠️ Sync error: {e}")
+
