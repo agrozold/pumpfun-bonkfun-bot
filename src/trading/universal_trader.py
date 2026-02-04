@@ -3190,7 +3190,7 @@ class UniversalTrader:
                     )
 
                 # If config SL triggered - mark as pending
-                if should_exit and exit_reason == ExitReason.STOP_LOSS:
+                if should_exit and exit_reason == ExitReason.STOP_LOSS and not position.is_moonbag:
                     logger.error(
                         f"[CONFIG SL] {token_info.symbol}: STOP LOSS TRIGGERED! "
                         f"Price {current_price:.10f} <= SL {position.stop_loss_price:.10f}"
@@ -3211,7 +3211,7 @@ class UniversalTrader:
                 # HARD STOP LOSS - ЖЁСТКАЯ ЗАЩИТА ОТ УБЫТКОВ
                 # ============================================
                 # Проверка 1: Обычный HARD STOP LOSS (25%)
-                if pnl_pct <= -HARD_STOP_LOSS_PCT:
+                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag:
                     logger.error(
                         f"[HARD SL] {token_info.symbol}: LOSS {pnl_pct:.1f}%! "
                         f"HARD STOP LOSS triggered (threshold: -{HARD_STOP_LOSS_PCT:.0f}%)"
@@ -3221,7 +3221,7 @@ class UniversalTrader:
                     pending_stop_loss = True
 
                 # Проверка 2: EMERGENCY STOP LOSS (40%) - максимальный приоритет
-                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT:
+                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag:
                     logger.error(
                         f"[EMERGENCY] {token_info.symbol}: CATASTROPHIC LOSS {pnl_pct:.1f}%! "
                         f"EMERGENCY sell triggered (threshold: -{EMERGENCY_STOP_LOSS_PCT:.0f}%)"

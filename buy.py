@@ -984,7 +984,8 @@ def main():
             except Exception as e:
                 print(f"⚠️ DexScreener error: {e}")
 
-            # Получаем баланс
+            # Ждём обновления RPC и получаем баланс
+            import time; time.sleep(3)
             try:
                 payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
                            "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]}
@@ -1040,6 +1041,14 @@ def main():
                     print(f"📝 Position добавлена: {symbol} ({balance:,.2f} @ {entry_price:.10f} SOL)")
                 except Exception as e:
                     print(f"⚠️ Positions error: {e}")
+
+                # 4. Обновляем Redis whale:positions
+                try:
+                    position_json = json.dumps(new_position, default=str)
+                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_str, position_json], capture_output=True)
+                    print(f"📝 Redis position обновлена")
+                except Exception as e:
+                    print(f"⚠️ Redis error: {e}")
 
                 # 3. Удаляем из sold_mints
                 subprocess.run(["redis-cli", "SREM", "sold_mints", mint_str], capture_output=True)

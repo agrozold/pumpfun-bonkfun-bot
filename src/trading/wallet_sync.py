@@ -277,10 +277,14 @@ async def sync_wallet():
             "state": "open",
             "platform": platform,
             "bonding_curve": None,  # Will be derived when selling
+            "is_moonbag": next((p.get("is_moonbag", False) for p in positions if p.get("mint") == mint), False),
         }
         
         positions.append(new_position)
         added += 1
+        # Remove from sold_mints since token is back on wallet
+        import subprocess
+        subprocess.run(["redis-cli", "SREM", "sold_mints", mint], capture_output=True)
         
         print(f"  [ADDED] {symbol}")
         print(f"          Entry Price: {entry_price:.10f} SOL (source: {price_source})")
@@ -301,6 +305,16 @@ async def sync_wallet():
     print(f"[DONE] Added {added} positions")
     print(f"[DONE] Total positions: {len(positions)}")
     print(f"[SAVED] {POSITIONS_FILE}")
+    # Sync Redis with positions.json
+    import subprocess
+    # Clear Redis and re-add from JSON
+    subprocess.run(["redis-cli", "DEL", "whale:positions"], capture_output=True)
+    for p in positions:
+        mint = p.get("mint", "")
+        if mint:
+            import json as js
+            subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
+    print(f"[SYNCED] Redis whale:positions ({len(positions)} positions)")
     print("=" * 60)
 
 
