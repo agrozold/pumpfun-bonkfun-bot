@@ -945,6 +945,8 @@ class UniversalTrader:
                     symbol=whale_buy.token_symbol,
                     sol_amount=actual_buy_amount,
                     jupiter_first=True,  # Skip bonding curves for whale copy
+                    whale_wallet=whale_buy.whale_wallet,
+                    whale_label=whale_buy.whale_label,
                 )
 
                 if success:
@@ -1171,6 +1173,8 @@ class UniversalTrader:
         sol_amount: float,
         jupiter_first: bool = False,
         is_dca: bool = False,
+        whale_wallet: str = None,
+        whale_label: str = None,
     ) -> tuple[bool, str | None, str, float, float]:
         """Buy token on ANY available DEX - universal liquidity finder.
 
@@ -1261,6 +1265,8 @@ class UniversalTrader:
                                     "tsl_trail_pct": self.tsl_trail_pct,
                                     "tsl_sell_pct": self.tsl_sell_pct,
                                     "max_hold_time": self.max_hold_time,
+                                    "whale_wallet": whale_wallet,
+                                    "whale_label": whale_label,
                                 },
                             )
                             return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
@@ -1337,6 +1343,8 @@ class UniversalTrader:
                                     "tsl_trail_pct": self.tsl_trail_pct,
                                     "tsl_sell_pct": self.tsl_sell_pct,
                                     "max_hold_time": self.max_hold_time,
+                                    "whale_wallet": whale_wallet,
+                                    "whale_label": whale_label,
                                 },
                             )
                             return True, buy_result.tx_signature, "lets_bonk", buy_result.amount or 0, buy_result.price or 0

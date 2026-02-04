@@ -104,6 +104,8 @@ def add_to_purchase_history(
             "platform": platform,
             "price": price,
             "amount": amount,
+            "whale_wallet": whale_wallet,
+            "whale_label": whale_label,
             "timestamp": datetime.utcnow().isoformat(),
         }
 

@@ -45,6 +45,8 @@ async def on_buy_success(tx: "PendingTransaction"):
     tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.5)
     tsl_sell_pct = tx.context.get("tsl_sell_pct", 0.9)
     bonding_curve = tx.context.get("bonding_curve", None)
+    whale_wallet = tx.context.get("whale_wallet", None)
+    whale_label = tx.context.get("whale_label", None)
     max_hold_time = tx.context.get("max_hold_time", 0)
     
     logger.warning(f"[TX_CALLBACK] ✅ BUY CONFIRMED: {symbol}")
@@ -59,6 +61,8 @@ async def on_buy_success(tx: "PendingTransaction"):
             platform=platform,
             price=price,
             amount=token_amount,
+            whale_wallet=whale_wallet,
+            whale_label=whale_label,
         )
         logger.info(f"[TX_CALLBACK] Added to purchase_history")
         
@@ -98,9 +102,12 @@ async def on_buy_success(tx: "PendingTransaction"):
                 # DCA parameters - enable by default for whale copy
                 dca_enabled=True,
                 dca_pending=True,
-                dca_trigger_pct=0.20,
+                dca_trigger_pct=0.25,
                 dca_first_buy_pct=0.50,
                 original_entry_price=price,
+                # Whale info
+                whale_wallet=whale_wallet,
+                whale_label=whale_label,
             )
             positions.append(position)
             save_positions(positions)

@@ -59,7 +59,9 @@ class Position:
     dca_trigger_pct: float = 0.20  # Докупаем при -20%
     dca_bought: bool = False  # True после докупки
     dca_first_buy_pct: float = 0.50  # Первая покупка 50%
-    original_entry_price: float = 0.0  # Цена первой покупки
+    original_entry_price: float = 0.0
+    whale_wallet: str | None = None
+    whale_label: str | None = None  # Цена первой покупки
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
