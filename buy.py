@@ -1025,7 +1025,26 @@ def main():
             
             # Обновляем Redis, positions.json и history
             if abs(real_balance - old_balance) > 1:
-                if result.stdout.strip():
+                # Проверяем позицию в positions.json (приоритет над Redis)
+                pos_from_json = None
+                try:
+                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
+                        positions_list = json.load(f)
+                    for p in positions_list:
+                        if p.get("mint") == mint_addr:
+                            pos_from_json = p
+                            break
+                except:
+                    pass
+                
+                # Если есть в Redis ИЛИ в positions.json - обновляем
+                if result.stdout.strip() or pos_from_json:
+                    # Берём pos из Redis или из positions.json
+                    if result.stdout.strip():
+                        pos = json.loads(result.stdout.strip())
+                    else:
+                        pos = pos_from_json
+                        print("📋 Позиция найдена в positions.json (не в Redis)")
                     # Получаем текущую цену через DexScreener (Jupiter decimals ненадёжны)
                     current_price = 0
                     try:
