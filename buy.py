@@ -971,45 +971,88 @@ def main():
         print("")
         print("🔄 Синхронизация позиции...")
         import time
-        time.sleep(3)
+        import subprocess, json, requests, base58, os
+        from solders.keypair import Keypair
         
         try:
-            import subprocess, json, requests, base58, os
-            from solders.keypair import Keypair
-            
             pk = os.environ.get("SOLANA_PRIVATE_KEY")
-            rpc = os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+            # Используем DRPC как основной - он быстрее обновляется
+            rpc = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
             wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
+            mint_addr = str(mint)
             
-            resp = requests.post(rpc, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner", 
-                "params": [wallet, {"mint": str(mint)}, {"encoding": "jsonParsed"}]}, timeout=30)
-            accounts = resp.json().get("result", {}).get("value", [])
+            # Получаем старый баланс из Redis
+            old_balance = 0
+            result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_addr], capture_output=True, text=True)
+            if result.stdout.strip():
+                pos = json.loads(result.stdout.strip())
+                old_balance = pos.get("quantity", 0)
             
-            if accounts:
-                real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
-                print(f"📊 Реальный баланс: {real_balance:,.2f}")
-                
-                result = subprocess.run(["redis-cli", "HGET", "whale:positions", str(mint)], capture_output=True, text=True)
-                if result.stdout.strip():
-                    pos = json.loads(result.stdout.strip())
-                    old_qty = pos.get("quantity", 0)
-                    pos["quantity"] = real_balance
-                    subprocess.run(["redis-cli", "HSET", "whale:positions", str(mint), json.dumps(pos)], capture_output=True)
-                    print(f"✅ Redis: {old_qty:.2f} -> {real_balance:.2f}")
+            # Ждём 10 сек и делаем 3 попытки с разными RPC
+            rpcs = [
+                os.environ.get("DRPC_RPC_ENDPOINT"),
+                os.environ.get("ALCHEMY_RPC_ENDPOINT"),
+                os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+            ]
+            rpcs = [r for r in rpcs if r]  # Убираем None
+            
+            real_balance = old_balance
+            print(f"   Ожидание 10 сек...")
+            time.sleep(10)
+            
+            for attempt, rpc_url in enumerate(rpcs):
+                if not rpc_url:
+                    continue
+                try:
+                    resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner", 
+                        "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]}, timeout=30)
+                    accounts = resp.json().get("result", {}).get("value", [])
                     
+                    if accounts:
+                        real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
+                        if abs(real_balance - old_balance) > 1:  # Изменение больше 1 токена
+                            print(f"📊 Баланс: {old_balance:.2f} -> {real_balance:.2f}")
+                            break
+                except:
+                    pass
+                    
+                if attempt < len(rpcs) - 1:
+                    print(f"   Пробуем другой RPC...")
+                    time.sleep(3)
+            
+            # Обновляем Redis, positions.json и history
+            if abs(real_balance - old_balance) > 1:
+                if result.stdout.strip():
+                    pos["quantity"] = real_balance
+                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(pos)], capture_output=True)
+                    
+                    # positions.json
                     with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
                         positions = json.load(f)
                     for p in positions:
-                        if p.get("mint") == str(mint):
+                        if p.get("mint") == mint_addr:
                             p["quantity"] = real_balance
                             break
                     with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
                         json.dump(positions, f, indent=2)
-                    print("✅ Синхронизировано")
+                    
+                    # purchased_tokens_history.json
+                    try:
+                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
+                            history = json.load(f)
+                        if mint_addr in history.get("purchased_tokens", {}):
+                            history["purchased_tokens"][mint_addr]["amount"] = real_balance
+                            with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
+                                json.dump(history, f, indent=2)
+                    except:
+                        pass
+                        
+                    print(f"✅ Синхронизировано: {real_balance:,.2f}")
                 else:
-                    print("⚠️ Новый токен - запусти wsync после bot-restart")
+                    print("⚠️ Новый токен - запусти wsync")
             else:
-                print("⚠️ Токен не найден")
+                print(f"⚠️ RPC не обновился. Текущий баланс: {real_balance:,.2f}")
+                print(f"   Запусти: wsync && bot-restart")
         except Exception as e:
             print(f"⚠️ Sync error: {e}")
 
