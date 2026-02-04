@@ -1003,7 +1003,7 @@ def main():
             if balance > 0 and entry_price > 0:
                 # 1. Обновляем purchase_history
                 try:
-                    with open("data/purchased_tokens_history.json", "r") as f:
+                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
                         history = json.load(f)
                     if "purchased_tokens" not in history:
                         history["purchased_tokens"] = {}
@@ -1011,32 +1011,56 @@ def main():
                         "price": entry_price, "symbol": symbol, "amount": balance,
                         "time": datetime.now().isoformat(), "source": "buy_script"
                     }
-                    with open("data/purchased_tokens_history.json", "w") as f:
+                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
                         json.dump(history, f)
                     print(f"📝 Purchase history обновлён")
                 except Exception as e:
                     print(f"⚠️ Purchase history error: {e}")
 
-                # 2. Обновляем positions.json
+                # 2. Обновляем positions.json (с сохранением существующей позиции)
                 try:
-                    with open("positions.json", "r") as f:
+                    # Сначала проверяем Redis на существующую позицию
+                    existing_pos = None
+                    try:
+                        result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
+                        if result.stdout.strip():
+                            existing_pos = json.loads(result.stdout.strip())
+                            print(f"📊 Найдена существующая позиция: qty={existing_pos.get('quantity', 0):.2f}")
+                    except Exception as e:
+                        print(f"⚠️ Redis read error: {e}")
+
+                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
                         positions = json.load(f)
                     positions = [p for p in positions if p.get("mint") != mint_str]
-                    new_position = {
-                        "mint": mint_str, "symbol": symbol, "entry_price": entry_price,
-                        "quantity": balance, "entry_time": datetime.now().isoformat(),
-                        "take_profit_price": entry_price * 10000, "stop_loss_price": entry_price * 0.7,
-                        "max_hold_time": 0, "tsl_enabled": True, "tsl_activation_pct": 0.3,
-                        "tsl_trail_pct": 0.5, "tsl_active": False, "high_water_mark": entry_price,
-                        "tsl_trigger_price": 0.0, "tsl_sell_pct": 0.7, "is_active": True,
-                        "is_moonbag": False, "dca_enabled": True, "dca_pending": False,
-                        "dca_trigger_pct": 0.2, "dca_bought": False, "dca_first_buy_pct": 0.5,
-                        "original_entry_price": entry_price, "state": "open",
-                        "platform": "pump_fun", "bonding_curve": None,
-                        "created_at": datetime.now().isoformat()
-                    }
+                    
+                    if existing_pos and existing_pos.get("quantity", 0) > 0:
+                        # ДОКУПКА: обновляем существующую позицию
+                        # balance уже содержит ОБЩИЙ баланс с кошелька (старые + новые токены)
+                        new_position = existing_pos.copy()
+                        new_position["quantity"] = balance  # Актуальный баланс с чейна
+                        new_position["entry_price"] = entry_price  # Текущая цена
+                        new_position["stop_loss_price"] = entry_price * 0.7  # Пересчитываем SL
+                        new_position["high_water_mark"] = max(entry_price, existing_pos.get("high_water_mark", entry_price))
+                        new_position["is_active"] = True
+                        new_position["state"] = "open"
+                        print(f"📊 Докупка: обновлён баланс {existing_pos.get('quantity', 0):.2f} -> {balance:.2f}")
+                    else:
+                        # НОВАЯ ПОЗИЦИЯ
+                        new_position = {
+                            "mint": mint_str, "symbol": symbol, "entry_price": entry_price,
+                            "quantity": balance, "entry_time": datetime.now().isoformat(),
+                            "take_profit_price": entry_price * 10000, "stop_loss_price": entry_price * 0.7,
+                            "max_hold_time": 0, "tsl_enabled": True, "tsl_activation_pct": 0.3,
+                            "tsl_trail_pct": 0.5, "tsl_active": False, "high_water_mark": entry_price,
+                            "tsl_trigger_price": 0.0, "tsl_sell_pct": 0.7, "is_active": True,
+                            "is_moonbag": False, "dca_enabled": True, "dca_pending": False,
+                            "dca_trigger_pct": 0.2, "dca_bought": False, "dca_first_buy_pct": 0.5,
+                            "original_entry_price": entry_price, "state": "open",
+                            "platform": "pump_fun", "bonding_curve": None,
+                            "created_at": datetime.now().isoformat()
+                        }
                     positions.append(new_position)
-                    with open("positions.json", "w") as f:
+                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
                         json.dump(positions, f, indent=2, default=str)
                     print(f"📝 Position добавлена: {symbol} ({balance:,.2f} @ {entry_price:.10f} SOL)")
                 except Exception as e:

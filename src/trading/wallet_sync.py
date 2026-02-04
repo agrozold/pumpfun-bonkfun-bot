@@ -272,7 +272,7 @@ async def sync_wallet():
             "tsl_active": False,
             "high_water_mark": entry_price,
             "tsl_trigger_price": 0.0,
-            "tsl_sell_pct": 0.9,
+            "tsl_sell_pct": 0.7,
             "is_active": True,
             "state": "open",
             "platform": platform,
