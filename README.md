@@ -96,10 +96,6 @@ chmod +x start.sh stop.sh
 
 ### 8. Добавляем алиасы
 
-cat >> ~/.bashrc << 'EOF'
-
-### 8. Добавляем алиасы
-
 ```bash
 cat >> ~/.bashrc << 'EOF'
 
