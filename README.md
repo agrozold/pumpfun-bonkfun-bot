@@ -1,3 +1,4 @@
+```bash
 # Whale Copy Trading Bot for Solana
 
 Автоматический бот для копирования сделок крупных трейдеров (китов) на Solana.
