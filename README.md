@@ -98,6 +98,11 @@ chmod +x start.sh stop.sh
 
 cat >> ~/.bashrc << 'EOF'
 
+### 8. Добавляем алиасы
+
+```bash
+cat >> ~/.bashrc << 'EOF'
+
 # === WHALE BOT ===
 BOT_DIR="/opt/pumpfun-bonkfun-bot"
 
