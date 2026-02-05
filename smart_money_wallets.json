@@ -1,0 +1,16 @@
+{
+  "whales": [
+    {
+      "wallet": "EXAMPLE_WALLET_ADDRESS_REPLACE_ME",
+      "win_rate": 0.7,
+      "trades_count": 0,
+      "label": "example-whale",
+      "source": "manual",
+      "added_date": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "min_buy_amount_sol": 0.5,
+  "min_win_rate_threshold": 0.65,
+  "tracking_enabled": true,
+  "last_updated": "2026-01-01T00:00:00Z"
+}
