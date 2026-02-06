@@ -156,7 +156,9 @@ wsync && bot-restart
 
 redis-cli del whale:positions && wsync && bot-restart
 
-Helius Webhooks
+wsync && bot-restart
+
+## Helius Webhooks
 Бот использует Helius webhooks для мгновенного получения сигналов о сделках китов.
 
 Настройка вебхука
@@ -191,7 +193,7 @@ Copywhale_copy:
 DCA (Dollar Cost Averaging)
 Бот автоматически усредняет позицию при просадке или росте.
 
-Как работает DCA
+## Как работает DCA
 Первая покупка — 50% от buy_amount
 Вторая покупка — оставшиеся 50% при достижении триггера
 Триггеры DCA
@@ -290,117 +292,6 @@ PYEOF
 
 wsync && bot-restart
 
-Helius Webhooks
-Бот использует Helius webhooks для мгновенного получения сигналов о сделках китов.
-
-Настройка вебхука
-Зарегистрируйтесь на https://helius.dev
-Создайте webhook в личном кабинете или через API:
-Copycurl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "webhookURL": "http://ВАШ_IP:8000/webhook",
-    "transactionTypes": ["SWAP"],
-    "accountAddresses": [],
-    "webhookType": "enhanced"
-  }'
-Сохраните полученный webhookID
-Синхронизация китов с вебхуком
-После добавления/удаления китов в smart_money_wallets.json выполните:
-
-Copywsync && bot-restart
-Скрипт wsync автоматически обновит список адресов в Helius webhook.
-
-Проверка вебхука
-Copycurl -X POST http://localhost:8000/webhook \
-  -H "Content-Type: application/json" \
-  -d '[{"type":"SWAP","signature":"test"}]'
-Конфиг вебхука в bot-whale-copy.yaml
-Copywhale_copy:
-  enabled: true
-  wallets_file: smart_money_wallets.json
-  min_buy_amount: 0.01
-  webhook_enabled: true
-  webhook_port: 8000
-DCA (Dollar Cost Averaging)
-Бот автоматически усредняет позицию при просадке или росте.
-
-Как работает DCA
-Первая покупка — 50% от buy_amount
-Вторая покупка — оставшиеся 50% при достижении триггера
-Триггеры DCA
-На просадке: -25% от entry price
-На росте: +25% от entry price (опционально)
-После DCA
-Пересчитывается средняя цена входа (entry_price)
-Пересчитывается Stop Loss от новой цены
-Сбрасывается TSL
-Конфиг DCA
-В текущей версии DCA включён по умолчанию:
-
-Copydca_enabled = True
-dca_first_buy_pct = 0.50    # 50% первая покупка
-dca_trigger_pct = 0.25      # Триггер при -25%
-Пример DCA в логах
-[DCA] First buy: 0.0100 SOL (50% of 0.0200)
-[DCA] Charizard: Price 0.0000020778 <= 0.0000021435 (-25%)
-[DCA] Executing second buy for Charizard (-25%)...
-[DCA] ✅ SUCCESS! Bought 4715.78 more at 0.0000021205
-[DCA] Total tokens: 3498.89 -> 8214.66
-[DCA] New entry: 0.0000021205
-[DCA] New SL: 0.0000014844 (-30%)
-Статус DCA в позиции
-Copycat positions.json | python3 -c "
-import sys, json
-for p in json.load(sys.stdin):
-    dca = '⏳ ЖДЁТ' if p.get('dca_pending') else ('✅ КУПЛЕН' if p.get('dca_bought') else '❌ ВЫКЛ')
-    print(f\"{p.get('symbol'):12} | DCA: {dca}\")
-"
-Формат smart_money_wallets.json
-Правильный формат
-Copy{
-  "whales": [
-    {
-      "wallet": "5PVMT5f22fGbN1uDwaiCaxchzuawS5NTjUbitU5emWAW",
-      "label": "whale-1"
-    },
-    {
-      "wallet": "EdF8apcddwSr86WnJcBPJ7Gax12e48qqyd5zcafrGQ4Y",
-      "label": "whale-2"
-    }
-  ]
-}
-Частые ошибки
-❌ Неправильно — просто массив адресов:
-
-Copy["АДРЕС_1", "АДРЕС_2"]
-❌ Неправильно — без обёртки whales:
-
-Copy[{"wallet": "АДРЕС_1", "label": "whale-1"}]
-❌ Неправильно — ключ wallets вместо whales:
-
-Copy{"wallets": [...]}
-Проверка файла
-Copypython3 -c "import json; d=json.load(open('smart_money_wallets.json')); print(f'Китов: {len(d.get(\"whales\", []))}')"
-Добавить кита
-Copypython3 << 'PYEOF'
-import json
-
-new_wallet = "АДРЕС_КОШЕЛЬКА"
-label = "whale-new"
-
-with open("smart_money_wallets.json") as f:
-    data = json.load(f)
-
-if new_wallet not in [w["wallet"] for w in data["whales"]]:
-    data["whales"].append({"wallet": new_wallet, "label": label})
-    with open("smart_money_wallets.json", "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"✅ Добавлен: {label}")
-else:
-    print("❌ Уже есть")
-PYEOF
-
 wsync && bot-restart
 Удалить кита
 Copypython3 << 'PYEOF'
@@ -422,7 +313,7 @@ else:
     print("❌ Не найден")
 PYEOF
 
-wsync && bot-restart
+
 
 ## Disclaimer
 
