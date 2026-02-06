@@ -1,0 +1,12 @@
+{
+  "whales": [
+    {
+      "wallet": "EXAMPLE_WALLET_ADDRESS_1",
+      "label": "whale-1"
+    },
+    {
+      "wallet": "EXAMPLE_WALLET_ADDRESS_2",
+      "label": "whale-2"
+    }
+  ]
+}

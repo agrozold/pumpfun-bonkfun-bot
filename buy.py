@@ -981,50 +981,74 @@ def main():
             wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
             mint_addr = str(mint)
             
-            # Получаем старый баланс из Redis
+            # Получаем ТЕКУЩИЙ баланс с RPC (до покупки он уже записан)
             old_balance = 0
+            old_entry = 0
+            rpc_balance_before = 0
             result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_addr], capture_output=True, text=True)
             if result.stdout.strip():
                 pos = json.loads(result.stdout.strip())
                 old_balance = pos.get("quantity", 0)
-            
-            # Ждём 10 сек и делаем 3 попытки с разными RPC
+                old_entry = pos.get("entry_price", 0)
+
+            # Ждём и делаем 3 попытки с разными RPC
             rpcs = [
                 os.environ.get("DRPC_RPC_ENDPOINT"),
                 os.environ.get("ALCHEMY_RPC_ENDPOINT"),
                 os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
             ]
-            rpcs = [r for r in rpcs if r]  # Убираем None
-            
+            rpcs = [r for r in rpcs if r]
+
             real_balance = old_balance
-            # Retry до 3 раз с увеличивающейся задержкой
-            for sync_attempt in range(3):
-                delay = 10 + sync_attempt * 5  # 10, 15, 20 сек
-                print(f"   Ожидание {delay} сек... (попытка {sync_attempt+1}/3)")
-                time.sleep(delay)
+            last_rpc_balance = 0  # Баланс с предыдущего запроса RPC
             
-            for attempt, rpc_url in enumerate(rpcs):
+            # Сначала получаем текущий баланс с RPC (до обновления)
+            for rpc_url in rpcs:
                 if not rpc_url:
                     continue
                 try:
-                    resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner", 
-                        "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]}, timeout=30)
+                    resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                        "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]}, timeout=10)
                     accounts = resp.json().get("result", {}).get("value", [])
-                    
                     if accounts:
-                        real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
-                        if abs(real_balance - old_balance) > 1:  # Изменение больше 1 токена
-                            print(f"📊 Баланс: {old_balance:.2f} -> {real_balance:.2f}")
-                            break
+                        last_rpc_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
+                        break
                 except:
                     pass
-                    
-                if attempt < len(rpcs) - 1:
-                    print(f"   Пробуем другой RPC...")
-                    time.sleep(3)
+            
+            if last_rpc_balance > 0:
+                rpc_balance_before = last_rpc_balance  # Баланс с RPC до обновления
+            
+            # Retry до 5 раз - ждём пока RPC обновится
+            for sync_attempt in range(5):
+                delay = 2 + sync_attempt  # 2, 3, 4, 5, 6 сек
+                print(f"   Ожидание {delay} сек... (попытка {sync_attempt+1}/5)")
+                time.sleep(delay)
+
+                # Проверяем RPC
+                for rpc_url in rpcs:
+                    if not rpc_url:
+                        continue
+                    try:
+                        resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                            "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]}, timeout=10)
+                        accounts = resp.json().get("result", {}).get("value", [])
+                        if accounts:
+                            real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
+                            # Проверяем что баланс УВЕЛИЧИЛСЯ (новые токены появились)
+                            if real_balance > rpc_balance_before + 1:
+                                print(f"📊 Баланс: {old_balance:.2f} -> {real_balance:.2f}")
+                                break
+                    except:
+                        pass
+
+                # Если баланс обновился - выходим
+                if real_balance > rpc_balance_before + 1:
+                    break
+
             
             # Обновляем Redis, positions.json и history
-            if abs(real_balance - old_balance) > 1:
+            if real_balance > rpc_balance_before + 1:
                 # Проверяем позицию в positions.json (приоритет над Redis)
                 pos_from_json = None
                 try:
@@ -1037,37 +1061,47 @@ def main():
                 except:
                     pass
                 
-                # Если есть в Redis ИЛИ в positions.json - обновляем
-                if result.stdout.strip() or pos_from_json:
-                    # Берём pos из Redis или из positions.json
-                    if result.stdout.strip():
-                        pos = json.loads(result.stdout.strip())
+                # Если позиция существует - обновляем (pos уже загружен в начале)
+                if old_balance > 0 or pos_from_json:
+                    # Используем pos из начала, или из positions.json если нет в Redis
+                    if old_balance > 0:  # pos уже загружен
+                        pass  # pos уже загружен в начале
                     else:
                         pos = pos_from_json
                         print("📋 Позиция найдена в positions.json (не в Redis)")
-                    # Получаем текущую цену через DexScreener (Jupiter decimals ненадёжны)
-                    current_price = 0
-                    try:
-                        price_resp = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{mint_addr}", timeout=10)
-                        pairs = price_resp.json().get("pairs", [])
-                        if pairs:
-                            current_price = float(pairs[0].get("priceNative", 0) or 0)
-                    except:
-                        pass
-                    
+                    # Вычисляем цену из реальных данных: SOL потрачено / токены получено
+                    tokens_received = real_balance - old_balance
+                    if tokens_received > 0:
+                        current_price = args.amount / tokens_received
+                    else:
+                        current_price = pos.get("entry_price", 0)  # Fallback на старую цену
+
                     pos["quantity"] = real_balance
-                    
+
                     # Обновляем entry_price, SL, TSL
                     if current_price > 0:
                         old_entry = pos.get("entry_price", 0)
-                        pos["entry_price"] = current_price
-                        pos["stop_loss_price"] = current_price * 0.7
-                        pos["high_water_mark"] = current_price
-                        pos["tsl_active"] = False
-                        pos["tsl_trigger_price"] = 0
-                        print(f"📊 Entry: {old_entry:.10f} -> {current_price:.10f}")
-                        print(f"📊 SL: {current_price * 0.7:.10f} (-30%)")
+                        # Средневзвешенная цена если докупаем
+                        if old_balance > 0 and old_entry > 0:
+                            avg_price = (old_entry * old_balance + current_price * tokens_received) / real_balance
+                            pos["entry_price"] = avg_price
+                            pos["stop_loss_price"] = avg_price * 0.7
+                            pos["high_water_mark"] = avg_price
+                            pos["tsl_active"] = False
+                            pos["tsl_trigger_price"] = 0
+                            print(f"📊 Entry (avg): {old_entry:.10f} -> {avg_price:.10f}")
+                            print(f"📊 SL: {avg_price * 0.7:.10f} (-30%)")
+                        else:
+                            pos["entry_price"] = current_price
+                            pos["stop_loss_price"] = current_price * 0.7
+                            pos["high_water_mark"] = current_price
+                            pos["tsl_active"] = False
+                            pos["tsl_trigger_price"] = 0
+                            print(f"📊 Entry: {old_entry:.10f} -> {current_price:.10f}")
+                            print(f"📊 SL: {current_price * 0.7:.10f} (-30%)")
                     
+                    # УДАЛЯЕМ из sold_mints (если был продан и куплен снова)
+                    subprocess.run(["redis-cli", "SREM", "sold_mints", mint_addr], capture_output=True)
                     subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(pos)], capture_output=True)
 
                     # positions.json
@@ -1077,9 +1111,9 @@ def main():
                         if p.get("mint") == mint_addr:
                             p["quantity"] = real_balance
                             if current_price > 0:
-                                p["entry_price"] = current_price
-                                p["stop_loss_price"] = current_price * 0.7
-                                p["high_water_mark"] = current_price
+                                p["entry_price"] = pos["entry_price"]
+                                p["stop_loss_price"] = pos["stop_loss_price"]
+                                p["high_water_mark"] = pos["high_water_mark"]
                                 p["tsl_active"] = False
                                 p["tsl_trigger_price"] = 0
                             break
@@ -1104,22 +1138,19 @@ def main():
                     # НОВЫЙ ТОКЕН - создаём позицию!
                     print("📝 Создаю новую позицию...")
                     
-                    # Получаем цену
-                    current_price = 0
+                    # Вычисляем цену из реальных данных TX
+                    current_price = args.amount / max(real_balance, 1)
+                    
+                    # Получаем symbol из DexScreener (только symbol, не цену!)
+                    symbol = "UNKNOWN"
                     try:
-                        price_resp = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{mint_addr}", timeout=10)
+                        price_resp = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{mint_addr}", timeout=5)
                         pairs = price_resp.json().get("pairs", [])
                         if pairs:
-                            current_price = float(pairs[0].get("priceNative", 0) or 0)
                             symbol = pairs[0].get("baseToken", {}).get("symbol", "UNKNOWN")
-                        else:
-                            symbol = "UNKNOWN"
                     except:
-                        symbol = "UNKNOWN"
-                    
-                    if current_price <= 0:
-                        current_price = args.amount / max(real_balance, 1)
-                    
+                        pass
+
                     # Создаём новую позицию
                     from datetime import datetime
                     new_pos = {
@@ -1149,6 +1180,8 @@ def main():
                     }
                     
                     # Сохраняем в Redis
+                    # УДАЛЯЕМ из sold_mints (если там был)
+                    subprocess.run(["redis-cli", "SREM", "sold_mints", mint_addr], capture_output=True)
                     subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(new_pos)], capture_output=True)
                     
                     # Сохраняем в positions.json

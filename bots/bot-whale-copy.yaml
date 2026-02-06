@@ -21,11 +21,11 @@ priority_fees:
 pumpportal:
   url: wss://pumpportal.fun/api/data
 trade:
-  buy_amount: 0.01
+  buy_amount: 0.02
   buy_slippage: 0.3
   exit_strategy: tp_sl
   max_hold_time: 0
-  min_sol_balance: 0.05
+  min_sol_balance: 0.1
   moon_bag_percentage: 30
   price_check_interval: 1
   sell_slippage: 0.2
