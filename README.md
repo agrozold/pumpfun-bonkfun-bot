@@ -11,12 +11,24 @@
 - Redis — быстрая синхронизация позиций
 - Поддержка DEX — Pump.fun, PumpSwap, Jupiter, Raydium
 
-## Необходимые API ключи
+## Необходимые ключи и RPC
 
-- Helius (https://helius.dev) — webhooks
-- Alchemy (https://alchemy.com) — Solana RPC
-- DRPC (https://drpc.org) — резервный RPC
-- Jupiter (https://station.jup.ag/docs) — свапы
+**Helius**
+- Helius (https://helius.dev) — webhooks + (опционально) Solana RPC.
+
+**RPC (Solana)**
+Тебе нужен хотя бы один RPC endpoint. В проекте предусмотрены несколько переменных (можно использовать один или несколько провайдеров):
+
+- `SOLANA_NODE_RPC_ENDPOINT` — любой свой RPC (свой нод или любой провайдер)
+- `ALCHEMY_RPC_ENDPOINT` — Alchemy (https://alchemy.com) — Solana RPC
+- `DRPC_RPC_ENDPOINT` — dRPC (https://drpc.org) — Solana RPC
+
+Другие популярные варианты RPC провайдеров (их можно использовать в `SOLANA_NODE_RPC_ENDPOINT`):
+- Helius RPC URLs and endpoints: https://www.helius.dev/docs/api-reference/endpoints
+- QuickNode / Chainstack / Ankr и др.
+
+**Jupiter**
+- Jupiter (https://station.jup.ag/docs) — свапы / trade API
 
 ---
 
@@ -58,9 +70,10 @@ nano .env
 Заполни как минимум:
 - SOLANA_PRIVATE_KEY
 - HELIUS_API_KEY
-- ALCHEMY_RPC_ENDPOINT
-- DRPC_RPC_ENDPOINT
+- ALCHEMY_RPC_ENDPOINT (или SOLANA_NODE_RPC_ENDPOINT)
+- DRPC_RPC_ENDPOINT (если используешь)
 - JUPITER_TRADE_API_KEY
+- WEBHOOK_URL
 
 ### 5) Конфиг бота
 
@@ -206,6 +219,51 @@ curl -s http://localhost:8000/health
 
 ---
 
+## Полезные команды (grep)
+
+~~~bash
+# Ошибки
+grep -h "ERROR\|FAILED" logs/*.log | tail -30
+
+# Последние сделки
+grep -h "Successfully bought" logs/*.log | tail -20
+grep -h "Successfully sold" logs/*.log | tail -20
+
+# Whale copy trades
+grep -h "whale buy\|WHALE" logs/*.log | tail -20
+grep -h "Skipping whale" logs/*.log | tail -10
+
+# PnL по позициям
+grep "Position PnL" logs/*.log | tail -20
+
+# Take Profit / Stop Loss
+grep "TAKE_PROFIT" logs/*.log | tail -20
+grep "STOP_LOSS" logs/*.log | tail -20
+
+# Moonbag
+grep "moon bag" logs/*.log | tail -20
+~~~
+
+---
+
+## Быстрые фиксы (sed)
+
+~~~bash
+# Изменить buy_amount во всех YAML
+sed -i 's/buy_amount: [0-9.]*/buy_amount: 0.02/g' bots/*.yaml
+
+# Изменить max_hold_time на 24 часа (86400 секунд)
+sed -i 's/max_hold_time: [0-9]*/max_hold_time: 86400/g' bots/*.yaml
+~~~
+
+После правок:
+
+~~~bash
+bot-restart
+~~~
+
+---
+
 ## Алиасы (опционально)
 
 ~~~bash
@@ -235,7 +293,31 @@ source ~/.bashrc
 
 ---
 
+## Helius Webhooks
+
+Создание webhook (пример):
+
+~~~bash
+curl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "webhookURL": "http://ВАШ_IP:8000/webhook",
+    "transactionTypes": ["SWAP"],
+    "accountAddresses": [],
+    "webhookType": "enhanced"
+  }'
+~~~
+
+Тест webhook локально:
+
+~~~bash
+curl -X POST http://localhost:8000/webhook \
+  -H "Content-Type: application/json" \
+  -d '[{"type":"SWAP","signature":"test"}]'
+~~~
+
+---
+
 ## Disclaimer
 
 Торговля криптовалютой связана с высоким риском. Начинайте с небольших сумм.
- 
