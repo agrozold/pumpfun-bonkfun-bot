@@ -1,4 +1,3 @@
-```bash
 # Whale Copy Trading Bot for Solana
 
 Автоматический бот для копирования сделок крупных трейдеров (китов) на Solana.
@@ -21,31 +20,29 @@
 
 ## Установка
 
-### 1. Подготовка сервера (Ubuntu 20.04+)
+### 1) Подготовка сервера (Ubuntu 20.04+)
+
 
 sudo apt update && sudo apt upgrade -y
 sudo apt install python3.10 python3.10-venv python3-pip redis-server git -y
 sudo systemctl enable redis-server && sudo systemctl start redis-server
-
-### 2. Клонирование
-
+2) Клонирование
+bash
 cd /opt
 git clone https://github.com/agrozold/pumpfun-bonkfun-bot.git
 cd pumpfun-bonkfun-bot
-
-### 3. Виртуальное окружение
-
+3) Виртуальное окружение
+bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-
-### 4. Настройка .env
-
+4) Настройка .env
+bash
 cp .env.example .env
 nano .env
-
 Заполните:
 
+text
 SOLANA_PRIVATE_KEY=ваш_приватный_ключ_base58
 ALCHEMY_RPC_ENDPOINT=https://solana-mainnet.g.alchemy.com/v2/ваш_ключ
 DRPC_RPC_ENDPOINT=https://lb.drpc.org/ogrpc?network=solana&dkey=ваш_ключ
@@ -53,30 +50,28 @@ HELIUS_API_KEY=ваш_helius_ключ
 JUPITER_TRADE_API_KEY=ваш_jupiter_ключ
 JITO_TIP_ACCOUNT=Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY
 JITO_TIP_AMOUNT=100000
-
-### 5. Конфиг бота
-
+5) Конфиг бота
+bash
 nano bots/bot-whale-copy.yaml
-
 Основные параметры:
 
+text
 buy_amount: 0.01        # SOL на сделку
 min_whale_buy: 0.5      # Мин. покупка кита
 stop_loss_pct: 30       # Стоп-лосс -30%
 tsl_enabled: true       # Trailing stop
 tsl_activation_pct: 0.3 # Активация TSL при +30%
 tsl_sell_pct: 0.9       # Продать 90% от максимума
-
-### 6. База китов
-
+6) База китов
 Файл smart_money_wallets.json содержит кошельки китов.
 
-Добавить кита:
+Добавить/изменить кита:
 
+bash
 nano smart_money_wallets.json
+Пример записи:
 
-Формат записи:
-
+json
 {
   "wallet": "АДРЕС_КОШЕЛЬКА",
   "win_rate": 0.7,
@@ -85,19 +80,16 @@ nano smart_money_wallets.json
   "source": "manual",
   "added_date": "2026-01-01T00:00:00Z"
 }
-
 После изменений:
 
+bash
 wsync && bot-restart
-
-### 7. Создаём папку логов
-
+7) Логи и права
+bash
 mkdir -p logs
 chmod +x start.sh stop.sh
-
-### 8. Добавляем алиасы
-
-
+8) Добавляем алиасы (опционально)
+bash
 cat >> ~/.bashrc << 'EOF'
 
 # === WHALE BOT ===
@@ -120,51 +112,54 @@ alias bot-reset='bot-stop && redis-cli DEL whale:positions && redis-cli DEL whal
 EOF
 
 source ~/.bashrc
-
-### 9. Запуск
-
+9) Запуск
+bash
 bot-start
-
-### 10. Проверка
-
+10) Проверка
+bash
 bot-status
 bot-logs
 bot-health
+Команды
+bot-start — запустить
 
-## Команды
+bot-stop — остановить
 
-- bot-start — запустить
-- bot-stop — остановить
-- bot-restart — перезапустить
-- bot-logs — логи
-- bot-errors — ошибки
-- bot-health — статус
-- bot-config — редактировать конфиг
-- bot-whales-edit — редактировать китов
-- bot-whales-count — количество китов
-- wsync — синхронизировать вебхуки
-- bot-update — обновить с GitHub
-- bot-reset — полный сброс
+bot-restart — перезапустить
 
-## Быстрые команды
+bot-logs — логи
 
+bot-errors — ошибки
+
+bot-health — статус
+
+bot-config — редактировать конфиг
+
+bot-whales-edit — редактировать китов
+
+bot-whales-count — количество китов
+
+wsync — синхронизировать вебхуки
+
+bot-update — обновить с GitHub
+
+bot-reset — полный сброс
+
+Быстрые команды
 Синхронизация после изменений:
 
+bash
 wsync && bot-restart
-
 Полный сброс Redis:
 
+bash
 redis-cli del whale:positions && wsync && bot-restart
-
-wsync && bot-restart
-
-## Helius Webhooks
+Helius Webhooks
 Бот использует Helius webhooks для мгновенного получения сигналов о сделках китов.
 
-Настройка вебхука
-Зарегистрируйтесь на https://helius.dev
-Создайте webhook в личном кабинете или через API:
-Copycurl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_KEY" \
+Создание webhook (через API)
+bash
+curl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "webhookURL": "http://ВАШ_IP:8000/webhook",
@@ -172,44 +167,24 @@ Copycurl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_K
     "accountAddresses": [],
     "webhookType": "enhanced"
   }'
-Сохраните полученный webhookID
-Синхронизация китов с вебхуком
+Сохраните полученный webhookID.
+
+Синхронизация китов с webhook
 После добавления/удаления китов в smart_money_wallets.json выполните:
 
-Copywsync && bot-restart
-Скрипт wsync автоматически обновит список адресов в Helius webhook.
-
-Проверка вебхука
-Copycurl -X POST http://localhost:8000/webhook \
+bash
+wsync && bot-restart
+Проверка webhook локально
+bash
+curl -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
   -d '[{"type":"SWAP","signature":"test"}]'
-Конфиг вебхука в bot-whale-copy.yaml
-Copywhale_copy:
-  enabled: true
-  wallets_file: smart_money_wallets.json
-  min_buy_amount: 0.01
-  webhook_enabled: true
-  webhook_port: 8000
 DCA (Dollar Cost Averaging)
 Бот автоматически усредняет позицию при просадке или росте.
 
-## Как работает DCA
-Первая покупка — 50% от buy_amount
-Вторая покупка — оставшиеся 50% при достижении триггера
-Триггеры DCA
-На просадке: -25% от entry price
-На росте: +25% от entry price (опционально)
-После DCA
-Пересчитывается средняя цена входа (entry_price)
-Пересчитывается Stop Loss от новой цены
-Сбрасывается TSL
-Конфиг DCA
-В текущей версии DCA включён по умолчанию:
+Пример DCA в логах:
 
-Copydca_enabled = True
-dca_first_buy_pct = 0.50    # 50% первая покупка
-dca_trigger_pct = 0.25      # Триггер при -25%
-Пример DCA в логах
+text
 [DCA] First buy: 0.0100 SOL (50% of 0.0200)
 [DCA] Charizard: Price 0.0000020778 <= 0.0000021435 (-25%)
 [DCA] Executing second buy for Charizard (-25%)...
@@ -217,104 +192,45 @@ dca_trigger_pct = 0.25      # Триггер при -25%
 [DCA] Total tokens: 3498.89 -> 8214.66
 [DCA] New entry: 0.0000021205
 [DCA] New SL: 0.0000014844 (-30%)
-Статус DCA в позиции
-Copycat positions.json | python3 -c "
+Статус DCA в позиции:
+
+bash
+cat positions.json | python3 -c "
 import sys, json
 for p in json.load(sys.stdin):
     dca = '⏳ ЖДЁТ' if p.get('dca_pending') else ('✅ КУПЛЕН' if p.get('dca_bought') else '❌ ВЫКЛ')
     print(f\"{p.get('symbol'):12} | DCA: {dca}\")
 "
 Формат smart_money_wallets.json
-Правильный формат
-Copy{
+Правильный формат:
+
+json
+{
   "whales": [
-    {
-      "wallet": "5PVMT5f22fGbN1uDwaiCaxchzuawS5NTjUbitU5emWAW",
-      "label": "whale-1"
-    },
-    {
-      "wallet": "EdF8apcddwSr86WnJcBPJ7Gax12e48qqyd5zcafrGQ4Y",
-      "label": "whale-2"
-    }
+    { "wallet": "АДРЕС_1", "label": "whale-1" },
+    { "wallet": "АДРЕС_2", "label": "whale-2" }
   ]
 }
-Частые ошибки
+Частые ошибки:
+
 ❌ Неправильно — просто массив адресов:
 
-Copy["АДРЕС_1", "АДРЕС_2"]
+json
+["АДРЕС_1", "АДРЕС_2"]
 ❌ Неправильно — без обёртки whales:
 
-Copy[{"wallet": "АДРЕС_1", "label": "whale-1"}]
+json
+[{ "wallet": "АДРЕС_1", "label": "whale-1" }]
 ❌ Неправильно — ключ wallets вместо whales:
 
-Copy{"wallets": [...]}
-Проверка файла
-Copypython3 -c "import json; d=json.load(open('smart_money_wallets.json')); print(f'Китов: {len(d.get(\"whales\", []))}')"
-Добавить кита
-Copypython3 << 'PYEOF'
-import json
+json
+{ "wallets": [] }
+Проверка файла:
 
-new_wallet = "АДРЕС_КОШЕЛЬКА"
-label = "whale-new"
-
-with open("smart_money_wallets.json") as f:
-    data = json.load(f)
-
-if new_wallet not in [w["wallet"] for w in data["whales"]]:
-    data["whales"].append({"wallet": new_wallet, "label": label})
-    with open("smart_money_wallets.json", "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"✅ Добавлен: {label}")
-else:
-    print("❌ Уже есть")
-PYEOF
-
-wsync && bot-restart
-Удалить кита
-Copypython3 << 'PYEOF'
-import json
-
-wallet_to_remove = "АДРЕС_КОШЕЛЬКА"
-
-with open("smart_money_wallets.json") as f:
-    data = json.load(f)
-
-before = len(data["whales"])
-data["whales"] = [w for w in data["whales"] if w["wallet"] != wallet_to_remove]
-
-if len(data["whales"]) < before:
-    with open("smart_money_wallets.json", "w") as f:
-        json.dump(data, f, indent=2)
-    print("✅ Удалён")
-else:
-    print("❌ Не найден")
-PYEOF
-
-wsync && bot-restart
-
-wsync && bot-restart
-Удалить кита
-Copypython3 << 'PYEOF'
-import json
-
-wallet_to_remove = "АДРЕС_КОШЕЛЬКА"
-
-with open("smart_money_wallets.json") as f:
-    data = json.load(f)
-
-before = len(data["whales"])
-data["whales"] = [w for w in data["whales"] if w["wallet"] != wallet_to_remove]
-
-if len(data["whales"]) < before:
-    with open("smart_money_wallets.json", "w") as f:
-        json.dump(data, f, indent=2)
-    print("✅ Удалён")
-else:
-    print("❌ Не найден")
-PYEOF
+bash
+python3 -c "import json; d=json.load(open('smart_money_wallets.json')); print(f'Китов: {len(d.get(\"whales\", []))}')"
 
 
-
-## Disclaimer
-
+Disclaimer
 Торговля криптовалютой связана с высоким риском. Начинайте с 0.01 SOL.
+ 
