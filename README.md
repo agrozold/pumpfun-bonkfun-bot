@@ -1,57 +1,87 @@
-# Whale Copy Trading Bot for Solana
+Понял: проблема уже не в “слепшихся строках”, а в том, что README получается как длинная простыня команд. На GitHub это всегда выглядит нелепо, потому что 70% страницы — код‑блоки, а человеку нужно 5 минут, чтобы понять “что это вообще и как запустить”.
 
-Автоматический бот для копирования сделок крупных трейдеров (китов) на Solana.
+Решение: сделать README очень коротким (Quick Start + ссылки), а всю “портянку” (алиасы, вебхуки, DCA, формат JSON, диагностика) вынести в docs/. Тогда README будет выглядеть как нормальный продукт, а подробности останутся.
 
-## Возможности
+Ниже даю 2 файла: README.md (короткий) и docs/setup.md (подробный). Просто скопируй/вставь.
 
-- Whale Copy Trading — отслеживание 140+ китов через Helius webhooks
-- Stop Loss / TSL / Take Profit — автоматическое управление позициями
-- DCA — усреднение при просадке
-- Moonbag — сохранение 10% после TSL
-- Redis — быстрая синхронизация позиций
-- Поддержка DEX — Pump.fun, PumpSwap, Jupiter, Raydium
+README.md (замена целиком)
+text
+# Whale Copy Trading Bot (Solana)
 
-## API ключи
+Бот для копирования сделок “smart money/whales” в сети Solana (Helius webhooks → авто-покупка/продажа).  
+Поддерживает SL/TSL/TP, DCA, moonbag, хранит состояние в Redis.
 
-- Helius — https://helius.dev
-- Alchemy — https://alchemy.com
-- DRPC — https://drpc.org
-- Jupiter — https://station.jup.ag/docs
-
-## Установка (Ubuntu 20.04+)
-
-### 1) Подготовка сервера
+## Быстрый старт (Ubuntu 20.04+)
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install python3.10 python3.10-venv python3-pip redis-server git -y
 sudo systemctl enable redis-server && sudo systemctl start redis-server
-2) Клонирование
-bash
+
 cd /opt
 git clone https://github.com/agrozold/pumpfun-bonkfun-bot.git
 cd pumpfun-bonkfun-bot
-3) Виртуальное окружение
-bash
+
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-4) Настройка .env
-bash
+
 cp .env.example .env
 nano .env
-Минимально нужно заполнить (пример):
+
+nano bots/bot-whale-copy.yaml
+nano smart_money_wallets.json
+
+chmod +x start.sh stop.sh
+./start.sh
+Проверка:
+
+bash
+tail -f logs/bot-whale-copy.log
+curl -s http://localhost:8000/health
+Документация
+Установка и эксплуатация: docs/setup.md
+
+Команды/шпаргалка: BOT_COMMANDS.md
+
+Disclaimer
+Торговля криптовалютой связана с высоким риском. Начинайте с небольших сумм.
+
+text
+
+***
+
+## docs/setup.md (новый файл)
+
+```md
+# Setup / Operations
+
+## Требования
+
+- Ubuntu 20.04+
+- Python 3.10+
+- Redis
+- API ключи: Helius, RPC (Alchemy/DRPC), Jupiter
+
+## .env
+
+```bash
+cp .env.example .env
+nano .env
+Минимально:
 
 text
 SOLANA_PRIVATE_KEY=ваш_приватный_ключ_base58
+HELIUS_API_KEY=ваш_helius_ключ
+
 ALCHEMY_RPC_ENDPOINT=https://solana-mainnet.g.alchemy.com/v2/ВАШ_КЛЮЧ
 DRPC_RPC_ENDPOINT=https://lb.drpc.org/ogrpc?network=solana&dkey=ВАШ_КЛЮЧ
-HELIUS_API_KEY=ВАШ_HELIUS_КЛЮЧ
-JUPITER_TRADE_API_KEY=ВАШ_JUPITER_КЛЮЧ
-5) Конфиг бота
+
+JUPITER_TRADE_API_KEY=ваш_jupiter_ключ
+Конфиг бота
 bash
 nano bots/bot-whale-copy.yaml
-Пример ключевых параметров:
+Пример:
 
 text
 buy_amount: 0.01
@@ -61,37 +91,40 @@ stop_loss_pct: 30
 tsl_enabled: true
 tsl_activation_pct: 0.3
 tsl_sell_pct: 0.9
-6) База китов
-Файл smart_money_wallets.json содержит кошельки китов.
-
+База китов
 bash
 nano smart_money_wallets.json
+Формат (схема):
+
+json
+{
+  "whales": [
+    { "wallet": "АДРЕС_1", "label": "whale-1" },
+    { "wallet": "АДРЕС_2", "label": "whale-2" }
+  ]
+}
 После изменений:
 
 bash
 wsync && bot-restart
-7) Логи
-bash
-mkdir -p logs
-chmod +x start.sh stop.sh
-Запуск и проверка
-Запуск:
-
+Запуск / остановка
 bash
 ./start.sh
-Остановка:
-
-bash
 ./stop.sh
-Проверка:
+Логи и диагностика
+Логи:
 
 bash
-ps aux | grep bot_runner | grep -v grep
 tail -f logs/bot-whale-copy.log
+Ошибки:
+
+bash
+grep -h "ERROR\|FAILED" logs/*.log | tail -50
+Health:
+
+bash
 curl -s http://localhost:8000/health
 Алиасы (опционально)
-Добавить в ~/.bashrc:
-
 bash
 cat >> ~/.bashrc << 'EOF'
 
@@ -115,18 +148,25 @@ alias bot-reset='bot-stop && redis-cli DEL whale:positions && redis-cli DEL whal
 EOF
 
 source ~/.bashrc
-Helius Webhooks (кратко)
-После добавления/удаления китов синхронизируй webhook:
+Helius Webhooks (пример)
+Создание webhook:
 
 bash
-wsync && bot-restart
-Тест webhook локально:
+curl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "webhookURL": "http://ВАШ_IP:8000/webhook",
+    "transactionTypes": ["SWAP"],
+    "accountAddresses": [],
+    "webhookType": "enhanced"
+  }'
+Тест:
 
 bash
 curl -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
   -d '[{"type":"SWAP","signature":"test"}]'
 
-Disclaimer
+# Disclaimer
 Торговля криптовалютой связана с высоким риском. Начинайте с 0.01 SOL.
  
