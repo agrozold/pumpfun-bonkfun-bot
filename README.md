@@ -1,123 +1,214 @@
-# Whale Copy Trading Bot (Solana)
+# Whale Copy Trading Bot for Solana
 
-Бот для копирования сделок “smart money/whales” в сети Solana (Helius webhooks → авто-покупка/продажа).  
-Поддерживает SL/TSL/TP, DCA, moonbag, хранит состояние в Redis.
+Автоматический бот для копирования сделок крупных трейдеров (китов) на Solana.
 
-## Быстрый старт (Ubuntu 20.04+)
+## Возможности
 
-```bash
+- Whale Copy Trading — отслеживание китов через Helius webhooks
+- Stop Loss / TSL / Take Profit — автоматическое управление позициями
+- DCA — усреднение при просадке
+- Moonbag — сохранение части позиции после TSL
+- Redis — быстрая синхронизация позиций
+- Поддержка DEX — Pump.fun, PumpSwap, Jupiter, Raydium
+
+## Необходимые API ключи
+
+- Helius (https://helius.dev) — webhooks
+- Alchemy (https://alchemy.com) — Solana RPC
+- DRPC (https://drpc.org) — резервный RPC
+- Jupiter (https://station.jup.ag/docs) — свапы
+
+---
+
+## Установка (для новичков)
+
+### 1) Подготовка сервера (Ubuntu 20.04+)
+
+~~~bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install python3.10 python3.10-venv python3-pip redis-server git -y
 sudo systemctl enable redis-server && sudo systemctl start redis-server
+~~~
 
+### 2) Клонирование
+
+~~~bash
 cd /opt
 git clone https://github.com/agrozold/pumpfun-bonkfun-bot.git
 cd pumpfun-bonkfun-bot
+~~~
 
+### 3) Виртуальное окружение
+
+~~~bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+~~~
 
+Если видишь `(venv)` в терминале — ок.
+
+### 4) Настройка .env
+
+~~~bash
 cp .env.example .env
 nano .env
+~~~
 
+Заполни как минимум:
+- SOLANA_PRIVATE_KEY
+- HELIUS_API_KEY
+- ALCHEMY_RPC_ENDPOINT
+- DRPC_RPC_ENDPOINT
+- JUPITER_TRADE_API_KEY
+
+### 5) Конфиг бота
+
+~~~bash
 nano bots/bot-whale-copy.yaml
+~~~
+
+Пример ключевых параметров:
+
+~~~yaml
+buy_amount: 0.01        # SOL на сделку
+min_whale_buy: 0.5      # Мин. покупка кита
+stop_loss_pct: 30       # Стоп-лосс -30%
+tsl_enabled: true       # Trailing stop
+tsl_activation_pct: 0.3 # Активация TSL при +30%
+tsl_sell_pct: 0.9       # Продать 90% от максимума
+~~~
+
+### 6) База китов (smart_money_wallets.json)
+
+Открыть:
+
+~~~bash
 nano smart_money_wallets.json
+~~~
 
-chmod +x start.sh stop.sh
-./start.sh
-Проверка:
+Правильный формат:
 
-bash
-tail -f logs/bot-whale-copy.log
-curl -s http://localhost:8000/health
-Документация
-Установка и эксплуатация: docs/setup.md
-
-Команды/шпаргалка: BOT_COMMANDS.md
-
-Disclaimer
-Торговля криптовалютой связана с высоким риском. Начинайте с небольших сумм.
-
-text
-
-***
-
-## docs/setup.md (новый файл)
-
-```md
-# Setup / Operations
-
-## Требования
-
-- Ubuntu 20.04+
-- Python 3.10+
-- Redis
-- API ключи: Helius, RPC (Alchemy/DRPC), Jupiter
-
-## .env
-
-```bash
-cp .env.example .env
-nano .env
-Минимально:
-
-text
-SOLANA_PRIVATE_KEY=ваш_приватный_ключ_base58
-HELIUS_API_KEY=ваш_helius_ключ
-
-ALCHEMY_RPC_ENDPOINT=https://solana-mainnet.g.alchemy.com/v2/ВАШ_КЛЮЧ
-DRPC_RPC_ENDPOINT=https://lb.drpc.org/ogrpc?network=solana&dkey=ВАШ_КЛЮЧ
-
-JUPITER_TRADE_API_KEY=ваш_jupiter_ключ
-Конфиг бота
-bash
-nano bots/bot-whale-copy.yaml
-Пример:
-
-text
-buy_amount: 0.01
-min_whale_buy: 0.5
-stop_loss_pct: 30
-
-tsl_enabled: true
-tsl_activation_pct: 0.3
-tsl_sell_pct: 0.9
-База китов
-bash
-nano smart_money_wallets.json
-Формат (схема):
-
-json
+~~~json
 {
   "whales": [
     { "wallet": "АДРЕС_1", "label": "whale-1" },
     { "wallet": "АДРЕС_2", "label": "whale-2" }
   ]
 }
-После изменений:
+~~~
 
-bash
+Проверить JSON и количество китов:
+
+~~~bash
+python3 -c "import json; d=json.load(open('smart_money_wallets.json')); print('Китов:', len(d.get('whales', [])))"
+~~~
+
+После любых изменений списка китов:
+
+~~~bash
 wsync && bot-restart
-Запуск / остановка
-bash
+~~~
+
+---
+
+## Добавить/удалить кита (команды)
+
+### Добавить кита
+
+~~~bash
+python3 << 'PYEOF'
+import json
+
+new_wallet = "АДРЕС_КОШЕЛЬКА"
+label = "whale-new"
+
+with open("smart_money_wallets.json") as f:
+    data = json.load(f)
+
+data.setdefault("whales", [])
+exists = any(w.get("wallet") == new_wallet for w in data["whales"])
+
+if not exists:
+    data["whales"].append({"wallet": new_wallet, "label": label})
+    with open("smart_money_wallets.json", "w") as f:
+        json.dump(data, f, indent=2)
+    print("✅ Добавлен:", label)
+else:
+    print("❌ Уже есть")
+PYEOF
+~~~
+
+Потом:
+
+~~~bash
+wsync && bot-restart
+~~~
+
+### Удалить кита
+
+~~~bash
+python3 << 'PYEOF'
+import json
+
+wallet_to_remove = "АДРЕС_КОШЕЛЬКА"
+
+with open("smart_money_wallets.json") as f:
+    data = json.load(f)
+
+before = len(data.get("whales", []))
+data["whales"] = [w for w in data.get("whales", []) if w.get("wallet") != wallet_to_remove]
+after = len(data["whales"])
+
+with open("smart_money_wallets.json", "w") as f:
+    json.dump(data, f, indent=2)
+
+print("✅ Удалён" if after < before else "❌ Не найден")
+PYEOF
+~~~
+
+Потом:
+
+~~~bash
+wsync && bot-restart
+~~~
+
+---
+
+## Логи и запуск
+
+Создаём папку логов:
+
+~~~bash
+mkdir -p logs
+chmod +x start.sh stop.sh
+~~~
+
+Запуск:
+
+~~~bash
 ./start.sh
+~~~
+
+Остановка:
+
+~~~bash
 ./stop.sh
-Логи и диагностика
-Логи:
+~~~
 
-bash
+## Проверка
+
+~~~bash
+ps aux | grep bot_runner | grep -v grep
 tail -f logs/bot-whale-copy.log
-Ошибки:
-
-bash
-grep -h "ERROR\|FAILED" logs/*.log | tail -50
-Health:
-
-bash
 curl -s http://localhost:8000/health
-Алиасы (опционально)
-bash
+~~~
+
+---
+
+## Алиасы (опционально)
+
+~~~bash
 cat >> ~/.bashrc << 'EOF'
 
 # === WHALE BOT ===
@@ -140,25 +231,11 @@ alias bot-reset='bot-stop && redis-cli DEL whale:positions && redis-cli DEL whal
 EOF
 
 source ~/.bashrc
-Helius Webhooks (пример)
-Создание webhook:
+~~~
 
-bash
-curl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "webhookURL": "http://ВАШ_IP:8000/webhook",
-    "transactionTypes": ["SWAP"],
-    "accountAddresses": [],
-    "webhookType": "enhanced"
-  }'
-Тест:
+---
 
-bash
-curl -X POST http://localhost:8000/webhook \
-  -H "Content-Type: application/json" \
-  -d '[{"type":"SWAP","signature":"test"}]'
+## Disclaimer
 
-# Disclaimer
-Торговля криптовалютой связана с высоким риском. Начинайте с 0.01 SOL.
+Торговля криптовалютой связана с высоким риском. Начинайте с небольших сумм.
  
