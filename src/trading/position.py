@@ -50,6 +50,7 @@ class Position:
     tsl_active: bool = False
     high_water_mark: float = 0.0
     tsl_trigger_price: float = 0.0
+    tsl_triggered: bool = False
 
     is_active: bool = True
     is_moonbag: bool = False
