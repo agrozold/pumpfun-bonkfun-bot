@@ -3350,6 +3350,7 @@ class UniversalTrader:
                         # После частичной продажи - деактивировать TSL, обновить quantity
                         # TSL может снова активироваться если цена пойдёт вверх
                         position.tsl_active = False
+                        position.tsl_triggered = False
                         position.high_water_mark = current_price
                     elif exit_reason == ExitReason.STOP_LOSS:
                         # STOP LOSS - продаём ВСЁ, никаких moon bags!

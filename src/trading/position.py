@@ -94,6 +94,7 @@ class Position:
             "tsl_active": self.tsl_active,
             "high_water_mark": self.high_water_mark,
             "tsl_trigger_price": self.tsl_trigger_price,
+            "tsl_triggered": self.tsl_triggered,
             "tsl_sell_pct": self.tsl_sell_pct,
         "tp_sell_pct": self.tp_sell_pct,
             "is_active": self.is_active,
@@ -126,6 +127,7 @@ class Position:
             tsl_active=data.get("tsl_active", False),
             high_water_mark=data.get("high_water_mark", data["entry_price"]),
             tsl_trigger_price=data.get("tsl_trigger_price", 0.0),
+            tsl_triggered=data.get("tsl_triggered", False),
             tsl_sell_pct=data.get("tsl_sell_pct", 0.50),
         tp_sell_pct=data.get("tp_sell_pct", 1.0),
             is_active=data.get("is_active", True),
@@ -222,8 +224,12 @@ class Position:
         if self.stop_loss_price and current_price <= self.stop_loss_price and not self.is_moonbag:
             return True, ExitReason.STOP_LOSS
 
-        if self.tsl_active and current_price <= self.tsl_trigger_price:
-            logger.warning(f"[TSL] {self.symbol} TRIGGERED at {current_price:.10f}")
+        if self.tsl_active and (current_price <= self.tsl_trigger_price or self.tsl_triggered):
+            if not self.tsl_triggered:
+                logger.warning(f"[TSL] {self.symbol} TRIGGERED at {current_price:.10f}")
+                self.tsl_triggered = True
+            else:
+                logger.warning(f"[TSL] {self.symbol} RESUMING triggered sell after restart")
             return True, ExitReason.TRAILING_STOP
 
         if self.take_profit_price and current_price >= self.take_profit_price:
