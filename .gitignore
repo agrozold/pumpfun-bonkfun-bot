@@ -61,3 +61,4 @@ smart_money_wallets.json
 # Session backups
 *.before_*
 smart_money_wallets.json
+bots/bot-whale-copy.yaml
