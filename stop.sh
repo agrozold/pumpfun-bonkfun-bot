@@ -68,4 +68,7 @@ except Exception as e:
     print(f"[BACKUP] Error: {e}")
 PYEOF
 
+# Kill any remaining bot_runner processes
+pkill -9 -f "bot_runner.py" 2>/dev/null || true
+sleep 1
 echo -e "${GREEN}[INFO]${NC} Done"
