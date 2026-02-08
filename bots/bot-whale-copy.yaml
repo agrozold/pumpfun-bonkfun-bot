@@ -36,6 +36,7 @@ trade:
   tsl_sell_pct: 0.7
   take_profit_percentage: 1.0
   tp_sell_pct: 0.50
+    dca_enabled: true
 pattern_detection:
   enabled: false
 scoring:
@@ -48,7 +49,7 @@ scoring:
 whale_copy:
   enabled: true
   wallets_file: smart_money_wallets.json
-  min_buy_amount: 1.5
+  min_buy_amount: 0.95
   poll_interval: 90
   helius_api_key: ''
   webhook_enabled: true
