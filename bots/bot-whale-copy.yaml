@@ -36,7 +36,7 @@ trade:
   tsl_sell_pct: 0.7
   take_profit_percentage: 1.0
   tp_sell_pct: 0.50
-    dca_enabled: true
+  dca_enabled: true
 pattern_detection:
   enabled: false
 scoring:
