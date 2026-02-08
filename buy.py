@@ -1081,24 +1081,18 @@ def main():
                     # Обновляем entry_price, SL, TSL
                     if current_price > 0:
                         old_entry = pos.get("entry_price", 0)
-                        # Средневзвешенная цена если докупаем
-                        if old_balance > 0 and old_entry > 0:
-                            avg_price = (old_entry * old_balance + current_price * tokens_received) / real_balance
-                            pos["entry_price"] = avg_price
-                            pos["stop_loss_price"] = avg_price * 0.7
-                            pos["high_water_mark"] = avg_price
-                            pos["tsl_active"] = False
-                            pos["tsl_trigger_price"] = 0
-                            print(f"📊 Entry (avg): {old_entry:.10f} -> {avg_price:.10f}")
-                            print(f"📊 SL: {avg_price * 0.7:.10f} (-30%)")
-                        else:
-                            pos["entry_price"] = current_price
-                            pos["stop_loss_price"] = current_price * 0.7
-                            pos["high_water_mark"] = current_price
-                            pos["tsl_active"] = False
-                            pos["tsl_trigger_price"] = 0
-                            print(f"📊 Entry: {old_entry:.10f} -> {current_price:.10f}")
-                            print(f"📊 SL: {current_price * 0.7:.10f} (-30%)")
+                        pos["entry_price"] = current_price
+                        pos["stop_loss_price"] = current_price * 0.7
+                        pos["high_water_mark"] = current_price
+                        pos["tsl_active"] = False
+                        pos["tsl_trigger_price"] = 0
+                        print(f"📊 Entry: {old_entry:.10f} -> {current_price:.10f}")
+                        print(f"📊 SL: {current_price * 0.7:.10f} (-30%)")
+
+                    # Отключаем DCA для ручных покупок
+                    pos["dca_enabled"] = False
+                    pos["dca_pending"] = False
+                    print("📊 DCA: отключен (ручная покупка)")
                     
                     # УДАЛЯЕМ из sold_mints (если был продан и куплен снова)
                     subprocess.run(["redis-cli", "SREM", "sold_mints", mint_addr], capture_output=True)
@@ -1171,8 +1165,8 @@ def main():
                         "tsl_trigger_price": 0,
                         "high_water_mark": current_price,
                         "is_active": True,
-                        "dca_enabled": True,
-                        "dca_pending": True,
+                        "dca_enabled": False,
+                        "dca_pending": False,
                         "dca_bought": False,
                         "dca_trigger_pct": 0.25,
                         "dca_first_buy_pct": 0.5,

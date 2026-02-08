@@ -163,6 +163,7 @@ async def start_bot(config_path: str):
             tsl_activation_pct=cfg["trade"].get("tsl_activation_pct", 0.20),
             tsl_trail_pct=cfg["trade"].get("tsl_trail_pct", 0.10),
             tsl_sell_pct=cfg["trade"].get("tsl_sell_pct", 0.50),
+        tp_sell_pct=cfg["trade"].get("tp_sell_pct", 1.0),
             # Token Vetting (security)
             token_vetting_enabled=cfg.get("token_vetting", {}).get("enabled", False),
             vetting_require_freeze_revoked=cfg.get("token_vetting", {}).get("require_freeze_revoked", True),

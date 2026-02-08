@@ -46,6 +46,7 @@ class Position:
     tsl_activation_pct: float = 0.20
     tsl_trail_pct: float = 0.50
     tsl_sell_pct: float = 0.50
+    tp_sell_pct: float = 1.00
     tsl_active: bool = False
     high_water_mark: float = 0.0
     tsl_trigger_price: float = 0.0
@@ -94,6 +95,7 @@ class Position:
             "high_water_mark": self.high_water_mark,
             "tsl_trigger_price": self.tsl_trigger_price,
             "tsl_sell_pct": self.tsl_sell_pct,
+        "tp_sell_pct": self.tp_sell_pct,
             "is_active": self.is_active,
             "is_moonbag": self.is_moonbag,
             "dca_enabled": self.dca_enabled,
@@ -125,6 +127,7 @@ class Position:
             high_water_mark=data.get("high_water_mark", data["entry_price"]),
             tsl_trigger_price=data.get("tsl_trigger_price", 0.0),
             tsl_sell_pct=data.get("tsl_sell_pct", 0.50),
+        tp_sell_pct=data.get("tp_sell_pct", 1.0),
             is_active=data.get("is_active", True),
             is_moonbag=data.get("is_moonbag", False),
             dca_enabled=data.get("dca_enabled", False),
@@ -216,7 +219,7 @@ class Position:
         if not self.is_active:
             return False, None
 
-        if self.stop_loss_price and current_price <= self.stop_loss_price:
+        if self.stop_loss_price and current_price <= self.stop_loss_price and not self.is_moonbag:
             return True, ExitReason.STOP_LOSS
 
         if self.tsl_active and current_price <= self.tsl_trigger_price:

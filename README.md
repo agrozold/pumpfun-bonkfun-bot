@@ -6,10 +6,12 @@
 
 - Whale Copy Trading — отслеживание китов через Helius webhooks
 - Stop Loss / TSL / Take Profit — автоматическое управление позициями
+- NO_SL — защита отдельных токенов от продажи по стоп-лоссу
 - DCA — усреднение при просадке
 - Moonbag — сохранение части позиции после TSL
 - Redis — быстрая синхронизация позиций
 - Поддержка DEX — Pump.fun, PumpSwap, Jupiter, Raydium
+- Dust cleanup — автоочистка мусорных токенов с возвратом ренты
 
 ## Необходимые ключи и RPC
 
@@ -94,13 +96,12 @@ tsl_sell_pct: 0.9       # Продать 90% от максимума
 
 ### 6) База китов (smart_money_wallets.json)
 
-Открыть:
-
 ~~~bash
+cp smart_money_wallets.example.json smart_money_wallets.json
 nano smart_money_wallets.json
 ~~~
 
-Правильный формат:
+Формат:
 
 ~~~json
 {
@@ -111,209 +112,164 @@ nano smart_money_wallets.json
 }
 ~~~
 
-Проверить JSON и количество китов:
+---
 
-~~~bash
-python3 -c "import json; d=json.load(open('smart_money_wallets.json')); print('Китов:', len(d.get('whales', [])))"
-~~~
+## Команды
 
-После любых изменений списка китов:
+### 🤖 Управление ботом
 
-~~~bash
-wsync && bot-restart
+| Команда | Описание |
+|---------|----------|
+| `bot-start` | Запуск бота |
+| `bot-stop` | Остановка бота |
+| `bot-restart` | Перезапуск бота |
+| `bot-status` | Статус + webhook stats |
+| `bot-health` | Проверка здоровья (webhook, redis, позиции) |
+| `bot-config` | Открыть конфиг (nano) |
+| `bot-edit` | Редактировать конфиг |
+
+### 📜 Логи
+
+| Команда | Описание |
+|---------|----------|
+| `bot-logs` | Логи live (Ctrl+C выход) |
+| `bot-trades` | Последние покупки/продажи |
+| `bot-whales` | Сигналы китов |
+| `bot-errors` | Ошибки |
+
+### 💰 Торговля
+
+| Команда | Описание |
+|---------|----------|
+| `buy <TOKEN> <SOL>` | Покупка токена |
+| `sell <TOKEN> <PERCENT>` | Продажа по проценту |
+| `sell10 <TOKEN>` ... `sell100 <TOKEN>` | Быстрая продажа (10%-100%) |
+| `wsync` | Синхронизация кошелька с ботом |
+
+### 🐋 Управление китами
+
+| Команда | Описание |
+|---------|----------|
+| `whale add <ADDRESS> [label]` | Добавить кита + sync webhook |
+| `whale del <ADDRESS\|LABEL>` | Удалить кита + sync webhook |
+| `whale list` | Список всех китов |
+| `whale list insider` | Поиск китов по слову |
+| `whale info <ADDRESS\|LABEL>` | Подробности о ките |
+| `whale sync` | Принудительный sync webhook |
+| `whale <MINT>` | Найти кита по mint адресу токена |
+| `whale <SYMBOL>` | Найти кита по символу (SOBAT, Chud...) |
+
+### 🗑️ Очистка мусорных токенов
+
+| Команда | Описание |
+|---------|----------|
+| `dust` | Сжечь всё < $0.40 (дефолт) |
+| `dust 0.5` | Сжечь всё < $0.50 |
+| `dust-dry` | Показать что удалится (без удаления) |
+| `dust 0.3 --dry` | Показать что < $0.30 (без удаления) |
+
+Скрипт `dust` сканирует ВСЕ токены (SPL + Token2022), защищает позиции бота и NO_SL токены, сжигает мусор и возвращает ~0.002 SOL ренты за каждый закрытый аккаунт.
+
+### 🛡️ NO_SL — защита токенов от стоп-лосса
+
+| Команда | Описание |
+|---------|----------|
+| `no-sl list` | Показать токены без SL |
+| `no-sl add <MINT>` | Добавить токен в исключения |
+| `no-sl remove <MINT>` | Удалить токен из исключений |
+
+Токены в NO_SL списке **никогда** не будут проданы по стоп-лоссу — ни по обычному SL, ни по hard SL, ни по emergency SL при крашах или потере цены. Только TP и ручная продажа.
+
+---
+
+## Настройки TSL (Trailing Stop Loss)
+
+~~~yaml
+tsl_activation_pct: 0.2   # Активация при +20%
+tsl_trail_pct: 0.5         # Трейлинг 50%
+tsl_sell_pct: 0.9          # Продаёт 90%
+moon_bag_percentage: 10    # Оставляет 10%
+stop_loss: 20%
+take_profit: 10000%
 ~~~
 
 ---
 
-## Добавить/удалить кита (команды)
+## Алиасы
 
-### Добавить кита
-
-~~~bash
-python3 << 'PYEOF'
-import json
-
-new_wallet = "АДРЕС_КОШЕЛЬКА"
-label = "whale-new"
-
-with open("smart_money_wallets.json") as f:
-    data = json.load(f)
-
-data.setdefault("whales", [])
-exists = any(w.get("wallet") == new_wallet for w in data["whales"])
-
-if not exists:
-    data["whales"].append({"wallet": new_wallet, "label": label})
-    with open("smart_money_wallets.json", "w") as f:
-        json.dump(data, f, indent=2)
-    print("✅ Добавлен:", label)
-else:
-    print("❌ Уже есть")
-PYEOF
-~~~
-
-Потом:
+Добавь в `~/.bashrc`:
 
 ~~~bash
-wsync && bot-restart
-~~~
-
-### Удалить кита
-
-~~~bash
-python3 << 'PYEOF'
-import json
-
-wallet_to_remove = "АДРЕС_КОШЕЛЬКА"
-
-with open("smart_money_wallets.json") as f:
-    data = json.load(f)
-
-before = len(data.get("whales", []))
-data["whales"] = [w for w in data.get("whales", []) if w.get("wallet") != wallet_to_remove]
-after = len(data["whales"])
-
-with open("smart_money_wallets.json", "w") as f:
-    json.dump(data, f, indent=2)
-
-print("✅ Удалён" if after < before else "❌ Не найден")
-PYEOF
-~~~
-
-Потом:
-
-~~~bash
-wsync && bot-restart
-~~~
-
----
-
-## Логи и запуск
-
-Создаём папку логов:
-
-~~~bash
-mkdir -p logs
-chmod +x start.sh stop.sh
-~~~
-
-Запуск:
-
-~~~bash
-./start.sh
-~~~
-
-Остановка:
-
-~~~bash
-./stop.sh
-~~~
-
-## Проверка
-
-~~~bash
-ps aux | grep bot_runner | grep -v grep
-tail -f logs/bot-whale-copy.log
-curl -s http://localhost:8000/health
-~~~
-
----
-
-## Полезные команды (grep)
-
-~~~bash
-# Ошибки
-grep -h "ERROR\|FAILED" logs/*.log | tail -30
-
-# Последние сделки
-grep -h "Successfully bought" logs/*.log | tail -20
-grep -h "Successfully sold" logs/*.log | tail -20
-
-# Whale copy trades
-grep -h "whale buy\|WHALE" logs/*.log | tail -20
-grep -h "Skipping whale" logs/*.log | tail -10
-
-# PnL по позициям
-grep "Position PnL" logs/*.log | tail -20
-
-# Take Profit / Stop Loss
-grep "TAKE_PROFIT" logs/*.log | tail -20
-grep "STOP_LOSS" logs/*.log | tail -20
-
-# Moonbag
-grep "moon bag" logs/*.log | tail -20
-~~~
-
----
-
-## Быстрые фиксы (sed)
-
-~~~bash
-# Изменить buy_amount во всех YAML
-sed -i 's/buy_amount: [0-9.]*/buy_amount: 0.02/g' bots/*.yaml
-
-# Изменить max_hold_time на 24 часа (86400 секунд)
-sed -i 's/max_hold_time: [0-9]*/max_hold_time: 86400/g' bots/*.yaml
-~~~
-
-После правок:
-
-~~~bash
-bot-restart
-~~~
-
----
-
-## Алиасы (опционально)
-
-~~~bash
-cat >> ~/.bashrc << 'EOF'
-
 # === WHALE BOT ===
 BOT_DIR="/opt/pumpfun-bonkfun-bot"
 
+# Управление ботом
 alias bot-start='cd $BOT_DIR && ./start.sh'
 alias bot-stop='cd $BOT_DIR && ./stop.sh'
 alias bot-restart='bot-stop && sleep 3 && bot-start'
 alias bot-status='ps aux | grep bot_runner | grep -v grep'
 alias bot-logs='tail -f $BOT_DIR/logs/bot-whale-copy.log'
 alias bot-errors='grep -h "ERROR\|FAILED" $BOT_DIR/logs/*.log | tail -30'
-alias wsync='cd $BOT_DIR && source venv/bin/activate && python3 wsync.py'
 alias bot-health='curl -s http://localhost:8000/health 2>/dev/null | jq || echo "Бот не запущен"'
 alias bot-config='nano $BOT_DIR/bots/bot-whale-copy.yaml'
-alias bot-env='nano $BOT_DIR/.env'
-alias bot-whales-edit='nano $BOT_DIR/smart_money_wallets.json'
-alias bot-whales-count='cat $BOT_DIR/smart_money_wallets.json | jq ".whales | length"'
-alias bot-update='cd $BOT_DIR && git pull && bot-restart'
-alias bot-reset='bot-stop && redis-cli DEL whale:positions && redis-cli DEL whale:bot_lock && wsync && bot-start'
-EOF
 
-source ~/.bashrc
+# Синхронизация
+alias wsync='cd $BOT_DIR && source venv/bin/activate && python3 wsync.py'
+
+# Очистка мусора
+alias dust='cd $BOT_DIR && source venv/bin/activate && python3 cleanup_dust.py'
+alias dust-dry='cd $BOT_DIR && source venv/bin/activate && python3 cleanup_dust.py 0.4 --dry'
+
+# Управление китами
+whale() {
+    cd $BOT_DIR && source venv/bin/activate && python3 whale_manage.py "$@"
+}
 ~~~
+
+Применить: `source ~/.bashrc`
 
 ---
 
 ## Helius Webhooks
 
-Создание webhook (пример):
+Webhook создаётся автоматически при первом запуске. Адреса китов синхронизируются из `smart_money_wallets.json` при каждом старте бота и при использовании `whale add/del`.
+
+Ручная проверка:
 
 ~~~bash
-curl -X POST "https://api.helius.xyz/v0/webhooks?api-key=ВАШ_HELIUS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "webhookURL": "http://ВАШ_IP:8000/webhook",
-    "transactionTypes": ["SWAP"],
-    "accountAddresses": [],
-    "webhookType": "enhanced"
-  }'
-~~~
+# Здоровье webhook сервера
+curl -s http://localhost:8000/health | jq
 
-Тест webhook локально:
-
-~~~bash
+# Тест webhook
 curl -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
   -d '[{"type":"SWAP","signature":"test"}]'
+~~~
+
+---
+
+## Структура проекта
+
+~~~
+├── bots/                       # Конфиги ботов (YAML)
+│   └── bot-whale-copy.yaml
+├── src/
+│   ├── bot_runner.py           # Главный запуск
+│   ├── monitoring/
+│   │   ├── whale_webhook.py    # Helius webhook сервер
+│   │   └── whale_tracker.py    # Трекинг позиций
+│   ├── trading/
+│   │   ├── universal_trader.py # Торговая логика + NO_SL
+│   │   └── position.py         # Управление позициями
+│   └── utils/
+│       └── helius_webhook_sync.py  # Синхронизация webhook
+├── cleanup_dust.py             # Очистка мусорных токенов
+├── find_whale.py               # Поиск кита по токену
+├── whale_manage.py             # Управление списком китов
+├── wsync.py                    # Синхронизация кошелька
+├── smart_money_wallets.example.json  # Шаблон списка китов
+├── .env.example                # Шаблон переменных окружения
+└── positions.json              # Текущие позиции (auto)
 ~~~
 
 ---

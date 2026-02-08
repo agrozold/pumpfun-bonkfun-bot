@@ -21,20 +21,21 @@ priority_fees:
 pumpportal:
   url: wss://pumpportal.fun/api/data
 trade:
-  buy_amount: 0.02
+  buy_amount: 0.04
   buy_slippage: 0.3
   exit_strategy: tp_sl
   max_hold_time: 0
   min_sol_balance: 0.1
-  moon_bag_percentage: 30
+  moon_bag_percentage: 0
   price_check_interval: 1
   sell_slippage: 0.2
   stop_loss_percentage: 0.3
   tsl_enabled: true
-  tsl_activation_pct: 0.3
-  tsl_trail_pct: 0.5
+  tsl_activation_pct: 0.2
+  tsl_trail_pct: 0.3
   tsl_sell_pct: 0.7
-  take_profit_percentage: 10000.0
+  take_profit_percentage: 1.0
+  tp_sell_pct: 0.50
 pattern_detection:
   enabled: false
 scoring:
@@ -47,7 +48,7 @@ scoring:
 whale_copy:
   enabled: true
   wallets_file: smart_money_wallets.json
-  min_buy_amount: 0.01
+  min_buy_amount: 1.5
   poll_interval: 90
   helius_api_key: ''
   webhook_enabled: true

@@ -409,7 +409,7 @@ class WhaleWebhookReceiver:
         logger.warning("=" * 70)
         
         self._stats["buys_emitted"] += 1
-        logger.warning(f"[EMIT] Whale BUY signal! {whale_buy.token_symbol} | {whale_buy.amount_sol:.2f} SOL | whale={whale_buy.whale_label}")
+        logger.warning(f"[EMIT] Whale BUY signal! {whale_buy.token_symbol} | {whale_buy.token_mint} | {whale_buy.amount_sol:.2f} SOL | whale={whale_buy.whale_label}")
         
         if self.on_whale_buy:
             try:

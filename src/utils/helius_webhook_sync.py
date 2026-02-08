@@ -85,7 +85,7 @@ async def sync_helius_webhook(
             update_url = f"{HELIUS_API_BASE}/{webhook_id}?api-key={api_key}"
             
             update_body = {
-                "webhookURL": webhook.get("webhookURL"),
+                "webhookURL": "http://212.113.112.103:8000/webhook",
                 "transactionTypes": webhook.get("transactionTypes", ["SWAP"]),
                 "accountAddresses": list(expected_addresses),
                 "webhookType": webhook.get("webhookType", "enhanced"),

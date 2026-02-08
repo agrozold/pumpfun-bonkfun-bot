@@ -76,6 +76,18 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 logger = get_logger(__name__)
 
+# === ТОКЕНЫ БЕЗ STOP-LOSS (даже emergency) ===
+NO_SL_MINTS = {
+    "FzLMPzqz9Ybn26qRzPKDKwsLV6Kpvugh31jF7T7npump",
+    "4Xu4fp2FV3gkdj4rnYS7gWpuKXFnXPwroHDKcMwapump",
+    "4ZR1R4oW9B4Ufr15FDVLoEx3rhU7YKFTDL8qgAFPpump",
+    "CZwnGa1scLnW6QFMYeofiaw2XzCjyMRiA2FTeyo1pump",
+    "2PzS5SYYWjUFvzXNFaMmRkpjkxGX6R5v8DnKYtdcpump",
+    "EW7cWbNmTgL7PLQNiJ6tBVC62SJzJXa2pFYJjDPPpump",
+    "Hz4L8oCSTZoepnNDTtVqPqkPnSA2grNDLA6E6aF8pump",
+    "8FaSmBzQdnBPjAt5wZ7k8WaCQqBHTM8YRB9ZsJ44bonk",
+}
+
 
 class UniversalTrader:
     """Universal trading coordinator that works with any supported platform."""
@@ -113,6 +125,7 @@ class UniversalTrader:
         tsl_activation_pct: float = 0.10,  # Activate after +20% profit
         tsl_trail_pct: float = 0.20,  # Trail 10% below high
         tsl_sell_pct: float = 0.90,  # Sell 50% when TSL triggers
+        tp_sell_pct: float = 1.0,  # Sell this % when TP triggers
         # Token Vetting (security)
         token_vetting_enabled: bool = False,
         vetting_require_freeze_revoked: bool = True,
@@ -500,6 +513,7 @@ class UniversalTrader:
         self.tsl_activation_pct = tsl_activation_pct
         self.tsl_trail_pct = tsl_trail_pct
         self.tsl_sell_pct = tsl_sell_pct
+        self.tp_sell_pct = tp_sell_pct
         if self.tsl_enabled:
             logger.warning(f"[TSL] Trailing Stop-Loss ENABLED: activates at +{tsl_activation_pct*100:.0f}%, trails {tsl_trail_pct*100:.0f}%")
 
@@ -1148,6 +1162,9 @@ class UniversalTrader:
             )
             # Try emergency sell on crash
             try:
+                if str(token_info.mint) in NO_SL_MINTS:
+                    logger.warning(f"[NO_SL] {token_info.symbol}: Monitor crashed but NO_SL - NOT selling!")
+                    return
                 fallback_success = await self._emergency_fallback_sell(
                     token_info, position, position.entry_price
                 )
@@ -1264,6 +1281,7 @@ class UniversalTrader:
                                     "tsl_activation_pct": self.tsl_activation_pct,
                                     "tsl_trail_pct": self.tsl_trail_pct,
                                     "tsl_sell_pct": self.tsl_sell_pct,
+                                    "tp_sell_pct": self.tp_sell_pct,
                                     "max_hold_time": self.max_hold_time,
                                     "whale_wallet": whale_wallet,
                                     "whale_label": whale_label,
@@ -1342,6 +1360,7 @@ class UniversalTrader:
                                     "tsl_activation_pct": self.tsl_activation_pct,
                                     "tsl_trail_pct": self.tsl_trail_pct,
                                     "tsl_sell_pct": self.tsl_sell_pct,
+                                    "tp_sell_pct": self.tp_sell_pct,
                                     "max_hold_time": self.max_hold_time,
                                     "whale_wallet": whale_wallet,
                                     "whale_label": whale_label,
@@ -1409,6 +1428,7 @@ class UniversalTrader:
                                     "tsl_activation_pct": self.tsl_activation_pct,
                                     "tsl_trail_pct": self.tsl_trail_pct,
                                     "tsl_sell_pct": self.tsl_sell_pct,
+                                    "tp_sell_pct": self.tp_sell_pct,
                                     "max_hold_time": self.max_hold_time,
                                 },
                             )
@@ -1452,6 +1472,7 @@ class UniversalTrader:
                 "tsl_activation_pct": self.tsl_activation_pct,
                 "tsl_trail_pct": self.tsl_trail_pct,
                 "tsl_sell_pct": self.tsl_sell_pct,
+                                    "tp_sell_pct": self.tp_sell_pct,
                 "max_hold_time": self.max_hold_time,
                 "bot_name": "universal_trader",
                 # DCA parameters
@@ -2073,6 +2094,7 @@ class UniversalTrader:
                     "tsl_activation_pct": self.tsl_activation_pct,
                     "tsl_trail_pct": self.tsl_trail_pct,
                     "tsl_sell_pct": self.tsl_sell_pct,
+                                    "tp_sell_pct": self.tp_sell_pct,
                     "max_hold_time": self.max_hold_time,
                     "bot_name": "trending_scanner",
                 }
@@ -2895,6 +2917,7 @@ class UniversalTrader:
             tsl_activation_pct=self.tsl_activation_pct,
             tsl_trail_pct=self.tsl_trail_pct,
             tsl_sell_pct=self.tsl_sell_pct,
+            tp_sell_pct=self.tp_sell_pct,
         )
         
         # Set DCA flags after creation
@@ -2934,6 +2957,9 @@ class UniversalTrader:
                 f"Error: {e}. Attempting emergency sell..."
             )
             try:
+                if str(token_info.mint) in NO_SL_MINTS:
+                    logger.warning(f"[NO_SL] {token_info.symbol}: Position monitor crashed but NO_SL - NOT selling!")
+                    return
                 fallback_success = await self._emergency_fallback_sell(
                     token_info, position, position.entry_price
                 )
@@ -3055,6 +3081,10 @@ class UniversalTrader:
             # Safety check: prevent infinite loops
             await asyncio.sleep(0.1)  # 100ms sleep между итерациями
             if total_iterations > max_iterations:
+                skip_sl_iter = str(token_info.mint) in NO_SL_MINTS
+                if skip_sl_iter:
+                    logger.warning(f"[NO_SL] {token_info.symbol}: max iterations but NO_SL - NOT selling!")
+                    break
                 logger.error(
                     f"[CRITICAL] Monitor exceeded {max_iterations} iterations for {token_info.symbol}! "
                     f"Forcing emergency sell..."
@@ -3178,6 +3208,11 @@ class UniversalTrader:
                                 logger.warning(f"[DCA] New entry: {dca_price:.10f}")
                                 logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-30%)")
                                 logger.warning(f"[DCA] TSL reset")
+
+                                # Пересчитываем TP от новой цены
+                                if self.take_profit_percentage is not None:
+                                    position.take_profit_price = dca_price * (1 + self.take_profit_percentage)
+                                    logger.warning(f"[DCA] New TP: {position.take_profit_price:.10f} (+{self.take_profit_percentage*100:.0f}%)")
                                 
                                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
                                 logger.warning(f"[DCA] New PnL: {pnl_pct:+.1f}%")
@@ -3212,13 +3247,18 @@ class UniversalTrader:
                         f"SL {position.stop_loss_price:.10f} (PnL: {pnl_pct:+.2f}%)"
                     )
 
+                # Check NO_SL list BEFORE any SL logic
+                mint_str_check = str(token_info.mint)
+                skip_sl = mint_str_check in NO_SL_MINTS
+
                 # If config SL triggered - mark as pending
-                if should_exit and exit_reason == ExitReason.STOP_LOSS and not position.is_moonbag:
+                if should_exit and exit_reason == ExitReason.STOP_LOSS and not position.is_moonbag and not skip_sl:
                     logger.error(
                         f"[CONFIG SL] {token_info.symbol}: STOP LOSS TRIGGERED! "
                         f"Price {current_price:.10f} <= SL {position.stop_loss_price:.10f}"
                     )
                     pending_stop_loss = True
+
 
                 # Handle TRAILING STOP (TSL) - sells with locked profit
                 if should_exit and exit_reason == ExitReason.TRAILING_STOP:
@@ -3233,8 +3273,15 @@ class UniversalTrader:
                 # ============================================
                 # HARD STOP LOSS - ЖЁСТКАЯ ЗАЩИТА ОТ УБЫТКОВ
                 # ============================================
+                # ИСКЛЮЧЕНИЕ: токены из NO_SL_MINTS не продаются по SL
+                mint_str_check = str(token_info.mint)
+                skip_sl = mint_str_check in NO_SL_MINTS
+                
+                if skip_sl and check_count == 1:
+                    logger.warning(f"[NO_SL] {token_info.symbol}: SL DISABLED for this token!")
+                
                 # Проверка 1: Обычный HARD STOP LOSS (25%)
-                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag:
+                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl:
                     logger.error(
                         f"[HARD SL] {token_info.symbol}: LOSS {pnl_pct:.1f}%! "
                         f"HARD STOP LOSS triggered (threshold: -{HARD_STOP_LOSS_PCT:.0f}%)"
@@ -3244,7 +3291,7 @@ class UniversalTrader:
                     pending_stop_loss = True
 
                 # Проверка 2: EMERGENCY STOP LOSS (40%) - максимальный приоритет
-                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag:
+                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl:
                     logger.error(
                         f"[EMERGENCY] {token_info.symbol}: CATASTROPHIC LOSS {pnl_pct:.1f}%! "
                         f"EMERGENCY sell triggered (threshold: -{EMERGENCY_STOP_LOSS_PCT:.0f}%)"
@@ -3252,6 +3299,14 @@ class UniversalTrader:
                     should_exit = True
                     exit_reason = ExitReason.STOP_LOSS
                     pending_stop_loss = True
+
+                    # CRITICAL: Reset should_exit for NO_SL tokens
+                    if skip_sl and exit_reason == ExitReason.STOP_LOSS:
+                        should_exit = False
+                        exit_reason = None
+                        pending_stop_loss = False
+                        if check_count == 1:
+                            logger.warning(f"[NO_SL] {token_info.symbol}: SL BLOCKED by NO_SL list!")
 
                 # Log ALL positions as WARNING every check
                 if True:  # Always log
@@ -3276,7 +3331,14 @@ class UniversalTrader:
                     if exit_reason == ExitReason.TAKE_PROFIT and self.moon_bag_percentage > 0:
                         # Take Profit with moon bag
                         sell_quantity = position.quantity * (1 - self.moon_bag_percentage / 100)
-                        logger.info(f"[MOON] TP reached! Selling {100 - self.moon_bag_percentage:.0f}%, keeping {self.moon_bag_percentage:.0f}% moon bag 🌙")
+                    elif exit_reason == ExitReason.TAKE_PROFIT and position.tp_sell_pct < 1.0:
+                        # TP partial - продаём только часть позиции
+                        sell_quantity = position.quantity * position.tp_sell_pct
+                        remaining_pct = (1 - position.tp_sell_pct) * 100
+                        logger.warning(
+                            f"[TP] Partial sell: {position.tp_sell_pct*100:.0f}% of position. "
+                            f"Disabling TP and keeping {remaining_pct:.0f}% for TSL/SL."
+                        )
                     elif exit_reason == ExitReason.TRAILING_STOP:
                         # TSL - продаём только часть позиции (tsl_sell_pct)
                         sell_quantity = position.quantity * position.tsl_sell_pct
@@ -3342,6 +3404,19 @@ class UniversalTrader:
                             else:
                                 logger.info(f"[MOONBAG] {token_info.symbol}: Remaining {remaining_quantity:.4f} too small, closing fully")
                         
+                        # ========== PARTIAL TP (disable TP) ==========
+                        if exit_reason == ExitReason.TAKE_PROFIT and position.tp_sell_pct < 1.0 and self.moon_bag_percentage <= 0:
+                            remaining_quantity = position.quantity * (1 - position.tp_sell_pct)
+
+                            if remaining_quantity > 1.0:
+                                position.quantity = remaining_quantity
+                                position.take_profit_price = None  # disable TP forever
+                                self._save_position(position)
+                                logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
+                                continue
+                            else:
+                                logger.info(f"[TP] Remaining {remaining_quantity:.4f} too small, closing fully")
+
                         # ========== FULL EXIT (SL, TP, or tiny moonbag) ==========
                         
                         # Close ATA if enabled
@@ -3420,10 +3495,17 @@ class UniversalTrader:
                             )
                             
                             # Check hard SL
-                            if pnl_pct <= -HARD_STOP_LOSS_PCT:
+                            skip_sl_dex = str(token_info.mint) in NO_SL_MINTS
+                            if pnl_pct <= -HARD_STOP_LOSS_PCT and not skip_sl_dex:
                                 logger.error(f"[HARD SL] {token_info.symbol}: {pnl_pct:.1f}% - SELLING!")
                                 should_exit = True
                                 exit_reason = ExitReason.STOP_LOSS
+                            
+                            # Reset should_exit for NO_SL tokens (same as main path)
+                            if skip_sl_dex and exit_reason == ExitReason.STOP_LOSS:
+                                should_exit = False
+                                exit_reason = None
+                                logger.warning(f"[NO_SL] {token_info.symbol}: SL BLOCKED in DEX fallback!")
                             
                             if should_exit and exit_reason:
                                 # Proceed with sell logic (same as above)
@@ -3451,7 +3533,8 @@ class UniversalTrader:
                     )
 
                     # If we're in significant loss based on last price - SELL IMMEDIATELY
-                    if pnl_pct_estimate <= -HARD_STOP_LOSS_PCT:
+                    skip_sl_emerg = str(token_info.mint) in NO_SL_MINTS
+                    if pnl_pct_estimate <= -HARD_STOP_LOSS_PCT and not skip_sl_emerg:
                         logger.error(
                             f"[EMERGENCY SL] {token_info.symbol}: Estimated loss {pnl_pct_estimate:.1f}% "
                             f"based on last price! FORCING EMERGENCY SELL!"
@@ -3478,6 +3561,9 @@ class UniversalTrader:
                     )
 
                     # Try fallback sell via PumpSwap/Jupiter
+                    if str(token_info.mint) in NO_SL_MINTS:
+                        logger.warning(f"[NO_SL] {token_info.symbol}: Price errors but NO_SL - NOT selling!")
+                        break
                     fallback_success = await self._emergency_fallback_sell(
                         token_info, position, last_known_price
                     )

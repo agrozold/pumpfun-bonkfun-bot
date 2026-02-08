@@ -44,6 +44,7 @@ async def on_buy_success(tx: "PendingTransaction"):
     tsl_activation_pct = tx.context.get("tsl_activation_pct", 0.1)
     tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.5)
     tsl_sell_pct = tx.context.get("tsl_sell_pct", 0.9)
+    tp_sell_pct = tx.context.get("tp_sell_pct", 0.50)  # 50% partial TP
     bonding_curve = tx.context.get("bonding_curve", None)
     whale_wallet = tx.context.get("whale_wallet", None)
     whale_label = tx.context.get("whale_label", None)
@@ -72,7 +73,7 @@ async def on_buy_success(tx: "PendingTransaction"):
         # Check if already exists (shouldn't happen but be safe)
         existing = [p for p in positions if str(p.mint) == mint]
         # Calculate TP/SL prices (needed for monitor start)
-        take_profit_price = price * take_profit_pct if take_profit_pct else None
+        take_profit_price = price * (1 + take_profit_pct) if take_profit_pct else None
         stop_loss_price = price * (1 - stop_loss_pct) if stop_loss_pct else None
 
         if existing:
@@ -98,6 +99,7 @@ async def on_buy_success(tx: "PendingTransaction"):
                 tsl_activation_pct=tsl_activation_pct,
                 tsl_trail_pct=tsl_trail_pct,
                 tsl_sell_pct=tsl_sell_pct,
+                tp_sell_pct=tp_sell_pct,
                 bonding_curve=bonding_curve,
                 # DCA parameters - enable by default for whale copy
                 dca_enabled=True,
