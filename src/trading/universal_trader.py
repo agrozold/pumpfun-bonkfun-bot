@@ -78,6 +78,7 @@ logger = get_logger(__name__)
 
 # === ТОКЕНЫ БЕЗ STOP-LOSS (даже emergency) ===
 NO_SL_MINTS = {
+    "4aiLCRmCkVeVGZBTCFXYCGtW4MFsq4dWhGSyNnoGTrrv",
     "8MdkXe5G77xaMheVQxLqAYV8e2m2Dfc5ZbuXup2epump",
     "FzLMPzqz9Ybn26qRzPKDKwsLV6Kpvugh31jF7T7npump",
     "4Xu4fp2FV3gkdj4rnYS7gWpuKXFnXPwroHDKcMwapump",
@@ -3243,6 +3244,17 @@ class UniversalTrader:
                     # HWM changed - save to file (every update to prevent loss on restart)
                     save_positions(self.active_positions)
                 should_exit, exit_reason = position.should_exit(current_price)
+
+                # ============================================
+                # NO_SL MASTER BLOCK - BLOCKS ALL SELL PATHS
+                # If token is in NO_SL list, NEVER sell for ANY reason except manual
+                # ============================================
+                mint_str_nosl = str(token_info.mint)
+                if mint_str_nosl in NO_SL_MINTS:
+                    if should_exit:
+                        logger.warning(f"[NO_SL] {token_info.symbol}: EXIT BLOCKED (reason: {exit_reason}, pnl: {pnl_pct:+.1f}%)")
+                        should_exit = False
+                        exit_reason = None
 
                 # ============================================
                 # CRITICAL: Log when approaching SL threshold
