@@ -78,9 +78,20 @@ async def on_buy_success(tx: "PendingTransaction"):
         stop_loss_price = price * (1 - stop_loss_pct) if stop_loss_pct else None
 
         if existing:
-            logger.warning(f"[TX_CALLBACK] Position already exists for {symbol}, updating quantity...")
+            logger.warning(f"[TX_CALLBACK] Position already exists for {symbol}, updating with new price...")
             for p in existing:
+                old_cost = p.entry_price * p.quantity
+                new_cost = price * token_amount
                 p.quantity += token_amount
+                # Средневзвешенная entry_price
+                p.entry_price = (old_cost + new_cost) / p.quantity if p.quantity > 0 else price
+                # Пересчитываем TP/SL от новой entry
+                if take_profit_pct:
+                    p.take_profit_price = p.entry_price * (1 + take_profit_pct)
+                if stop_loss_pct:
+                    p.stop_loss_price = p.entry_price * (1 - stop_loss_pct)
+                p.high_water_mark = max(p.high_water_mark, p.entry_price)
+                logger.warning(f"[TX_CALLBACK] {symbol}: new entry={p.entry_price:.10f}, TP={p.take_profit_price}, SL={p.stop_loss_price}")
             save_positions(positions)
         else:
             # Create new position with full parameters
