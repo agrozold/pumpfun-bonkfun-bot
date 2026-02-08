@@ -127,6 +127,7 @@ class UniversalTrader:
         tsl_trail_pct: float = 0.20,  # Trail 10% below high
         tsl_sell_pct: float = 0.90,  # Sell 50% when TSL triggers
         tp_sell_pct: float = 1.0,  # Sell this % when TP triggers
+        dca_enabled: bool = True,  # DCA (Dollar Cost Averaging)
         # Token Vetting (security)
         token_vetting_enabled: bool = False,
         vetting_require_freeze_revoked: bool = True,
@@ -515,6 +516,7 @@ class UniversalTrader:
         self.tsl_trail_pct = tsl_trail_pct
         self.tsl_sell_pct = tsl_sell_pct
         self.tp_sell_pct = tp_sell_pct
+        self.dca_enabled = dca_enabled
         if self.tsl_enabled:
             logger.warning(f"[TSL] Trailing Stop-Loss ENABLED: activates at +{tsl_activation_pct*100:.0f}%, trails {tsl_trail_pct*100:.0f}%")
 
@@ -946,7 +948,7 @@ class UniversalTrader:
                 )
 
                 # DCA: Покупаем только часть позиции сначала (50%)
-                dca_enabled = self.config.get("trade", {}).get("dca_enabled", True)
+                dca_enabled = self.dca_enabled
                 dca_first_buy_pct = 0.50  # 50% первая покупка
                 
                 if dca_enabled:
@@ -1286,7 +1288,7 @@ class UniversalTrader:
                                     "max_hold_time": self.max_hold_time,
                                     "whale_wallet": whale_wallet,
                                     "whale_label": whale_label,
-                                    "dca_enabled": self.config.get("trade", {}).get("dca_enabled", True),
+                                    "dca_enabled": self.dca_enabled,
                                 },
                             )
                             return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
@@ -1366,7 +1368,7 @@ class UniversalTrader:
                                     "max_hold_time": self.max_hold_time,
                                     "whale_wallet": whale_wallet,
                                     "whale_label": whale_label,
-                                    "dca_enabled": self.config.get("trade", {}).get("dca_enabled", True),
+                                    "dca_enabled": self.dca_enabled,
                                 },
                             )
                             return True, buy_result.tx_signature, "lets_bonk", buy_result.amount or 0, buy_result.price or 0
@@ -1433,7 +1435,7 @@ class UniversalTrader:
                                     "tsl_sell_pct": self.tsl_sell_pct,
                                     "tp_sell_pct": self.tp_sell_pct,
                                     "max_hold_time": self.max_hold_time,
-                                    "dca_enabled": self.config.get("trade", {}).get("dca_enabled", True),
+                                    "dca_enabled": self.dca_enabled,
                                 },
                             )
                             return True, buy_result.tx_signature, "bags", buy_result.amount or 0, buy_result.price or 0
@@ -1480,8 +1482,8 @@ class UniversalTrader:
                 "max_hold_time": self.max_hold_time,
                 "bot_name": "universal_trader",
                 # DCA parameters
-                "dca_enabled": self.config.get("trade", {}).get("dca_enabled", True),
-                "dca_pending": self.config.get("trade", {}).get("dca_enabled", True),  # If DCA enabled, wait for dip
+                "dca_enabled": self.dca_enabled,
+                "dca_pending": self.dca_enabled,  # If DCA enabled, wait for dip
                 "dca_trigger_pct": 0.25,  # -25% for second buy
                 "dca_first_buy_pct": 0.50,  # 50% first buy
             }
@@ -2101,7 +2103,7 @@ class UniversalTrader:
                                     "tp_sell_pct": self.tp_sell_pct,
                     "max_hold_time": self.max_hold_time,
                     "bot_name": "trending_scanner",
-                    "dca_enabled": self.config.get("trade", {}).get("dca_enabled", True),
+                    "dca_enabled": self.dca_enabled,
                 }
                 
                 success, sig, error, token_amount, price = await fallback.buy_via_pumpswap(
@@ -2905,7 +2907,7 @@ class UniversalTrader:
             bonding_curve_str = str(token_info.pool_state)
 
         # DCA settings
-        dca_enabled = self.config.get("trade", {}).get("dca_enabled", True)
+        dca_enabled = self.dca_enabled
         
         position = Position.create_from_buy_result(
             mint=token_info.mint,
