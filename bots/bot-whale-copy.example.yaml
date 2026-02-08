@@ -1,0 +1,82 @@
+enabled: true
+env_file: .env
+name: bot-whale-copy
+platform: pump_fun
+separate_process: true
+filters:
+  bro_address: null
+  listener_type: fallback
+  match_string: null
+  max_token_age: 315360000
+  yolo_mode: true
+  sniper_enabled: false
+rpc_endpoint: ${SOLANA_NODE_RPC_ENDPOINT}
+wss_endpoint: ${CHAINSTACK_WSS_ENDPOINT}
+private_key: ${SOLANA_PRIVATE_KEY}
+priority_fees:
+  enable_dynamic: false
+  enable_fixed: true
+  fixed_amount: 500000
+  max_fee: 5000000
+pumpportal:
+  url: wss://pumpportal.fun/api/data
+trade:
+  buy_amount: 0.04
+  buy_slippage: 0.3
+  exit_strategy: tp_sl
+  max_hold_time: 0
+  min_sol_balance: 0.1
+  moon_bag_percentage: 0
+  price_check_interval: 1
+  sell_slippage: 0.2
+  stop_loss_percentage: 0.3
+  tsl_enabled: true
+  tsl_activation_pct: 0.2
+  tsl_trail_pct: 0.3
+  tsl_sell_pct: 0.7
+  take_profit_percentage: 1.0
+  tp_sell_pct: 0.50
+  dca_enabled: true
+pattern_detection:
+  enabled: false
+scoring:
+  enabled: false
+  min_score: 75
+  volume_weight: 30
+  buy_pressure_weight: 35
+  momentum_weight: 20
+  liquidity_weight: 15
+whale_copy:
+  enabled: true
+  wallets_file: smart_money_wallets.json
+  min_buy_amount: 0.95
+  poll_interval: 90
+  helius_api_key: ''
+  webhook_enabled: true
+  webhook_port: 8000
+dev_check:
+  enabled: false
+  max_tokens_created: 20
+  min_account_age_days: 1
+trending_scanner:
+  enabled: false
+whale_all_platforms: true
+stablecoin_filter:
+- 7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs
+- JuprjznTrTSp2UFa3ZBUFgwdAmtZCq4MQCwysN55USD
+- EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+- Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
+- USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX
+- USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA
+- 2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo
+- F3hW1kkYVXhMz9FRV8t3mEfwmLQygF7PtPSsofPCdmXR
+- So11111111111111111111111111111111111111112
+- USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB
+token_vetting:
+  enabled: false
+swap_config:
+  use_dynamic_slippage: false
+  dynamic_compute_limit: true
+  wrap_and_unwrap_sol: false
+  restrict_intermediate_tokens: true
+  max_accounts_in_route: 64
