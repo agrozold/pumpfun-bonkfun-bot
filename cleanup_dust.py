@@ -39,13 +39,32 @@ except:
 PROTECTED = bot_mints | no_sl
 
 # Собираем все аккаунты (SPL + Token2022)
+# Use Alchemy as primary (dRPC timeouts on heavy queries), fallback to main RPC
+rpc_endpoints = [
+    os.getenv('ALCHEMY_RPC_ENDPOINT', ''),
+    os.getenv('CHAINSTACK_RPC_ENDPOINT', ''),
+    rpc,
+]
+rpc_endpoints = [r for r in rpc_endpoints if r]
+
 all_accs = []
 for prog in [TOKEN_SPL, TOKEN_2022]:
-    resp = requests.post(rpc, json={
-        'jsonrpc': '2.0', 'id': 1,
-        'method': 'getTokenAccountsByOwner',
-        'params': [str(wallet), {'programId': prog}, {'encoding': 'jsonParsed'}]
-    })
+    resp = None
+    for endpoint in rpc_endpoints:
+        try:
+            resp = requests.post(endpoint, json={
+                'jsonrpc': '2.0', 'id': 1,
+                'method': 'getTokenAccountsByOwner',
+                'params': [str(wallet), {'programId': prog}, {'encoding': 'jsonParsed'}]
+            }, timeout=15)
+            if resp.status_code == 200 and 'result' in resp.json():
+                break
+        except Exception as e:
+            print(f"RPC {endpoint[:40]}... failed: {e}")
+            resp = None
+    if not resp:
+        print(f"ERROR: All RPCs failed for {prog}")
+        continue
     for acc in resp.json().get('result', {}).get('value', []):
         info = acc['account']['data']['parsed']['info']
         all_accs.append({
