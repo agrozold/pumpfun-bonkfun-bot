@@ -114,3 +114,10 @@ holders_filtered.json
 final_*.json
 dune_candidates*.json
 !smart_money_wallets.example.json
+100
+=
+main
+scripts/dune_check_wallets.py
+scripts/dune_find_whales.py
+scripts/no_sl.py
+full_whale_analysis.py
