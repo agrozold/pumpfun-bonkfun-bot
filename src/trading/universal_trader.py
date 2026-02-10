@@ -359,9 +359,20 @@ class UniversalTrader:
 
         if enable_whale_copy:
             try:
-                # Choose between Webhook (real-time) or Poller (30s interval)
-                if self.whale_webhook_enabled and WHALE_WEBHOOK_AVAILABLE:
-                    logger.warning("[WHALE] Creating WhaleWebhookReceiver (REAL-TIME via Helius)...")
+                # Priority: Geyser gRPC (fastest) > Webhook > Poller
+                if WHALE_GEYSER_AVAILABLE and os.getenv("GEYSER_API_KEY"):
+                    logger.warning("[WHALE] Creating WhaleGeyserReceiver (ULTRA-LOW LATENCY via LaserStream gRPC)...")
+                    self.whale_tracker = WhaleGeyserReceiver(
+                        geyser_endpoint=os.getenv("GEYSER_ENDPOINT", "laserstream-mainnet-fra.helius-rpc.com"),
+                        geyser_api_key=os.getenv("GEYSER_API_KEY", ""),
+                        helius_parse_api_key=os.getenv("GEYSER_PARSE_API_KEY", ""),
+                        wallets_file=whale_wallets_file,
+                        min_buy_amount=whale_min_buy_amount,
+                        stablecoin_filter=stablecoin_filter or [],
+                    )
+                    logger.warning(f"[WHALE] Geyser endpoint: {os.getenv('GEYSER_ENDPOINT', 'N/A')}")
+                elif self.whale_webhook_enabled and WHALE_WEBHOOK_AVAILABLE:
+                    logger.warning("[WHALE] Creating WhaleWebhookReceiver (REAL-TIME via Helius webhook)...")
                     self.whale_tracker = WhaleWebhookReceiver(
                         host="0.0.0.0",
                         port=self.whale_webhook_port,
