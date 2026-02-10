@@ -50,6 +50,10 @@ async def on_buy_success(tx: "PendingTransaction"):
     whale_label = tx.context.get("whale_label", None)
     dca_enabled = tx.context.get("dca_enabled", True)
     max_hold_time = tx.context.get("max_hold_time", 0)
+    # Phase 4: Pool vault data for real-time price stream
+    pool_base_vault = tx.context.get("pool_base_vault", None)
+    pool_quote_vault = tx.context.get("pool_quote_vault", None)
+    pool_address = tx.context.get("pool_address", None)
     
     logger.warning(f"[TX_CALLBACK] ✅ BUY CONFIRMED: {symbol}")
     logger.info(f"[TX_CALLBACK] Adding to positions: {token_amount:,.2f} tokens @ {price:.10f}")
@@ -112,6 +116,10 @@ async def on_buy_success(tx: "PendingTransaction"):
                 # Whale info
                 whale_wallet=whale_wallet,
                 whale_label=whale_label,
+                # Phase 4: Pool vault data for real-time price stream
+                pool_base_vault=pool_base_vault,
+                pool_quote_vault=pool_quote_vault,
+                pool_address=pool_address,
             )
             positions.append(position)
             save_positions(positions)

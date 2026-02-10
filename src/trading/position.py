@@ -71,6 +71,11 @@ class Position:
     platform: str = "pump_fun"
     bonding_curve: str | None = None
 
+    # Pool vault addresses for real-time price stream (Phase 4)
+    pool_base_vault: str | None = None   # Token vault address
+    pool_quote_vault: str | None = None  # SOL vault address
+    pool_address: str | None = None      # Pool/market address
+
     def __post_init__(self):
         if self.high_water_mark == 0.0:
             self.high_water_mark = self.entry_price
@@ -109,6 +114,9 @@ class Position:
             "state": self.state,
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
+            "pool_base_vault": self.pool_base_vault,
+            "pool_quote_vault": self.pool_quote_vault,
+            "pool_address": self.pool_address,
         }
 
     @classmethod
@@ -141,6 +149,9 @@ class Position:
             original_entry_price=data.get("original_entry_price", 0.0),
             platform=data.get("platform", "pump_fun"),
             bonding_curve=data.get("bonding_curve"),
+            pool_base_vault=data.get("pool_base_vault"),
+            pool_quote_vault=data.get("pool_quote_vault"),
+            pool_address=data.get("pool_address"),
         )
 
     @classmethod

@@ -425,6 +425,14 @@ class FallbackSeller:
             logger.info(f"  Quote token program (SOL): {SYSTEM_TOKEN_PROGRAM}")
             logger.info(f"  Base token program: {token_program_id}")
 
+            # Phase 4: Store vault addresses for real-time price stream
+            _vault_context = {
+                "pool_base_vault": str(pool_base_ata),
+                "pool_quote_vault": str(pool_quote_ata),
+                "pool_address": str(market),
+                "token_decimals": token_decimals,
+            }
+
             # Build instruction data: discriminator + spendable_quote_in + min_base_amount_out
             # Using buy_exact_quote_in: spend X SOL, get at least Y tokens
             ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output) + bytes([0])  # track_volume = false
@@ -525,7 +533,7 @@ class FallbackSeller:
                         signature=sig, mint=str(mint), symbol=symbol, action="buy",
                         token_amount=expected_tokens, price=price,
                         on_success=on_buy_success, on_failure=on_buy_failure,
-                        context={"platform": "pumpswap", "bot_name": "fallback_seller", "pre_verified": True, **(position_config or {})},
+                        context={"platform": "pumpswap", "bot_name": "fallback_seller", "pre_verified": True, **_vault_context, **(position_config or {})},
                     )
                     return True, sig, None, expected_tokens, price
 
@@ -540,7 +548,7 @@ class FallbackSeller:
                             signature=sig, mint=str(mint), symbol=symbol, action="buy",
                             token_amount=expected_tokens, price=price,
                             on_success=on_buy_success, on_failure=on_buy_failure,
-                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **(position_config or {})},
+                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **_vault_context, **(position_config or {})},
                         )
                         return True, sig, None, expected_tokens, price  # TX sent, verification pending
 
@@ -553,7 +561,7 @@ class FallbackSeller:
                             signature=sig, mint=str(mint), symbol=symbol, action="buy",
                             token_amount=expected_tokens, price=price,
                             on_success=on_buy_success, on_failure=on_buy_failure,
-                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **(position_config or {})},
+                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **_vault_context, **(position_config or {})},
                         )
                         return True, sig, None, expected_tokens, price  # TX sent, verification pending
 
@@ -564,7 +572,7 @@ class FallbackSeller:
                 signature=sig, mint=str(mint), symbol=symbol, action="buy",
                 token_amount=expected_tokens, price=price,
                 on_success=on_buy_success, on_failure=on_buy_failure,
-                context={"platform": "pumpswap", "bot_name": "fallback_seller", **(position_config or {})},
+                context={"platform": "pumpswap", "bot_name": "fallback_seller", **_vault_context, **(position_config or {})},
             )
             return True, sig, None, expected_tokens, price  # TX sent, verification pending
 
@@ -578,6 +586,7 @@ class FallbackSeller:
         sol_amount: float,
         symbol: str = "TOKEN",
         position_config: dict | None = None,  # TSL/TP/SL parameters for callback
+        prefetched_quote: dict | None = None,  # Phase 3.3: Pre-fetched quote
     ) -> tuple[bool, str | None, str | None, float, float]:
         """Buy token via Jupiter aggregator - works for any token with liquidity.
 
@@ -844,11 +853,24 @@ class FallbackSeller:
                         "slippageBps": str(slippage_bps),  # From config
                     }
 
-                    async with session.get(jupiter_quote_url, params=quote_params, headers=headers) as resp:
-                        if resp.status != 200:
-                            error_text = await resp.text()
-                            return False, None, f"Jupiter quote failed: {error_text}", 0.0, 0.0
-                        quote = await resp.json()
+                    # Phase 3.3: Use prefetched quote if available and fresh
+                    _pf_quote = (position_config or {}).get("prefetched_quote")
+                    if _pf_quote and _pf_quote.get("outAmount"):
+                        import time as _time
+                        _pf_age = _time.monotonic() - _pf_quote.get("_prefetch_time", 0)
+                        if _pf_age < 5.0:
+                            quote = _pf_quote
+                            logger.info(f"[JUPITER] Using pre-fetched quote ({_pf_age:.1f}s old)")
+                        else:
+                            logger.info(f"[JUPITER] Pre-fetched quote too old ({_pf_age:.1f}s), fetching new")
+                            _pf_quote = None
+
+                    if not _pf_quote or not _pf_quote.get("outAmount"):
+                        async with session.get(jupiter_quote_url, params=quote_params, headers=headers) as resp:
+                            if resp.status != 200:
+                                error_text = await resp.text()
+                                return False, None, f"Jupiter quote failed: {error_text}", 0.0, 0.0
+                            quote = await resp.json()
 
                     out_amount = int(quote.get("outAmount", 0))
                     out_amount_tokens = out_amount / (10 ** token_decimals)

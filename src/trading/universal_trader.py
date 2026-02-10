@@ -59,6 +59,12 @@ try:
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
+# Phase 4: Real-time gRPC price stream for SL/TP monitoring
+try:
+    from monitoring.price_stream import PriceStream
+    PRICE_STREAM_AVAILABLE = True
+except ImportError:
+    PRICE_STREAM_AVAILABLE = False
 from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolumeAnalysis
 from platforms import get_platform_implementations
@@ -370,6 +376,7 @@ class UniversalTrader:
         self.whale_tracker_secondary = None  # Secondary receiver for dual mode
         self._signal_dedup = None  # Dedup for dual-receiver mode
         self._watchdog = None  # Dual-channel watchdog (Phase 5.3)
+        self._price_stream = None  # Phase 4: Real-time gRPC price stream
         self.helius_api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
 
         if enable_whale_copy:
@@ -468,6 +475,17 @@ class UniversalTrader:
                 self.whale_tracker_secondary = None
         else:
             logger.warning("[WHALE] Whale copy: DISABLED in config")
+        # Phase 4: Initialize PriceStream for real-time SL/TP monitoring
+        if PRICE_STREAM_AVAILABLE:
+            try:
+                self._price_stream = PriceStream(stale_threshold=3.0)
+                logger.warning("[PRICE_STREAM] PriceStream initialized (Phase 4)")
+            except Exception as e:
+                logger.error(f"[PRICE_STREAM] Failed to init: {e}")
+                self._price_stream = None
+        else:
+            logger.info("[PRICE_STREAM] PriceStream not available")
+
         # Dev reputation checker setup
         self.enable_dev_check = enable_dev_check
         self.dev_checker: DevReputationChecker | None = None
@@ -967,11 +985,23 @@ class UniversalTrader:
             return
 
         # ============================================
-        # SCORING CHECK - ФИЛЬТР МУСОРА!
         # ============================================
+        # SCORING CHECK + PRE-FETCH QUOTE (Phase 3.3)
+        # Run scoring and Jupiter quote in PARALLEL
+        # ============================================
+        prefetched_quote = None
+
         if self.token_scorer:
+            # Phase 3.3: Launch scoring + quote prefetch in parallel
+            scoring_task = asyncio.create_task(
+                self.token_scorer.should_buy(mint_str, whale_buy.token_symbol)
+            )
+            quote_task = asyncio.create_task(
+                self._prefetch_jupiter_quote(mint_str, self.buy_amount)
+            )
+
             try:
-                should_buy, score = await self.token_scorer.should_buy(mint_str, whale_buy.token_symbol)
+                should_buy, score = await scoring_task
                 logger.warning(
                     f"[WHALE SCORE] {whale_buy.token_symbol}: {score.total_score}/100 -> {score.recommendation}"
                 )
@@ -981,6 +1011,7 @@ class UniversalTrader:
                 )
 
                 if not should_buy:
+                    quote_task.cancel()  # Don't waste the quote
                     logger.warning(
                         f"[WHALE] SKIP LOW SCORE: {whale_buy.token_symbol} score={score.total_score} "
                         f"< min_score={self.token_scorer.min_score} | whale={whale_buy.whale_label}"
@@ -993,8 +1024,19 @@ class UniversalTrader:
                 logger.info(
                     f"[WHALE] SCORE OK: {whale_buy.token_symbol} score={score.total_score} >= {self.token_scorer.min_score}"
                 )
+
+                # Collect prefetched quote (may already be done)
+                try:
+                    prefetched_quote = await asyncio.wait_for(quote_task, timeout=5.0)
+                    if prefetched_quote:
+                        logger.info(f"[PHASE 3.3] Pre-fetched Jupiter quote ready for {whale_buy.token_symbol}")
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    prefetched_quote = None
+                except Exception:
+                    prefetched_quote = None
+
             except Exception as e:
-                # CRITICAL: Если scoring упал - НЕ покупаем! Безопасность важнее
+                quote_task.cancel()
                 logger.warning(f"[WHALE] SKIP - Scoring check failed: {e} - NOT buying without score!")
                 return
 
@@ -1070,6 +1112,7 @@ class UniversalTrader:
                     symbol=whale_buy.token_symbol,
                     sol_amount=actual_buy_amount,
                     jupiter_first=True,  # Skip bonding curves for whale copy
+                    prefetched_quote=prefetched_quote,
                     whale_wallet=whale_buy.whale_wallet,
                     whale_label=whale_buy.whale_label,
                 )
@@ -1294,6 +1337,51 @@ class UniversalTrader:
                     f"MANUAL SELL REQUIRED for {token_info.symbol}! Mint: {token_info.mint}"
                 )
 
+    async def _prefetch_jupiter_quote(self, mint_str: str, sol_amount: float) -> dict | None:
+        """Phase 3.3: Pre-fetch Jupiter quote while scoring runs in parallel.
+        Returns quote dict or None on failure. Non-blocking, safe to cancel."""
+        try:
+            import aiohttp
+            sol_mint = "So11111111111111111111111111111111111111112"
+            amount_lamports = int(sol_amount * 1_000_000_000)
+            slippage_bps = int(self.buy_slippage * 10000)
+
+            headers = {}
+            if self.jupiter_api_key:
+                headers["x-api-key"] = self.jupiter_api_key
+
+            params = {
+                "inputMint": sol_mint,
+                "outputMint": mint_str,
+                "amount": str(amount_lamports),
+                "slippageBps": str(slippage_bps),
+                "restrictIntermediateTokens": "true",
+                "maxAccounts": "64",
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://api.jup.ag/swap/v1/quote",
+                    params=params,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    if resp.status == 200:
+                        quote = await resp.json()
+                        out_amount = int(quote.get("outAmount", 0))
+                        if out_amount > 0:
+                            quote["_prefetch_time"] = __import__("time").monotonic()
+                            logger.info(f"[PREFETCH] Quote OK: {out_amount} tokens for {sol_amount} SOL")
+                            return quote
+                    else:
+                        text = await resp.text()
+                        logger.info(f"[PREFETCH] Quote failed: HTTP {resp.status}: {text[:100]}")
+        except asyncio.CancelledError:
+            raise  # Let cancellation propagate
+        except Exception as e:
+            logger.info(f"[PREFETCH] Quote error: {e}")
+        return None
+
     async def _buy_any_dex(
         self,
         mint_str: str,
@@ -1303,6 +1391,7 @@ class UniversalTrader:
         is_dca: bool = False,
         whale_wallet: str = None,
         whale_label: str = None,
+        prefetched_quote: dict | None = None,
     ) -> tuple[bool, str | None, str, float, float]:
         """Buy token on ANY available DEX - universal liquidity finder.
 
@@ -1594,6 +1683,7 @@ class UniversalTrader:
                 "dca_pending": self.dca_enabled,  # If DCA enabled, wait for dip
                 "dca_trigger_pct": 0.25,  # -25% for second buy
                 "dca_first_buy_pct": 0.50,  # 50% first buy
+                "prefetched_quote": prefetched_quote,
             }
             
             success, sig, error, token_amount, real_price = await fallback.buy_via_jupiter(
@@ -2384,6 +2474,12 @@ class UniversalTrader:
             if self._watchdog:
                 watchdog_task = asyncio.create_task(self._watchdog.run())
                 logger.warning("[WATCHDOG] Background task STARTED")
+
+            # Phase 4: Start PriceStream for real-time price monitoring
+            price_stream_task = None
+            if self._price_stream:
+                price_stream_task = asyncio.create_task(self._price_stream.start())
+                logger.warning("[PRICE_STREAM] Background task STARTED")
             if not self.whale_tracker and not self.whale_tracker_secondary:
                 if self.enable_whale_copy:
                     logger.error("[WHALE] Whale copy enabled but no tracker initialized!")
@@ -3240,8 +3336,17 @@ class UniversalTrader:
                 mint_str = str(token_info.mint)
                 price_source = "batch_cache"
                 
-                # Get price from batch cache (instant, no API call!)
-                current_price = get_cached_price(mint_str)
+                # Phase 4: Try gRPC price stream first (real-time, ~300ms latency)
+                current_price = None
+                if self._price_stream:
+                    grpc_price = self._price_stream.get_price(mint_str)
+                    if grpc_price and grpc_price > 0:
+                        current_price = grpc_price
+                        price_source = "grpc_stream"
+
+                # Fallback: Get price from batch cache (instant, no API call!)
+                if not current_price or current_price <= 0:
+                    current_price = get_cached_price(mint_str)
                 
                 if not current_price or current_price <= 0:
                     # Cache miss - fallback to direct Jupiter (rare)
@@ -4139,6 +4244,15 @@ class UniversalTrader:
         save_positions(self.active_positions)
         # Add to batch price monitoring
         watch_token(str(position.mint))
+        # Phase 4: Subscribe to gRPC price stream if vault data available
+        if self._price_stream and position.pool_base_vault and position.pool_quote_vault:
+            self._price_stream.subscribe_position(
+                mint=str(position.mint),
+                base_vault=position.pool_base_vault,
+                quote_vault=position.pool_quote_vault,
+                symbol=position.symbol,
+                token_decimals=6,
+            )
 
     async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None):
         """Background task to verify sell. If failed - retry up to 3 times."""
@@ -4246,6 +4360,9 @@ class UniversalTrader:
         save_positions(self.active_positions)
         # Remove from batch price monitoring
         unwatch_token(mint)
+        # Phase 4: Unsubscribe from gRPC price stream
+        if self._price_stream:
+            self._price_stream.unsubscribe_position(mint)
         # FORGET FOREVER - add to sold_mints so never restored
         asyncio.create_task(self._forget_position_async(mint))
     
@@ -4387,6 +4504,15 @@ class UniversalTrader:
                 continue
             
             logger.info(f"[RESTORE] Starting monitor for {position.symbol} (TP: {position.take_profit_price}, SL: {position.stop_loss_price})")
+            # Phase 4: Subscribe restored position to gRPC price stream
+            if self._price_stream and position.pool_base_vault and position.pool_quote_vault:
+                self._price_stream.subscribe_position(
+                    mint=mint_str,
+                    base_vault=position.pool_base_vault,
+                    quote_vault=position.pool_quote_vault,
+                    symbol=position.symbol,
+                )
+                logger.info(f"[RESTORE] {position.symbol}: Subscribed to gRPC price stream")
             asyncio.create_task(self._monitor_position_until_exit(token_info, position))
 
 
