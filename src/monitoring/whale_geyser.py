@@ -1,7 +1,10 @@
 """
-Whale Geyser Tracker - Ultra-low latency whale tracking via Helius LaserStream gRPC.
-Hybrid approach: gRPC catches tx signature instantly, Helius Enhanced API parses it.
+Whale Geyser Tracker - Ultra-low latency whale tracking via gRPC.
+Hybrid approach: gRPC catches tx signature instantly, local parser decodes it.
 Drop-in replacement for WhaleWebhookReceiver - same WhaleBuy, same callback interface.
+
+Phase 1: Local parser (eliminates ~650ms Helius API call)
+Phase 5.1: Bidirectional stream with application-level keepalive ping
 """
 
 import asyncio
@@ -20,6 +23,13 @@ import grpc
 from grpc import aio as grpc_aio
 
 from geyser.generated import geyser_pb2, geyser_pb2_grpc
+
+# Local transaction parser — eliminates ~650ms Helius API call
+try:
+    from monitoring.local_tx_parser import LocalTxParser, ParsedSwap
+    LOCAL_PARSER_AVAILABLE = True
+except ImportError:
+    LOCAL_PARSER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +78,9 @@ class WhaleBuy:
 
 class WhaleGeyserReceiver:
     """
-    Tracks whale wallets via Helius LaserStream gRPC.
-    Hybrid: gRPC catches signature (~300ms) + Helius Enhanced API parses (~200ms).
-    Total ~500ms vs 3-5sec webhooks.
+    Tracks whale wallets via gRPC (Yellowstone Dragon's Mouth).
+    Phase 1: Local parser for ~0-5ms parse latency (Helius fallback).
+    Phase 5.1: Bidirectional stream with keepalive ping for stability.
     """
 
     def __init__(
@@ -108,6 +118,19 @@ class WhaleGeyserReceiver:
         if stablecoin_filter:
             self.token_blacklist.update(set(stablecoin_filter))
 
+        # Local transaction parser (eliminates Helius HTTP call)
+        self.local_parser: LocalTxParser | None = None
+        if LOCAL_PARSER_AVAILABLE:
+            self.local_parser = LocalTxParser(
+                extra_blacklist=set(stablecoin_filter) if stablecoin_filter else None
+            )
+            logger.warning(
+                f"[GEYSER] Local parser ENABLED: {len(self.local_parser.blacklist)} "
+                f"blacklisted tokens"
+            )
+        else:
+            logger.warning("[GEYSER] Local parser NOT available, using Helius only")
+
         # Callback (same interface as webhook)
         self.on_whale_buy: Optional[Callable] = None
 
@@ -119,6 +142,12 @@ class WhaleGeyserReceiver:
         self._channel = None
         self._stream_task: Optional[asyncio.Task] = None
         self.running = False
+
+        # Keepalive ping state (Phase 5.1)
+        self._ping_counter: int = 0
+        self._ping_queue: Optional[asyncio.Queue] = None
+        self._ping_task: Optional[asyncio.Task] = None
+        self._last_pong_time: float = 0.0
 
         # Stats
         self._stats = {
@@ -132,6 +161,9 @@ class WhaleGeyserReceiver:
             "blacklisted": 0,
             "duplicates": 0,
             "reconnects": 0,
+            "ping_sent": 0,
+            "ping_responded": 0,
+            "pong_received": 0,
         }
 
         # Latency tracking
@@ -177,12 +209,30 @@ class WhaleGeyserReceiver:
         logger.warning(f"[GEYSER] Endpoint: {self.geyser_endpoint}")
         logger.warning(f"[GEYSER] Tracking {len(self.whale_wallets)} whale wallets")
         logger.warning(f"[GEYSER] Min buy amount: {self.min_buy_amount} SOL")
-        logger.warning(f"[GEYSER] Mode: HYBRID (gRPC + Helius Enhanced API)")
+        logger.warning(f"[GEYSER] Keepalive: bidirectional ping every 10s")
+        if self.local_parser:
+            logger.warning(f"[GEYSER] Mode: LOCAL PARSE (gRPC + local parser, Helius fallback)")
+        else:
+            logger.warning(f"[GEYSER] Mode: HYBRID (gRPC + Helius Enhanced API)")
         logger.warning("=" * 70)
 
     async def stop(self):
         """Stop gRPC stream."""
         self.running = False
+        # Stop ping loop
+        if self._ping_task:
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except asyncio.CancelledError:
+                pass
+        # Signal request iterator to stop
+        if self._ping_queue:
+            try:
+                self._ping_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        # Stop stream
         if self._stream_task:
             self._stream_task.cancel()
             try:
@@ -238,8 +288,61 @@ class WhaleGeyserReceiver:
         )
         return request
 
+    async def _request_iterator(self, initial_request):
+        """Async generator for bidirectional gRPC stream.
+
+        Yields the initial subscription request, then keeps the write-half
+        open and yields ping requests from the queue as needed.
+        This enables the server to send SubscribeUpdatePing and the client
+        to respond with SubscribeRequestPing, keeping the connection alive.
+        """
+        # First message: the actual subscription request
+        yield initial_request
+        logger.info("[GEYSER] Subscription request sent, write-half staying open for pings")
+
+        # Then: yield ping/pong requests from queue forever
+        while True:
+            try:
+                msg = await self._ping_queue.get()
+                if msg is None:
+                    # Poison pill — stop the iterator, closes write-half
+                    logger.info("[GEYSER] Request iterator stopping (poison pill)")
+                    return
+                yield msg
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(f"[GEYSER] Request iterator error: {e}")
+                return
+
+    async def _ping_loop(self):
+        """Proactive keepalive: send ping every 10 seconds.
+
+        Some providers (PublicNode, Cloudflare proxies) close idle streams.
+        This ensures traffic flows on the write-half even when no whale
+        transactions are happening.
+        """
+        try:
+            # Wait a bit before first ping to let subscription establish
+            await asyncio.sleep(5)
+            while self.running:
+                self._ping_counter += 1
+                ping_id = self._ping_counter
+                ping_req = geyser_pb2.SubscribeRequest(
+                    ping=geyser_pb2.SubscribeRequestPing(id=ping_id)
+                )
+                try:
+                    self._ping_queue.put_nowait(ping_req)
+                    self._stats["ping_sent"] += 1
+                    logger.info(f"[GEYSER] Ping sent (proactive, id={ping_id})")
+                except asyncio.QueueFull:
+                    logger.warning("[GEYSER] Ping queue full, skipping ping")
+                await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            pass
+
     async def _run_stream(self):
-        """Main gRPC stream loop with auto-reconnect."""
+        """Main gRPC stream loop with auto-reconnect and bidirectional ping."""
         reconnect_delay = 1.0
 
         while self.running:
@@ -247,94 +350,163 @@ class WhaleGeyserReceiver:
                 stub = await self._create_channel()
                 request = self._create_subscribe_request()
 
+                # Create fresh ping queue and counter for this connection
+                self._ping_queue = asyncio.Queue(maxsize=100)
+                self._ping_counter = 0
+
                 logger.warning(f"[GEYSER] Connecting to {self.geyser_endpoint}...")
 
-                async for update in stub.Subscribe(iter([request])):
-                    if not self.running:
-                        break
+                # Start proactive ping loop
+                self._ping_task = asyncio.create_task(self._ping_loop())
 
-                    self._stats["grpc_messages"] += 1
+                try:
+                    # Bidirectional stream: _request_iterator yields subscription
+                    # request first, then keepalive pings from queue
+                    async for update in stub.Subscribe(
+                        self._request_iterator(request)
+                    ):
+                        if not self.running:
+                            break
 
-                    # We only care about transactions
-                    if not update.HasField("transaction"):
-                        continue
+                        self._stats["grpc_messages"] += 1
 
-                    grpc_receive_time = time.monotonic()
-
-                    try:
-                        tx_wrapper = update.transaction
-                        tx = tx_wrapper.transaction
-
-                        # Extract signature
-                        sig_bytes = bytes(tx.signature)
-                        signature = base58.b58encode(sig_bytes).decode()
-
-                        # Dedup by signature
-                        if signature in self._processed_sigs:
-                            continue
-                        self._processed_sigs.add(signature)
-                        if len(self._processed_sigs) > 10000:
-                            self._processed_sigs = set(
-                                list(self._processed_sigs)[-5000:]
+                        # --- Phase 5.1: Handle ping/pong ---
+                        if update.HasField("pong"):
+                            self._stats["pong_received"] += 1
+                            self._last_pong_time = time.monotonic()
+                            logger.info(
+                                f"[GEYSER] Pong received (id={update.pong.id})"
                             )
-
-                        self._stats["tx_detected"] += 1
-
-                        # Quick check: is the fee payer one of our whales?
-                        msg = tx.transaction.message
-                        if not msg or len(msg.account_keys) == 0:
                             continue
 
-                        fee_payer_bytes = bytes(msg.account_keys[0])
-                        fee_payer = base58.b58encode(fee_payer_bytes).decode()
+                        if update.HasField("ping"):
+                            # Server-initiated ping — respond immediately
+                            self._ping_counter += 1
+                            ping_id = self._ping_counter
+                            ping_req = geyser_pb2.SubscribeRequest(
+                                ping=geyser_pb2.SubscribeRequestPing(id=ping_id)
+                            )
+                            try:
+                                self._ping_queue.put_nowait(ping_req)
+                                self._stats["ping_responded"] += 1
+                                logger.info(
+                                    f"[GEYSER] Server ping received, "
+                                    f"responded with id={ping_id}"
+                                )
+                            except asyncio.QueueFull:
+                                logger.warning(
+                                    "[GEYSER] Ping queue full, could not respond to server ping"
+                                )
+                            continue
 
-                        if fee_payer not in self.whale_wallets:
-                            # TX involves whale wallet but whale is not fee payer
-                            # Could be someone sending TO whale — skip
-                            # Or whale is in account list but not initiator
-                            # Check all account keys
-                            whale_found = None
-                            for key_bytes in msg.account_keys:
-                                addr = base58.b58encode(bytes(key_bytes)).decode()
-                                if addr in self.whale_wallets:
-                                    whale_found = addr
-                                    break
-                            if not whale_found:
+                        # --- We only care about transactions ---
+                        if not update.HasField("transaction"):
+                            continue
+
+                        grpc_receive_time = time.monotonic()
+
+                        try:
+                            tx_wrapper = update.transaction
+                            tx = tx_wrapper.transaction
+
+                            # Extract signature
+                            sig_bytes = bytes(tx.signature)
+                            signature = base58.b58encode(sig_bytes).decode()
+
+                            # Dedup by signature
+                            if signature in self._processed_sigs:
                                 continue
-                            # Use found whale but still check if they're the signer
-                            # For safety, only process if fee_payer is whale
-                            # (prevents false positives from transfers TO whale)
+                            self._processed_sigs.add(signature)
+                            if len(self._processed_sigs) > 10000:
+                                self._processed_sigs = set(
+                                    list(self._processed_sigs)[-5000:]
+                                )
+
+                            self._stats["tx_detected"] += 1
+
+                            # Quick check: is the fee payer one of our whales?
+                            msg = tx.transaction.message
+                            if not msg or len(msg.account_keys) == 0:
+                                continue
+
+                            fee_payer_bytes = bytes(msg.account_keys[0])
+                            fee_payer = base58.b58encode(fee_payer_bytes).decode()
+
                             if fee_payer not in self.whale_wallets:
+                                # TX involves whale wallet but whale is not fee payer
+                                # For safety, only process if fee_payer is whale
+                                # (prevents false positives from transfers TO whale)
                                 continue
 
-                        logger.warning(
-                            f"[GEYSER] TX from whale {self.whale_wallets[fee_payer]['label']}: "
-                            f"{signature[:20]}..."
-                        )
-
-                        # Parse via Helius Enhanced API (async, don't block stream)
-                        asyncio.create_task(
-                            self._parse_and_emit(
-                                signature, fee_payer, grpc_receive_time
+                            logger.warning(
+                                f"[GEYSER] TX from whale "
+                                f"{self.whale_wallets[fee_payer]['label']}: "
+                                f"{signature[:20]}..."
                             )
-                        )
 
-                    except Exception as e:
-                        logger.error(f"[GEYSER] Error processing update: {e}")
+                            # Try local parse first (~0-5ms), fallback to Helius (~650ms)
+                            if self.local_parser:
+                                parsed = self.local_parser.parse(tx, fee_payer)
+                                if parsed:
+                                    asyncio.create_task(
+                                        self._emit_from_local_parse(
+                                            parsed, grpc_receive_time
+                                        )
+                                    )
+                                else:
+                                    # Local parser could not detect swap — fallback
+                                    logger.info(
+                                        f"[GEYSER] Local parse missed "
+                                        f"{signature[:16]}..., "
+                                        f"falling back to Helius"
+                                    )
+                                    asyncio.create_task(
+                                        self._parse_and_emit(
+                                            signature, fee_payer, grpc_receive_time
+                                        )
+                                    )
+                            else:
+                                # No local parser — always use Helius
+                                asyncio.create_task(
+                                    self._parse_and_emit(
+                                        signature, fee_payer, grpc_receive_time
+                                    )
+                                )
+
+                        except Exception as e:
+                            logger.error(f"[GEYSER] Error processing update: {e}")
+
+                finally:
+                    # Always clean up ping loop when stream ends
+                    if self._ping_task:
+                        self._ping_task.cancel()
+                        try:
+                            await self._ping_task
+                        except asyncio.CancelledError:
+                            pass
+                        self._ping_task = None
 
                 # Stream ended normally
                 reconnect_delay = 1.0
 
             except grpc_aio.AioRpcError as e:
                 code = e.code()
+                details = e.details() or ""
                 logger.error(
-                    f"[GEYSER] gRPC error: {code} - {e.details()}"
+                    f"[GEYSER] gRPC error: {code} - {details}"
                 )
                 if code == grpc.StatusCode.UNAUTHENTICATED:
                     logger.error("[GEYSER] Authentication failed! Check GEYSER_API_KEY")
                     await asyncio.sleep(30)
                 elif code == grpc.StatusCode.UNAVAILABLE:
                     logger.warning("[GEYSER] Service unavailable, reconnecting...")
+                elif code == grpc.StatusCode.INTERNAL and "RST_STREAM" in details:
+                    # RST_STREAM is expected from PublicNode — fast reconnect
+                    logger.warning(
+                        "[GEYSER] RST_STREAM received (expected from PublicNode), "
+                        "fast reconnect in 0.5s"
+                    )
+                    reconnect_delay = 0.5
                 else:
                     logger.warning(f"[GEYSER] Reconnecting in {reconnect_delay}s...")
 
@@ -348,6 +520,10 @@ class WhaleGeyserReceiver:
             # Reconnect with backoff
             if self.running:
                 self._stats["reconnects"] += 1
+                logger.warning(
+                    f"[GEYSER] Reconnecting in {reconnect_delay:.1f}s "
+                    f"(total reconnects: {self._stats['reconnects']})"
+                )
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, 30)
 
@@ -358,6 +534,125 @@ class WhaleGeyserReceiver:
                 except Exception:
                     pass
                 self._channel = None
+
+    async def _emit_from_local_parse(
+        self, parsed, grpc_receive_time: float
+    ):
+        """Emit whale buy signal from locally parsed transaction data.
+
+        Same filtering logic as _process_parsed_tx but without HTTP call.
+        Latency: ~0-5ms instead of ~650ms.
+        """
+        try:
+            signature = parsed.signature
+            fee_payer = parsed.fee_payer
+
+            whale_info = self.whale_wallets.get(fee_payer)
+            if not whale_info:
+                return
+
+            # Only process BUY signals
+            if not parsed.is_buy:
+                self._stats["sells_skipped"] += 1
+                logger.warning(
+                    f"[GEYSER-LOCAL] SELL detected, "
+                    f"whale={whale_info.get('label','?')}, "
+                    f"tx={signature[:16]}..."
+                )
+                return
+
+            sol_spent = parsed.sol_amount
+
+            if sol_spent < self.min_buy_amount:
+                self._stats["below_min"] += 1
+                logger.info(
+                    f"[GEYSER-LOCAL] Below min: {sol_spent:.4f} < "
+                    f"{self.min_buy_amount} SOL"
+                )
+                return
+
+            token_received = parsed.token_mint
+
+            # Double-check blacklist (parser already checks, but safety first)
+            if token_received in self.token_blacklist:
+                self._stats["blacklisted"] += 1
+                return
+
+            # Anti-duplicate by token
+            if token_received in self._emitted_tokens:
+                self._stats["duplicates"] += 1
+                return
+            self._emitted_tokens.add(token_received)
+            if len(self._emitted_tokens) > 500:
+                self._emitted_tokens = set(list(self._emitted_tokens)[-400:])
+
+            # Check Redis for existing position
+            try:
+                from trading.redis_state import get_redis_state
+                state = await get_redis_state()
+                if state and await state.is_connected():
+                    if await state.position_exists(token_received):
+                        logger.warning(
+                            f"[GEYSER-LOCAL] POSITION_EXISTS: "
+                            f"{token_received[:16]}..."
+                        )
+                        self._stats["duplicates"] += 1
+                        return
+            except Exception:
+                pass
+
+            platform = parsed.platform
+
+            # Calculate latency
+            latency_ms = (time.monotonic() - grpc_receive_time) * 1000
+            self._last_latency_ms = latency_ms
+
+            # Get symbol (async, non-blocking for speed)
+            token_symbol = await _fetch_symbol_dexscreener(token_received)
+
+            whale_buy = WhaleBuy(
+                whale_wallet=fee_payer,
+                token_mint=token_received,
+                amount_sol=sol_spent,
+                timestamp=datetime.utcnow(),
+                tx_signature=signature,
+                whale_label=whale_info.get("label", "whale"),
+                platform=platform,
+                token_symbol=token_symbol,
+                age_seconds=0,
+                block_time=None,
+            )
+
+            self._stats["parse_ok"] += 1
+
+            logger.warning("=" * 70)
+            logger.warning(
+                f"[GEYSER-LOCAL] WHALE BUY DETECTED (LOCAL PARSE) "
+                f"[{latency_ms:.0f}ms latency]"
+            )
+            logger.warning(f"  WHALE:    {whale_buy.whale_label}")
+            logger.warning(f"  WALLET:   {fee_payer}")
+            logger.warning(f"  TOKEN:    {token_received}")
+            logger.warning(f"  SYMBOL:   {token_symbol or 'fetching...'}")
+            logger.warning(f"  AMOUNT:   {sol_spent:.4f} SOL")
+            logger.warning(f"  PLATFORM: {platform}")
+            logger.warning(f"  TX:       {signature}")
+            logger.warning(f"  METHOD:   LOCAL (no Helius API call)")
+            logger.warning("=" * 70)
+
+            self._stats["buys_emitted"] += 1
+
+            if self.on_whale_buy:
+                logger.warning(
+                    f"[GEYSER-LOCAL] Calling callback for "
+                    f"{whale_buy.token_symbol}"
+                )
+                asyncio.create_task(self.on_whale_buy(whale_buy))
+            else:
+                logger.error("[GEYSER-LOCAL] NO CALLBACK SET!")
+
+        except Exception as e:
+            logger.error(f"[GEYSER-LOCAL] Emit error: {e}")
 
     async def _parse_and_emit(
         self, signature: str, fee_payer: str, grpc_receive_time: float
@@ -416,14 +711,18 @@ class WhaleGeyserReceiver:
                             else:
                                 text = await resp.text()
                                 logger.error(
-                                    f"[GEYSER] Parse API error {resp.status}: {text[:200]}"
+                                    f"[GEYSER] Parse API error {resp.status}: "
+                                    f"{text[:200]}"
                                 )
                     except asyncio.TimeoutError:
                         if attempt < 2:
                             continue
 
             self._stats["parse_fail"] += 1
-            logger.error(f"[GEYSER] Failed to parse tx after 3 attempts: {signature[:20]}...")
+            logger.error(
+                f"[GEYSER] Failed to parse tx after 3 attempts: "
+                f"{signature[:20]}..."
+            )
 
         except Exception as e:
             self._stats["parse_fail"] += 1
@@ -436,7 +735,7 @@ class WhaleGeyserReceiver:
             signature = tx.get("signature", "")
 
             if tx_type != "SWAP":
-                logger.debug(f"[GEYSER] Not a SWAP: {tx_type}, skipping")
+                logger.info(f"[GEYSER] Not a SWAP: {tx_type}, skipping")
                 return
 
             whale_info = self.whale_wallets.get(fee_payer)
@@ -474,7 +773,8 @@ class WhaleGeyserReceiver:
             if not token_received:
                 self._stats["sells_skipped"] += 1
                 logger.warning(
-                    f"[GEYSER] SELL detected, whale={whale_info.get('label','?')}, "
+                    f"[GEYSER] SELL detected, "
+                    f"whale={whale_info.get('label','?')}, "
                     f"tx={signature[:16]}..."
                 )
                 return
@@ -482,7 +782,8 @@ class WhaleGeyserReceiver:
             if sol_spent < self.min_buy_amount:
                 self._stats["below_min"] += 1
                 logger.info(
-                    f"[GEYSER] Below min: {sol_spent:.4f} < {self.min_buy_amount} SOL"
+                    f"[GEYSER] Below min: {sol_spent:.4f} < "
+                    f"{self.min_buy_amount} SOL"
                 )
                 return
 
@@ -505,7 +806,8 @@ class WhaleGeyserReceiver:
                 if state and await state.is_connected():
                     if await state.position_exists(token_received):
                         logger.warning(
-                            f"[GEYSER] POSITION_EXISTS: {token_received[:16]}..."
+                            f"[GEYSER] POSITION_EXISTS: "
+                            f"{token_received[:16]}..."
                         )
                         self._stats["duplicates"] += 1
                         return
@@ -524,8 +826,14 @@ class WhaleGeyserReceiver:
             if description:
                 parts = description.split(" for ")
                 if len(parts) > 1:
-                    parsed_symbol = parts[-1].split()[-1] if parts[-1] else ""
-                    token_symbol = parsed_symbol if parsed_symbol.upper() != "SOL" else ""
+                    parsed_symbol = (
+                        parts[-1].split()[-1] if parts[-1] else ""
+                    )
+                    token_symbol = (
+                        parsed_symbol
+                        if parsed_symbol.upper() != "SOL"
+                        else ""
+                    )
 
             if not token_symbol:
                 token_symbol = await _fetch_symbol_dexscreener(token_received)
@@ -587,7 +895,14 @@ class WhaleGeyserReceiver:
         return source
 
     def get_stats(self) -> dict:
-        return {**self._stats, "latency_ms": self._last_latency_ms}
+        stats = {**self._stats, "latency_ms": self._last_latency_ms}
+        if self._last_pong_time > 0:
+            stats["last_pong_ago_s"] = round(
+                time.monotonic() - self._last_pong_time, 1
+            )
+        if self.local_parser:
+            stats["local_parser"] = self.local_parser.get_stats()
+        return stats
 
     def get_tracked_wallets(self) -> list[str]:
         return list(self.whale_wallets.keys())
