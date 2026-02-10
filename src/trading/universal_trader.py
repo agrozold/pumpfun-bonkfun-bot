@@ -47,6 +47,12 @@ try:
     WHALE_GEYSER_AVAILABLE = True
 except ImportError:
     WHALE_GEYSER_AVAILABLE = False
+# Signal deduplication for dual-receiver mode (gRPC + Webhook)
+try:
+    from monitoring.signal_dedup import SignalDedup
+    SIGNAL_DEDUP_AVAILABLE = True
+except ImportError:
+    SIGNAL_DEDUP_AVAILABLE = False
 from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolumeAnalysis
 from platforms import get_platform_implementations
@@ -355,14 +361,20 @@ class UniversalTrader:
         self.whale_webhook_enabled = whale_webhook_enabled
         self.whale_webhook_port = whale_webhook_port
         self.whale_tracker: WhalePoller | None = None
+        self.whale_tracker_secondary = None  # Secondary receiver for dual mode
+        self._signal_dedup = None  # Dedup for dual-receiver mode
         self.helius_api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
 
         if enable_whale_copy:
             try:
-                # Priority: Geyser gRPC (fastest) > Webhook > Poller
+                # === PHASE 2: Parallel gRPC + Webhook with dedup ===
+                geyser_receiver = None
+                webhook_receiver = None
+
+                # Create gRPC receiver if available
                 if WHALE_GEYSER_AVAILABLE and os.getenv("GEYSER_API_KEY"):
                     logger.warning("[WHALE] Creating WhaleGeyserReceiver (ULTRA-LOW LATENCY via LaserStream gRPC)...")
-                    self.whale_tracker = WhaleGeyserReceiver(
+                    geyser_receiver = WhaleGeyserReceiver(
                         geyser_endpoint=os.getenv("GEYSER_ENDPOINT", "laserstream-mainnet-fra.helius-rpc.com"),
                         geyser_api_key=os.getenv("GEYSER_API_KEY", ""),
                         helius_parse_api_key=os.getenv("GEYSER_PARSE_API_KEY", ""),
@@ -371,9 +383,11 @@ class UniversalTrader:
                         stablecoin_filter=stablecoin_filter or [],
                     )
                     logger.warning(f"[WHALE] Geyser endpoint: {os.getenv('GEYSER_ENDPOINT', 'N/A')}")
-                elif self.whale_webhook_enabled and WHALE_WEBHOOK_AVAILABLE:
+
+                # Create webhook receiver if available (independent of gRPC)
+                if self.whale_webhook_enabled and WHALE_WEBHOOK_AVAILABLE:
                     logger.warning("[WHALE] Creating WhaleWebhookReceiver (REAL-TIME via Helius webhook)...")
-                    self.whale_tracker = WhaleWebhookReceiver(
+                    webhook_receiver = WhaleWebhookReceiver(
                         host="0.0.0.0",
                         port=self.whale_webhook_port,
                         wallets_file=whale_wallets_file,
@@ -381,39 +395,66 @@ class UniversalTrader:
                         stablecoin_filter=stablecoin_filter or [],
                     )
                     logger.warning(f"[WHALE] Webhook server will listen on port {self.whale_webhook_port}")
+
+                # Assign receivers based on what is available
+                if geyser_receiver and webhook_receiver:
+                    # DUAL MODE: Both channels active with dedup
+                    if SIGNAL_DEDUP_AVAILABLE:
+                        self._signal_dedup = SignalDedup(ttl_seconds=300)
+                    self.whale_tracker = geyser_receiver
+                    self.whale_tracker_secondary = webhook_receiver
+                    self.whale_tracker.set_callback(self._deduped_whale_buy)
+                    self.whale_tracker_secondary.set_callback(self._deduped_whale_buy)
+                    logger.warning("=" * 70)
+                    logger.warning("[WHALE] DUAL MODE: gRPC (primary) + Webhook (secondary)")
+                    logger.warning("[WHALE] Signal dedup: ENABLED (TTL=300s)")
+                    logger.warning("[WHALE] First receiver to catch TX wins, duplicate is dropped")
+                    logger.warning("=" * 70)
+                elif geyser_receiver:
+                    # gRPC only
+                    self.whale_tracker = geyser_receiver
+                    self.whale_tracker.set_callback(self._on_whale_buy)
+                    logger.warning("[WHALE] SINGLE MODE: gRPC only")
+                elif webhook_receiver:
+                    # Webhook only
+                    self.whale_tracker = webhook_receiver
+                    self.whale_tracker.set_callback(self._on_whale_buy)
+                    logger.warning("[WHALE] SINGLE MODE: Webhook only")
                 elif WHALE_POLLER_AVAILABLE:
+                    # Fallback to poller
                     logger.warning("[WHALE] Creating WhalePoller instance (HTTP polling)...")
-                    logger.warning("[WHALE] Note: Using HTTP polling because webhook not enabled")
                     self.whale_tracker = WhalePoller(
                         wallets_file=whale_wallets_file,
                         min_buy_amount=whale_min_buy_amount,
-                        poll_interval=30.0,  # Poll every 30 seconds
-                        max_tx_age=600.0,    # Process transactions up to 10 minutes old
+                        poll_interval=30.0,
+                        max_tx_age=600.0,
                         stablecoin_filter=stablecoin_filter or [],
                     )
-                    logger.warning(f"[WHALE] Poll interval: 30s")
+                    self.whale_tracker.set_callback(self._on_whale_buy)
+                    logger.warning("[WHALE] SINGLE MODE: Poller (fallback)")
                 else:
-                    logger.error("[WHALE] No whale tracker available (neither Webhook nor Poller)!")
+                    logger.error("[WHALE] No whale tracker available!")
                     self.whale_tracker = None
 
+                # Log tracker info
                 if self.whale_tracker:
-                    self.whale_tracker.set_callback(self._on_whale_buy)
                     wallet_count = len(self.whale_tracker.whale_wallets) if self.whale_tracker.whale_wallets else 0
-                    logger.warning(f"[WHALE] Tracker CREATED: {wallet_count} wallets")
+                    logger.warning(f"[WHALE] Primary tracker CREATED: {wallet_count} wallets")
                     logger.warning(f"[WHALE] Min buy amount: {whale_min_buy_amount} SOL")
-                    
                     if wallet_count == 0:
                         logger.error("[WHALE] ERROR: No whale wallets loaded!")
                     else:
                         sample_wallets = list(self.whale_tracker.whale_wallets.keys())[:3]
                         logger.warning(f"[WHALE] Sample wallets: {sample_wallets}")
+                if self.whale_tracker_secondary:
+                    logger.warning(f"[WHALE] Secondary tracker CREATED (webhook on port {self.whale_webhook_port})")
 
             except Exception as e:
                 logger.exception(f"[WHALE] EXCEPTION creating whale tracker: {e}")
                 self.whale_tracker = None
+                self.whale_tracker_secondary = None
         else:
             logger.warning("[WHALE] Whale copy: DISABLED in config")
-
         # Dev reputation checker setup
         self.enable_dev_check = enable_dev_check
         self.dev_checker: DevReputationChecker | None = None
@@ -835,6 +876,40 @@ class UniversalTrader:
 
         # Cannot determine - return None (will use current bot platform)
         return None
+
+    async def _deduped_whale_buy(self, whale_buy: WhaleBuy):
+        """Wrapper that deduplicates signals from gRPC + Webhook dual receivers.
+
+        When both receivers catch the same whale TX, only the first one
+        triggers _on_whale_buy(). The duplicate is logged and dropped.
+        Three layers of protection:
+        1. SignalDedup (this method) - by tx_signature
+        2. _on_whale_buy - by _buying_tokens/_bought_tokens + _buy_lock
+        3. Redis dedup_store - cross-process
+        """
+        sig = whale_buy.tx_signature
+        source = "unknown"
+
+        # Determine source for logging
+        if hasattr(whale_buy, "platform"):
+            source = whale_buy.platform or "unknown"
+
+        if self._signal_dedup:
+            if not self._signal_dedup.is_new(sig, source=source):
+                logger.info(
+                    f"[DEDUP] Duplicate whale signal dropped: "
+                    f"{whale_buy.token_symbol} tx={sig[:16]}... (from {source})"
+                )
+                return
+            logger.info(
+                f"[DEDUP] New whale signal accepted: "
+                f"{whale_buy.token_symbol} tx={sig[:16]}... (from {source})"
+            )
+        else:
+            # No dedup available — pass through (should not happen in dual mode)
+            logger.warning("[DEDUP] SignalDedup not initialized, passing through")
+
+        await self._on_whale_buy(whale_buy)
 
     async def _on_whale_buy(self, whale_buy: WhaleBuy):
         """Callback when whale buys a token - copy the trade on ANY available DEX.
@@ -2283,12 +2358,16 @@ class UniversalTrader:
             # Start whale tracker BEFORE choosing operating mode
             # Whale tracker should run in ALL modes if enabled
             whale_task = None
+            whale_task_secondary = None
             if self.whale_tracker:
-                logger.warning("[WHALE] Starting whale tracker in background...")
+                logger.warning("[WHALE] Starting whale tracker (primary) in background...")
                 whale_task = asyncio.create_task(self.whale_tracker.start())
-            else:
+            if self.whale_tracker_secondary:
+                logger.warning("[WHALE] Starting secondary tracker (webhook) in background...")
+                whale_task_secondary = asyncio.create_task(self.whale_tracker_secondary.start())
+            if not self.whale_tracker and not self.whale_tracker_secondary:
                 if self.enable_whale_copy:
-                    logger.error("[WHALE] Whale copy enabled but tracker not initialized!")
+                    logger.error("[WHALE] Whale copy enabled but no tracker initialized!")
                 else:
                     logger.info("Whale tracker not enabled, skipping...")
 
@@ -2311,6 +2390,10 @@ class UniversalTrader:
                     whale_task.cancel()
                     if self.whale_tracker:
                         await self.whale_tracker.stop()
+                    if whale_task_secondary:
+                        whale_task_secondary.cancel()
+                        if self.whale_tracker_secondary:
+                            await self.whale_tracker_secondary.stop()
             else:
                 # Continuous mode: process tokens until interrupted
                 logger.info(
@@ -2357,6 +2440,10 @@ class UniversalTrader:
                         whale_task.cancel()
                         if self.whale_tracker:
                             await self.whale_tracker.stop()
+                    if whale_task_secondary:
+                        whale_task_secondary.cancel()
+                        if self.whale_tracker_secondary:
+                            await self.whale_tracker_secondary.stop()
                     if trending_task:
                         trending_task.cancel()
                         if self.trending_scanner:
