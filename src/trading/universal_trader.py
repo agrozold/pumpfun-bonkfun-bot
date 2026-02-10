@@ -53,6 +53,12 @@ try:
     SIGNAL_DEDUP_AVAILABLE = True
 except ImportError:
     SIGNAL_DEDUP_AVAILABLE = False
+# Dual-channel watchdog for health monitoring (Phase 5.3)
+try:
+    from monitoring.watchdog import DualChannelWatchdog
+    WATCHDOG_AVAILABLE = True
+except ImportError:
+    WATCHDOG_AVAILABLE = False
 from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolumeAnalysis
 from platforms import get_platform_implementations
@@ -363,6 +369,7 @@ class UniversalTrader:
         self.whale_tracker: WhalePoller | None = None
         self.whale_tracker_secondary = None  # Secondary receiver for dual mode
         self._signal_dedup = None  # Dedup for dual-receiver mode
+        self._watchdog = None  # Dual-channel watchdog (Phase 5.3)
         self.helius_api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
 
         if enable_whale_copy:
@@ -410,6 +417,12 @@ class UniversalTrader:
                     logger.warning("[WHALE] Signal dedup: ENABLED (TTL=300s)")
                     logger.warning("[WHALE] First receiver to catch TX wins, duplicate is dropped")
                     logger.warning("=" * 70)
+                    # Phase 5.3: Create watchdog for dual-channel health monitoring
+                    if WATCHDOG_AVAILABLE:
+                        self._watchdog = DualChannelWatchdog(alert_after_seconds=300)
+                        self.whale_tracker.set_watchdog(self._watchdog)
+                        self.whale_tracker_secondary.set_watchdog(self._watchdog)
+                        logger.warning("[WHALE] Watchdog: ENABLED (alert after 300s silence)")
                 elif geyser_receiver:
                     # gRPC only
                     self.whale_tracker = geyser_receiver
@@ -2365,6 +2378,12 @@ class UniversalTrader:
             if self.whale_tracker_secondary:
                 logger.warning("[WHALE] Starting secondary tracker (webhook) in background...")
                 whale_task_secondary = asyncio.create_task(self.whale_tracker_secondary.start())
+
+            # Phase 5.3: Start watchdog for dual-channel health monitoring
+            watchdog_task = None
+            if self._watchdog:
+                watchdog_task = asyncio.create_task(self._watchdog.run())
+                logger.warning("[WATCHDOG] Background task STARTED")
             if not self.whale_tracker and not self.whale_tracker_secondary:
                 if self.enable_whale_copy:
                     logger.error("[WHALE] Whale copy enabled but no tracker initialized!")
@@ -2394,6 +2413,11 @@ class UniversalTrader:
                         whale_task_secondary.cancel()
                         if self.whale_tracker_secondary:
                             await self.whale_tracker_secondary.stop()
+                    # Phase 5.3: Stop watchdog
+                    if watchdog_task:
+                        watchdog_task.cancel()
+                        if self._watchdog:
+                            self._watchdog.stop()
             else:
                 # Continuous mode: process tokens until interrupted
                 logger.info(
@@ -2444,6 +2468,11 @@ class UniversalTrader:
                         whale_task_secondary.cancel()
                         if self.whale_tracker_secondary:
                             await self.whale_tracker_secondary.stop()
+                    # Phase 5.3: Stop watchdog
+                    if watchdog_task:
+                        watchdog_task.cancel()
+                        if self._watchdog:
+                            self._watchdog.stop()
                     if trending_task:
                         trending_task.cancel()
                         if self.trending_scanner:

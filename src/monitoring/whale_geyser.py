@@ -169,6 +169,9 @@ class WhaleGeyserReceiver:
         # Latency tracking
         self._last_latency_ms: float = 0
 
+        # Watchdog integration (Phase 5.3)
+        self._watchdog = None
+
         logger.warning(
             f"[GEYSER] Initialized: {len(self.whale_wallets)} whales, "
             f"min_buy={min_buy_amount} SOL, endpoint={self.geyser_endpoint}"
@@ -198,6 +201,11 @@ class WhaleGeyserReceiver:
         """Set callback for whale buy signals. Same interface as webhook."""
         self.on_whale_buy = callback
         logger.info("[GEYSER] Callback set")
+
+    def set_watchdog(self, watchdog):
+        """Set watchdog for channel health monitoring (Phase 5.3)."""
+        self._watchdog = watchdog
+        logger.info("[GEYSER] Watchdog set")
 
     async def start(self):
         """Start gRPC stream. Same interface as WhaleWebhookReceiver.start()."""
@@ -369,6 +377,10 @@ class WhaleGeyserReceiver:
                             break
 
                         self._stats["grpc_messages"] += 1
+
+                        # Touch watchdog on ANY gRPC activity (Phase 5.3)
+                        if self._watchdog:
+                            self._watchdog.touch_grpc()
 
                         # --- Phase 5.1: Handle ping/pong ---
                         if update.HasField("pong"):

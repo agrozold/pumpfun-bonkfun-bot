@@ -104,6 +104,9 @@ class WhaleWebhookReceiver:
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self.running = False
+
+        # Watchdog integration (Phase 5.3)
+        self._watchdog = None
         
         logger.warning(
             f"[WEBHOOK] Initialized: {len(self.whale_wallets)} whales, "
@@ -139,6 +142,11 @@ class WhaleWebhookReceiver:
         """Set callback for whale buy signals."""
         self.on_whale_buy = callback
         logger.info("[WEBHOOK] Callback set")
+
+    def set_watchdog(self, watchdog):
+        """Set watchdog for channel health monitoring (Phase 5.3)."""
+        self._watchdog = watchdog
+        logger.info("[WEBHOOK] Watchdog set")
 
     async def _get_redis_state(self):
         """Get Redis state manager."""
@@ -206,6 +214,11 @@ class WhaleWebhookReceiver:
         """Handle incoming webhook from Helius."""
         try:
             self._stats["webhooks_received"] += 1
+
+            # Touch watchdog on any incoming webhook (Phase 5.3)
+            if self._watchdog:
+                self._watchdog.touch_webhook()
+
             data = await request.json()
             
             transactions = data if isinstance(data, list) else [data]
