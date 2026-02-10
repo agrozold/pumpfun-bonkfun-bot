@@ -222,7 +222,33 @@ sudo systemctl start whale-bot
 
 ---
 
-## Команды
+## CLI-команды (aliases)
+
+Бот включает файл `aliases.sh` с удобными короткими командами для терминала.
+
+### Установка алиасов
+
+```bash
+echo 'source /opt/pumpfun-bonkfun-bot/aliases.sh' >> ~/.bashrc
+source ~/.bashrc
+```
+
+После этого все команды ниже доступны из любой директории.
+
+### Управление ботом
+
+| Команда | Описание |
+|---------|----------|
+| `bot-start` | Запуск бота |
+| `bot-stop` | Остановка бота |
+| `bot-restart` | Перезапуск (убивает старый процесс, без дублей) |
+| `bot-status` | Статус systemd сервиса |
+| `bot-health` | Проверка webhook сервера |
+| `bot-mode` | Показать текущий режим (gRPC+Webhook или Webhook-only) |
+| `bot-webhook` | Переключить на Webhook-only |
+| `bot-geyser` | Переключить на gRPC+Webhook |
+
+### Команды
 
 ### Управление ботом
 
