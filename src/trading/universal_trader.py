@@ -40,6 +40,13 @@ try:
 except ImportError:
     WHALE_WEBHOOK_AVAILABLE = False
 from monitoring.dev_reputation import DevReputationChecker
+
+# Geyser gRPC whale tracking (ultra-low latency)
+try:
+    from monitoring.whale_geyser import WhaleGeyserReceiver
+    WHALE_GEYSER_AVAILABLE = True
+except ImportError:
+    WHALE_GEYSER_AVAILABLE = False
 from monitoring.trending_scanner import TrendingScanner, TrendingToken
 from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolumeAnalysis
 from platforms import get_platform_implementations
@@ -78,6 +85,7 @@ logger = get_logger(__name__)
 
 # === ТОКЕНЫ БЕЗ STOP-LOSS (даже emergency) ===
 NO_SL_MINTS = {
+    "FDBnaGYQeGjkLVs2E53yg5ErKnUd2xSjL5SQMLgGy4wP",
     "4aiLCRmCkVeVGZBTCFXYCGtW4MFsq4dWhGSyNnoGTrrv",
     "8MdkXe5G77xaMheVQxLqAYV8e2m2Dfc5ZbuXup2epump",
     "FzLMPzqz9Ybn26qRzPKDKwsLV6Kpvugh31jF7T7npump",
