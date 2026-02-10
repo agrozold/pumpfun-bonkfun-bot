@@ -376,21 +376,17 @@ class SolanaClient:
 
                 logger.info(f"Sending transaction attempt {attempt + 1}/{max_retries}...")
 
-                # Try JITO first for faster landing
+                # === PHASE 3.1: Parallel Jito + RPC send ===
                 if jito.enabled and use_jito:
-                    try:
-                        jito_sig = await jito.send_transaction(transaction)
-                        if jito_sig:
-                            logger.info(f"[JITO] Transaction sent: {jito_sig}")
-                            return jito_sig
-                        logger.warning("[JITO] Failed, falling back to regular RPC")
-                    except Exception as jito_err:
-                        logger.warning(f"[JITO] Error: {jito_err}, falling back to regular RPC")
-
-                # Fallback to regular RPC
-                response = await client.send_transaction(transaction, tx_opts)
-                logger.info(f"Transaction sent successfully: {response.value}")
-                return response.value
+                    sig = await self._parallel_send_jito_rpc(
+                        jito, client, transaction, tx_opts
+                    )
+                    return sig
+                else:
+                    # use_jito=False (sell) or JITO disabled — RPC only
+                    response = await client.send_transaction(transaction, tx_opts)
+                    logger.info(f"[RPC] Transaction sent: {response.value}")
+                    return response.value
 
             except Exception as e:
                 last_error = e
@@ -464,6 +460,129 @@ class SolanaClient:
                     f"Transaction attempt {attempt + 1} failed: {e!s}, retrying in {wait_time:.1f}s"
                 )
                 await asyncio.sleep(wait_time)
+
+    async def _parallel_send_jito_rpc(
+        self, jito, client, transaction, tx_opts
+    ) -> str:
+        """Send transaction via Jito AND RPC in parallel, return first success.
+
+        Phase 3.1: Instead of sequential Jito-then-RPC, fires both simultaneously.
+        Solana guarantees idempotency — duplicate TX (same signature) is rejected,
+        so it's safe for both to land. First successful response wins.
+
+        Args:
+            jito: JitoSender instance
+            client: AsyncClient instance
+            transaction: Signed Transaction
+            tx_opts: TxOpts for RPC send
+
+        Returns:
+            Transaction signature string
+
+        Raises:
+            Exception: Re-raises the most relevant error if both fail.
+                      Non-retryable errors (ValueError, RuntimeError with known codes)
+                      are prioritized over generic errors.
+        """
+
+        async def _send_via_jito():
+            """Send via Jito block engine. Returns signature or raises."""
+            sig = await jito.send_transaction(transaction)
+            if sig:
+                return ("jito", sig)
+            raise RuntimeError("Jito returned None")
+
+        async def _send_via_rpc():
+            """Send via regular RPC. Returns signature or raises."""
+            response = await client.send_transaction(transaction, tx_opts)
+            return ("rpc", response.value)
+
+        jito_task = asyncio.create_task(_send_via_jito())
+        rpc_task = asyncio.create_task(_send_via_rpc())
+        all_tasks = {jito_task, rpc_task}
+
+        try:
+            # Wait for the first task to complete (success OR exception)
+            done, pending = await asyncio.wait(
+                all_tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # Check if the completed task succeeded
+            first_result = None
+            first_errors = []
+
+            for task in done:
+                exc = task.exception()
+                if exc is None:
+                    # Success!
+                    first_result = task.result()
+                else:
+                    first_errors.append(exc)
+
+            if first_result:
+                # First task succeeded — cancel the other, return result
+                source, sig = first_result
+                logger.info(f"[TX-PARALLEL] Sent via {source.upper()} (first): {sig}")
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                return sig
+
+            # First task failed — wait for the second
+            if pending:
+                done2, _ = await asyncio.wait(
+                    pending, return_when=asyncio.ALL_COMPLETED
+                )
+                for task in done2:
+                    exc = task.exception()
+                    if exc is None:
+                        source, sig = task.result()
+                        logger.info(
+                            f"[TX-PARALLEL] Sent via {source.upper()} (fallback): {sig}"
+                        )
+                        return sig
+                    else:
+                        first_errors.append(exc)
+
+            # Both failed — pick the most relevant error to re-raise
+            # Priority: non-retryable errors first, so the retry loop
+            # error handler can correctly decide to stop or continue
+            non_retryable = None
+            generic_error = None
+            for err in first_errors:
+                err_str = str(err).lower()
+                is_non_retryable = (
+                    isinstance(err, ValueError)
+                    or "0x1775" in str(err)
+                    or "0x1776" in str(err)
+                    or "slippage" in err_str
+                    or "insufficient" in err_str
+                    or "not enough" in err_str
+                    or "account not found" in err_str
+                    or "invalid account" in err_str
+                )
+                if is_non_retryable and non_retryable is None:
+                    non_retryable = err
+                elif generic_error is None:
+                    generic_error = err
+
+            raise (non_retryable or generic_error or RuntimeError(
+                "Both Jito and RPC failed"
+            ))
+
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Clean up all tasks on cancellation
+            for task in all_tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            raise
 
     async def confirm_transaction(
         self, signature: str, commitment: str = "confirmed", timeout: float = 45.0
