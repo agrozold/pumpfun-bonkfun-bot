@@ -81,8 +81,8 @@ class TxVerifier:
     _lock = asyncio.Lock()
     
     # Configuration
-    INITIAL_DELAY = 2.0  # Wait before first check (TX needs time to land)
-    CHECK_INTERVAL = 0.5  # Check every 500ms
+    INITIAL_DELAY = 0.8  # Wait before first check (TX lands in ~400-800ms)
+    CHECK_INTERVAL = 0.2  # Check every 200ms for faster confirmation
     MAX_WAIT = 15.0  # Max time to wait for confirmation
     MAX_QUEUE_SIZE = 100  # Prevent memory issues
     
