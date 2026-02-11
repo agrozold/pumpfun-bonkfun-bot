@@ -746,7 +746,7 @@ class UniversalTrader:
         """Get real token balance from on-chain (handles both Token and Token2022)."""
         import aiohttp
         try:
-            rpc_url = "https://lb.drpc.live/solana/AhgaFU4IRUa1ppdxz5AANAZ44rYj-6YR8LLieho1c5bd"
+            rpc_url = os.getenv("DRPC_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT") or self.rpc_endpoint
             wallet = str(self.wallet.pubkey)
             
             async with aiohttp.ClientSession() as session:

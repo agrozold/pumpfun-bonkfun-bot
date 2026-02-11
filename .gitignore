@@ -1,89 +1,84 @@
-# Sensitive data
+# ===========================
+# СЕКРЕТЫ
+# ===========================
 .env
-.env.local
+.env.*
+*.pem
+*.key
 
-# Whale wallets and insider data
+# ===========================
+# ПОЛЬЗОВАТЕЛЬСКИЕ ДАННЫЕ
+# ===========================
+smart_money_wallets.json
 smart_money_wallets*.json
 insider_wallets.json
 verified_insiders.json
-
-# Positions and trades
 positions.json*
 purchase_history.json
+bought_tokens.json
+active_monitors.json
+pending_sells.json
 trades/
 
-# Backups and temp
-backups/
-src_backup*/
-*.backup*
-*.bak*
-*.tmp
+# ===========================
+# КОНФИГИ (кроме examples)
+# ===========================
+bots/bot-whale-copy.yaml
+bots/bot-*.yaml
 
-# Logs
+# ===========================
+# БЕКАПЫ
+# ===========================
+*.bak
+*.bak.*
+*.bak_*
+*.backup
+*.backup.*
+*.backup_*
+*.before_*
+src_backup*/
+backups/
+
+# ===========================
+# ЛОГИ
+# ===========================
 logs/
 *.log
 nohup.out
 
-# Database
-*.db
-data/
-src/data/
-
-# Python
-__pycache__/
-*.py[cod]
-*.so
-.Python
-env/
-venv/
-.venv
-*.egg-info/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# Coverage
-.coverage
-.pytest_cache/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Private data - NEVER commit
-smart_money_wallets.json
-.env
-*.pem
-*.key
-
-# Session backups
-*.before_*
-smart_money_wallets.json
-bots/bot-whale-copy.yaml
-smart_money_wallets*.json
-
-# Analysis scripts and data (Mike's local)
+# ===========================
+# АНАЛИТИКА С API КЛЮЧАМИ
+# ===========================
 analyze_*.py
 find_*.py
 check_*.py
-cleanup_*.py
-scrape_*.py
 explore_*.py
+debug_*.py
+filter_*.py
+get_*.py
+scrape_*.py
 gmgn_*.py
 merge_*.py
 remove_*.py
 apify_*.py
+nansen_*.py
 smart_finder.py
 helius_style_check.py
-nansen_*.py
-get_*.py
-debug_*.py
-filter_*.py
 token_safety_check.py
 whale_manage.py
+whale_check.py
 test_grpc.py
+full_whale_analysis.py
+rank_wallets.py
+final_shortlist.py
+analyze_winrate.py
+update_helius.py
+add_token.sh
+find_early_buyers.py
+
+# ===========================
+# ДАННЫЕ АНАЛИТИКИ
+# ===========================
 *.OLD_FULL.json
 *_candidates*.json
 *_filtered*.json
@@ -92,13 +87,12 @@ test_grpc.py
 good_wallets.json
 bad_wallets*.json
 wallets.txt
-whale_pnl_*.json
-whale_pnl_*.txt
-whale_analysis_*.json
-whale_active_*.json
-whale_activity_*.json
-whale_merged_*.json
-whale_token_*.json
+whale_pnl_*
+whale_analysis_*
+whale_active_*
+whale_activity_*
+whale_merged_*
+whale_token_*
 early_buyers.json
 profit_takers.json
 profitable_traders.json
@@ -113,11 +107,47 @@ genesis_holders_*.json
 holders_filtered.json
 final_*.json
 dune_candidates*.json
-!smart_money_wallets.example.json
-100
-=
-main
-scripts/dune_check_wallets.py
-scripts/dune_find_whales.py
-scripts/no_sl.py
-full_whale_analysis.py
+ranked_*.csv
+ranked_*.json
+shortlist_*.json
+combined_rank_*.json
+bot_wallets_*.json
+tier1_addresses_*.txt
+
+# ===========================
+# PYTHON
+# ===========================
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+
+# ===========================
+# DATABASE
+# ===========================
+*.db
+*.rdb
+*.sqlite
+data/
+src/data/
+
+# ===========================
+# IDE / OS
+# ===========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===========================
+# PID
+# ===========================
+*.pid
+/tmp/whale-bot.pid
