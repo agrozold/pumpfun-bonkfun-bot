@@ -159,7 +159,7 @@ class UniversalTrader:
         token_vetting_enabled: bool = False,
         vetting_require_freeze_revoked: bool = True,
         vetting_skip_bonding_curve: bool = True,
-        price_check_interval: int = 10,
+        price_check_interval: int = 1,
         # Priority fee configuration
         enable_dynamic_priority_fee: bool = False,
         enable_fixed_priority_fee: bool = True,
@@ -3722,7 +3722,7 @@ class UniversalTrader:
                         continue
 
                 # Wait before next price check
-                await asyncio.sleep(self.price_check_interval)
+                await asyncio.sleep(1)  # 1s price check, logs throttled
 
             except Exception as e:
                 consecutive_price_errors += 1
@@ -3778,7 +3778,7 @@ class UniversalTrader:
                                     break
                             
                             # Continue monitoring with DexScreener price
-                            await asyncio.sleep(self.price_check_interval)
+                            await asyncio.sleep(1)  # 1s price check, logs throttled
                             continue
                     except Exception as dex_err:
                         logger.warning(f"[FALLBACK] DexScreener also failed: {dex_err}")
@@ -3842,7 +3842,7 @@ class UniversalTrader:
                             f"will retry (errors: {consecutive_price_errors})"
                         )
 
-                await asyncio.sleep(self.price_check_interval)
+                await asyncio.sleep(1)  # 1s price check, logs throttled
 
     async def _check_if_migrated(self, token_info: TokenInfo, error_msg: str) -> bool:
         """Check if token has migrated based on platform and error message.
