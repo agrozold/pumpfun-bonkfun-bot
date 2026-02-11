@@ -1420,7 +1420,6 @@ class UniversalTrader:
         Returns:
             Tuple of (success, tx_signature, dex_used, token_amount, price)
         """
-        from trading.fallback_seller import FallbackSeller
 
         mint = Pubkey.from_string(mint_str)
 
@@ -2266,7 +2265,6 @@ class UniversalTrader:
 
             # If migrated - buy via PumpSwap (Raydium AMM)
             if is_migrated:
-                from trading.fallback_seller import FallbackSeller
 
                 logger.info(f"[TRENDING] {token.symbol} is migrated, attempting PumpSwap buy...")
                 logger.info(f"[TRENDING] DexScreener info: dex_id={token.dex_id}, pair_address={token.pair_address}")
@@ -3572,7 +3570,7 @@ class UniversalTrader:
                             logger.warning(f"[NO_SL] {token_info.symbol}: SL BLOCKED by NO_SL list!")
 
                 # Log ALL positions as WARNING every check
-                if True:  # Always log
+                if check_count % 10 == 0:  # Log every ~10s
                     logger.warning(
                         f"[MONITOR] {token_info.symbol}: {current_price:.10f} SOL "
                         f"({pnl_pct:+.2f}%) | TP: {(position.take_profit_price or 0):.10f} | "
@@ -3915,7 +3913,6 @@ class UniversalTrader:
         Returns:
             True if sell was successful, False otherwise
         """
-        from trading.fallback_seller import FallbackSeller
         from trading.position import ExitReason
 
         logger.warning(
@@ -4188,7 +4185,6 @@ class UniversalTrader:
                 logger.warning(f"[VERIFY] {symbol}: Retry sell attempt {retry+1}/3...")
                 
                 try:
-                    from trading.fallback_seller import FallbackSeller
                     from solders.pubkey import Pubkey
                     
                     seller = self._fallback_seller
