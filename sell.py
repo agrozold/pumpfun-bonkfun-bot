@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import sys, os; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 """Quick sell script - продажа токена по адресу контракта.
 
 Usage:
@@ -1020,17 +1021,8 @@ async def sell_token(
     payer = Keypair.from_bytes(base58.b58decode(private_key))
     
     async with AsyncClient(rpc_endpoint) as client:
-        # Check bonding curve state
-        bonding_curve, _ = get_bonding_curve_address(mint)
-        curve_state = await get_curve_state(client, bonding_curve)
-        
-        # Decide which method to use
-        if curve_state is None or curve_state.complete:
-            # Token migrated to Raydium - use PumpSwap
-            return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
-        else:
-            # Token still on bonding curve - use Pump.fun
-            return await sell_via_pumpfun(client, payer, mint, curve_state, percent, slippage, priority_fee, max_retries)
+        # Always use Jupiter - works for any token
+        return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
 
 
 def main():
@@ -1054,6 +1046,7 @@ def main():
     print(f"🎯 Selling {args.percent:.0f}% of token: {mint}")
     print(f"=" * 50)
     
+    import warnings; warnings.filterwarnings("ignore", message="Unclosed")
     success = asyncio.run(sell_token(mint, args.percent, args.slippage, args.priority_fee))
     sys.exit(0 if success else 1)
 
