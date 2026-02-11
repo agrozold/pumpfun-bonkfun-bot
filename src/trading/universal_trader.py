@@ -3632,8 +3632,13 @@ class UniversalTrader:
                     # ============================================
                     logger.error(f"[SELL] {token_info.symbol}: PnL {pnl_pct:.1f}% - FAST SELL MODE")
                     
+                    # skip_cleanup for partial sells (TP partial, TSL moonbag)
+                    _is_partial = (
+                        (exit_reason == ExitReason.TAKE_PROFIT and position.tp_sell_pct < 1.0 and self.moon_bag_percentage <= 0)
+                        or (exit_reason == ExitReason.TRAILING_STOP and position.tsl_sell_pct < 1.0)
+                    )
                     sell_success = await self._fast_sell_with_timeout(
-                        token_info, position, current_price, sell_quantity
+                        token_info, position, current_price, sell_quantity, skip_cleanup=_is_partial
                     )
                     
                     if sell_success:
@@ -3976,7 +3981,7 @@ class UniversalTrader:
 
 
     async def _fast_sell_with_timeout(
-        self, token_info: TokenInfo, position: Position, current_price: float, sell_quantity: float = None
+        self, token_info: TokenInfo, position: Position, current_price: float, sell_quantity: float = None, skip_cleanup: bool = False
     ) -> bool:
         """
         Fast sell via Jupiter. No PumpSwap. No wrapper timeouts.
@@ -3993,11 +3998,13 @@ class UniversalTrader:
         estimated_value = sell_quantity * current_price if current_price > 0 else 0
         if sell_quantity < MIN_SELL_TOKENS:
             logger.warning(f"[FAST SELL] SKIP DUST: {token_info.symbol} {sell_quantity:.4f} tokens")
-            self._remove_position(mint_str)
+            if not skip_cleanup:
+                self._remove_position(mint_str)
             return True
         if estimated_value < MIN_SELL_VALUE_SOL:
             logger.warning(f"[FAST SELL] SKIP LOW VALUE: {token_info.symbol} {estimated_value:.6f} SOL")
-            self._remove_position(mint_str)
+            if not skip_cleanup:
+                self._remove_position(mint_str)
             return True
 
         logger.warning(f"[FAST SELL] {token_info.symbol} ({sell_quantity:.2f} tokens) via Jupiter")
@@ -4014,13 +4021,14 @@ class UniversalTrader:
             logger.warning(f"[FAST SELL] Jupiter SUCCESS: {sig}")
             original_qty = getattr(position, "quantity", sell_quantity)
             asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity))
-            position.close_position(current_price, ExitReason.STOP_LOSS)
-            self._remove_position(mint_str)
-            try:
-                from trading.redis_state import forget_position_forever
-                await forget_position_forever(mint_str, reason="sl_sell")
-            except Exception as e:
-                logger.warning(f"[FAST SELL] Redis cleanup failed: {e}")
+            if not skip_cleanup:
+                position.close_position(current_price, ExitReason.STOP_LOSS)
+                self._remove_position(mint_str)
+                try:
+                    from trading.redis_state import forget_position_forever
+                    await forget_position_forever(mint_str, reason="sl_sell")
+                except Exception as e:
+                    logger.warning(f"[FAST SELL] Redis cleanup failed: {e}")
             return True
 
         logger.error(f"[FAST SELL] Jupiter FAILED: {error}")
