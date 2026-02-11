@@ -4320,13 +4320,21 @@ class UniversalTrader:
             logger.info(f"[RESTORE] {position.symbol}: Using saved entry={position.entry_price:.10f}, SL={position.stop_loss_price}")
             # === END SYNC ===
             
-            # === ALWAYS CALCULATE TP/SL IF MISSING ===
-            if position.take_profit_price is None and self.take_profit_percentage:
-                position.take_profit_price = position.entry_price * (1 + self.take_profit_percentage)
-                logger.info(f"[RESTORE] {position.symbol}: Calculated TP = {position.take_profit_price:.10f}")
-            if position.stop_loss_price is None and self.stop_loss_percentage:
-                position.stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage)
-                logger.info(f"[RESTORE] {position.symbol}: Calculated SL = {position.stop_loss_price:.10f}")
+            # === ALWAYS CALCULATE TP/SL IF MISSING (skip moonbag) ===
+            if position.is_moonbag:
+                # Moonbag: no TP, no SL — only HARD_SL protects
+                position.take_profit_price = None
+                position.stop_loss_price = None
+                position.tsl_enabled = False
+                position.tsl_active = False
+                logger.info(f"[RESTORE] {position.symbol}: MOONBAG — no TP/SL assigned")
+            else:
+                if position.take_profit_price is None and self.take_profit_percentage:
+                    position.take_profit_price = position.entry_price * (1 + self.take_profit_percentage)
+                    logger.info(f"[RESTORE] {position.symbol}: Calculated TP = {position.take_profit_price:.10f}")
+                if position.stop_loss_price is None and self.stop_loss_percentage:
+                    position.stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage)
+                    logger.info(f"[RESTORE] {position.symbol}: Calculated SL = {position.stop_loss_price:.10f}")
             # === END TP/SL FIX ===
             
             self.active_positions.append(position)

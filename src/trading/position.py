@@ -244,7 +244,7 @@ class Position:
                 logger.warning(f"[TSL] {self.symbol} RESUMING triggered sell after restart")
             return True, ExitReason.TRAILING_STOP
 
-        if self.take_profit_price and current_price >= self.take_profit_price:
+        if self.take_profit_price and current_price >= self.take_profit_price and not self.is_moonbag:
             return True, ExitReason.TAKE_PROFIT
 
         if self.max_hold_time:
