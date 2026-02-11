@@ -580,7 +580,7 @@ class UniversalTrader:
         self._fallback_seller = FallbackSeller(
             client=self.solana_client,
             wallet=self.wallet,
-            slippage=self.sell_slippage,
+            slippage=sell_slippage,
             priority_fee=50000,
             max_retries=1,
             jupiter_api_key=self.jupiter_api_key,
