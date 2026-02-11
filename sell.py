@@ -675,7 +675,15 @@ async def sell_via_pumpswap(
     """Sell tokens via PumpSwap/Raydium AMM, fallback to Jupiter for other DEXes."""
     
     # Get RPC endpoint for blockhash cache
-    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    # Helius primary for CLI (reliable, fast, separate from bot RPC)
+    _helius_key = os.environ.get("HELIUS_API_KEY", "")
+    rpc_endpoint = (
+        (f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else None)
+        or os.environ.get("CHAINSTACK_RPC_ENDPOINT")
+        or os.environ.get("ALCHEMY_RPC_ENDPOINT")
+        or os.environ.get("DRPC_RPC_ENDPOINT")
+        or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
+    )
 
     # Find market via RPC first
     market = await get_market_address_by_base_mint(client, mint)
@@ -1020,7 +1028,7 @@ async def sell_token(
 
     payer = Keypair.from_bytes(base58.b58decode(private_key))
     
-    async with AsyncClient(rpc_endpoint) as client:
+    async with AsyncClient(rpc_endpoint, timeout=30) as client:
         # Always use Jupiter - works for any token
         return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
 
