@@ -3502,11 +3502,16 @@ class UniversalTrader:
                 # CRITICAL: Log when approaching SL threshold
                 # ============================================
                 if position.stop_loss_price and current_price <= position.stop_loss_price * 1.1:
-                    # Within 10% of SL - log warning
-                    logger.warning(
-                        f"[SL WARNING] {token_info.symbol}: Price {current_price:.10f} approaching "
-                        f"SL {position.stop_loss_price:.10f} (PnL: {pnl_pct:+.2f}%)"
-                    )
+                    # Throttle: log SL warning max once per 30s, skip NO_SL tokens
+                    _sl_warn_key = f"sl_warn_{token_info.symbol}"
+                    _sl_warn_last = getattr(position, "_sl_warn_ts", 0)
+                    import time as _time_mod
+                    if _time_mod.monotonic() - _sl_warn_last >= 10 and str(token_info.mint) not in NO_SL_MINTS:
+                        position._sl_warn_ts = _time_mod.monotonic()
+                        logger.warning(
+                            f"[SL WARNING] {token_info.symbol}: Price {current_price:.10f} approaching "
+                            f"SL {position.stop_loss_price:.10f} (PnL: {pnl_pct:+.2f}%)"
+                        )
 
                 # Check NO_SL list BEFORE any SL logic
                 mint_str_check = str(token_info.mint)
