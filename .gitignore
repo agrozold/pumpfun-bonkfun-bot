@@ -153,3 +153,6 @@ Thumbs.db
 /tmp/whale-bot.pid
 
 # Исключения для рабочих скриптов
+
+# Исключения для рабочих скриптов
+!scripts/check_balance.py
