@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 LOG_DIR = Path("logs")
-LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(trace_id)s | %(name)s | %(message)s"
+LOG_FORMAT = "%(asctime)s.%(msecs)03.0f | %(levelname)-8s | %(trace_id)s | %(name)s | %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 MAX_LOG_SIZE_MB = 10
