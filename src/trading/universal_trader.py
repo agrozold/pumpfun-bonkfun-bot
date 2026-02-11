@@ -3485,7 +3485,15 @@ class UniversalTrader:
                 mint_str_nosl = str(token_info.mint)
                 if mint_str_nosl in NO_SL_MINTS:
                     if should_exit:
-                        logger.warning(f"[NO_SL] {token_info.symbol}: EXIT BLOCKED (reason: {exit_reason}, pnl: {pnl_pct:+.1f}%)")
+                        import time as _time
+                        _nosl_key = f"nosl_warn_{mint_str_nosl}"
+                        _nosl_now = _time.monotonic()
+                        _nosl_last = getattr(self, '_nosl_warn_times', {}).get(_nosl_key, 0)
+                        if _nosl_now - _nosl_last >= 60:
+                            if not hasattr(self, '_nosl_warn_times'):
+                                self._nosl_warn_times = {}
+                            self._nosl_warn_times[_nosl_key] = _nosl_now
+                            logger.warning(f"[NO_SL] {token_info.symbol}: EXIT BLOCKED (reason: {exit_reason}, pnl: {pnl_pct:+.1f}%)")
                         should_exit = False
                         exit_reason = None
                         # Reset TSL flags to prevent spam loop
@@ -3671,8 +3679,12 @@ class UniversalTrader:
                                     f"for potential moon 🌙"
                                 )
                                 
-                                # Continue monitoring (no break, no cleanup)
-                                continue
+                                # NO monitoring — fall through to FULL EXIT cleanup
+                                # Tokens stay on wallet as dust moonbag
+                                logger.warning(
+                                    f"[MOONBAG] {token_info.symbol}: NOT monitoring. "
+                                    f"Tokens remain on wallet. Use sell CLI to liquidate."
+                                )
                             else:
                                 logger.info(f"[MOONBAG] {token_info.symbol}: Remaining {remaining_quantity:.4f} too small, closing fully")
                         
