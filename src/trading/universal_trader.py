@@ -3495,6 +3495,15 @@ class UniversalTrader:
                         logger.warning(f"[NO_SL] {token_info.symbol}: EXIT BLOCKED (reason: {exit_reason}, pnl: {pnl_pct:+.1f}%)")
                         should_exit = False
                         exit_reason = None
+                        # Reset TSL flags to prevent spam loop
+                        if hasattr(position, 'tsl_triggered') and position.tsl_triggered:
+                            position.tsl_triggered = False
+                            logger.info(f"[NO_SL] {token_info.symbol}: TSL flags reset (NO_SL active)")
+                    # For NO_SL tokens: completely disable TSL to prevent re-activation
+                    if hasattr(position, 'tsl_active') and position.tsl_active:
+                        position.tsl_active = False
+                        position.tsl_activation_pct = 999.0  # effectively disable
+                        logger.info(f"[NO_SL] {token_info.symbol}: TSL fully disabled (NO_SL token)")
 
                 # ============================================
                 # CRITICAL: Log when approaching SL threshold
