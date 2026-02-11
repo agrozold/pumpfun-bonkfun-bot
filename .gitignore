@@ -156,3 +156,6 @@ Thumbs.db
 
 # Исключения для рабочих скриптов
 !scripts/check_balance.py
+cleanup_bad_wallets.py
+scripts/dune_check_wallets.py
+scripts/dune_find_whales.py
