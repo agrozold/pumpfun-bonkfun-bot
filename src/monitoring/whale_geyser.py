@@ -97,7 +97,7 @@ class WhaleGeyserReceiver:
     ):
         # gRPC config
         self.geyser_endpoint = geyser_endpoint or os.getenv(
-            "GEYSER_ENDPOINT", "laserstream-mainnet-fra.helius-rpc.com"
+            "GEYSER_ENDPOINT", "solana-yellowstone-grpc.publicnode.com:443"
         )
         self.geyser_api_key = geyser_api_key or os.getenv(
             "GEYSER_API_KEY", ""
@@ -171,6 +171,7 @@ class WhaleGeyserReceiver:
 
         # Watchdog integration (Phase 5.3)
         self._watchdog = None
+        self._reconnect_event = asyncio.Event()
 
         logger.warning(
             f"[GEYSER] Initialized: {len(self.whale_wallets)} whales, "
@@ -203,9 +204,11 @@ class WhaleGeyserReceiver:
         logger.info("[GEYSER] Callback set")
 
     def set_watchdog(self, watchdog):
-        """Set watchdog for channel health monitoring (Phase 5.3)."""
         self._watchdog = watchdog
-        logger.info("[GEYSER] Watchdog set")
+        watchdog.set_reconnect_callback(self._trigger_reconnect)
+
+    def _trigger_reconnect(self):
+        self._reconnect_event.set()
 
     async def start(self):
         """Start gRPC stream. Same interface as WhaleWebhookReceiver.start()."""
@@ -375,6 +378,10 @@ class WhaleGeyserReceiver:
                     ):
                         if not self.running:
                             break
+                        if self._reconnect_event.is_set():
+                            self._reconnect_event.clear()
+                            logger.warning("[GEYSER] Reconnect triggered by watchdog")
+                            break
 
                         self._stats["grpc_messages"] += 1
 
@@ -435,6 +442,8 @@ class WhaleGeyserReceiver:
                                 )
 
                             self._stats["tx_detected"] += 1
+                            if self._watchdog:
+                                self._watchdog.touch_grpc_data()
 
                             # Quick check: is the fee payer one of our whales?
                             msg = tx.transaction.message

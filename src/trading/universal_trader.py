@@ -387,9 +387,9 @@ class UniversalTrader:
 
                 # Create gRPC receiver if available
                 if WHALE_GEYSER_AVAILABLE and os.getenv("GEYSER_API_KEY"):
-                    logger.warning("[WHALE] Creating WhaleGeyserReceiver (ULTRA-LOW LATENCY via LaserStream gRPC)...")
+                    logger.warning("[WHALE] Creating WhaleGeyserReceiver (gRPC via PublicNode Yellowstone)...")
                     geyser_receiver = WhaleGeyserReceiver(
-                        geyser_endpoint=os.getenv("GEYSER_ENDPOINT", "laserstream-mainnet-fra.helius-rpc.com"),
+                        geyser_endpoint=os.getenv("GEYSER_ENDPOINT", "solana-yellowstone-grpc.publicnode.com:443"),
                         geyser_api_key=os.getenv("GEYSER_API_KEY", ""),
                         helius_parse_api_key=os.getenv("GEYSER_PARSE_API_KEY", ""),
                         wallets_file=whale_wallets_file,
@@ -574,6 +574,17 @@ class UniversalTrader:
             jupiter_api_key=self.jupiter_api_key,
         )
 
+
+        # Cached FallbackSeller - one TCP connection, instant sells
+        from trading.fallback_seller import FallbackSeller
+        self._fallback_seller = FallbackSeller(
+            client=self.solana_client,
+            wallet=self.wallet,
+            slippage=self.sell_slippage,
+            priority_fee=50000,
+            max_retries=1,
+            jupiter_api_key=self.jupiter_api_key,
+        )
         # Initialize the appropriate listener with platform filtering
         self.token_listener = ListenerFactory.create_listener(
             listener_type=listener_type,
@@ -1144,7 +1155,7 @@ class UniversalTrader:
                 logger.warning("=" * 70)
                 logger.warning("[WHALE COPY] SUCCESS")
                 logger.warning(f"  SYMBOL:    {whale_buy.token_symbol}")
-                if self.whale_tracker: self.whale_tracker._stats["success"] += 1
+                # stats tracked via buys_emitted
                 logger.warning(f"  TOKEN:     {mint_str}")
                 logger.warning(f"  DEX:       {dex_used}")
                 logger.warning(f"  AMOUNT:    {token_amount:.2f} tokens")
@@ -1657,15 +1668,7 @@ class UniversalTrader:
         logger.info(f"[CHECK] [3/4] Trying Jupiter aggregator for {symbol}...")
 
         try:
-            fallback = FallbackSeller(
-                client=self.solana_client,
-                wallet=self.wallet,
-                slippage=self.buy_slippage,
-                priority_fee=self.priority_fee_manager.fixed_fee,
-                max_retries=self.max_retries,
-                jupiter_api_key=self.jupiter_api_key,
-            )
-
+            fallback = self._fallback_seller
             # Jupiter returns 5 values: success, sig, error, token_amount, price
             # Position config for callback
             position_config = {
@@ -2268,15 +2271,7 @@ class UniversalTrader:
                 logger.info(f"[TRENDING] {token.symbol} is migrated, attempting PumpSwap buy...")
                 logger.info(f"[TRENDING] DexScreener info: dex_id={token.dex_id}, pair_address={token.pair_address}")
 
-                fallback = FallbackSeller(
-                    client=self.solana_client,
-                    wallet=self.wallet,
-                    slippage=self.buy_slippage,
-                    priority_fee=self.priority_fee_manager.fixed_fee,
-                    max_retries=self.max_retries,
-                    jupiter_api_key=self.jupiter_api_key,
-                )
-
+                fallback = self._fallback_seller
                 # Use pair_address from DexScreener if available
                 # PumpSwap pools can show as "pumpswap", "raydium", or other dex_id
                 market_address = None
@@ -3929,17 +3924,8 @@ class UniversalTrader:
         )
 
         try:
-            # Create fallback seller
-            fallback_seller = FallbackSeller(
-                client=self.solana_client,
-                wallet=self.wallet,
-                slippage=self.sell_slippage,
-                priority_fee=10000,  # Higher priority for emergency sell
-                max_retries=3,
-                jupiter_api_key=self.jupiter_api_key,
-            )
-
-            # Try to sell via PumpSwap first, then Jupiter
+            fallback_seller = self._fallback_seller
+            # Sell via Jupiter
             success, tx_sig, error = await fallback_seller.sell(
                 mint=token_info.mint,
                 token_amount=position.quantity,
@@ -3991,161 +3977,51 @@ class UniversalTrader:
         self, token_info: TokenInfo, position: Position, current_price: float, sell_quantity: float = None
     ) -> bool:
         """
-        Ultra-fast sell with 5s timeout per method, 10s total max.
-        For pump.fun: PumpPortal + Jupiter in parallel
-        For others: Jupiter directly
+        Fast sell via Jupiter. No PumpSwap. No wrapper timeouts.
+        Uses cached FallbackSeller with warm TCP connection.
         """
-        from trading.fallback_seller import FallbackSeller
         from trading.position import ExitReason
-        
+
         mint_str = str(token_info.mint)
-        is_pumpfun = mint_str.endswith("pump")
-        # Use passed sell_quantity or fallback to full position
         if sell_quantity is None:
             sell_quantity = position.quantity
-        
-        # NOTE: Balance check removed for speed - Jupiter will handle insufficient balance
-        # MIN SELL CHECK: Skip dust/moonbags
+
         MIN_SELL_TOKENS = 1.0
         MIN_SELL_VALUE_SOL = 0.0001
         estimated_value = sell_quantity * current_price if current_price > 0 else 0
         if sell_quantity < MIN_SELL_TOKENS:
-            logger.warning(f"[FAST SELL] SKIP DUST: {token_info.symbol} has only {sell_quantity:.4f} tokens (min: {MIN_SELL_TOKENS})")
+            logger.warning(f"[FAST SELL] SKIP DUST: {token_info.symbol} {sell_quantity:.4f} tokens")
             self._remove_position(mint_str)
             return True
         if estimated_value < MIN_SELL_VALUE_SOL:
-            logger.warning(f"[FAST SELL] SKIP LOW VALUE: {token_info.symbol} value {estimated_value:.6f} SOL < min {MIN_SELL_VALUE_SOL}")
+            logger.warning(f"[FAST SELL] SKIP LOW VALUE: {token_info.symbol} {estimated_value:.6f} SOL")
             self._remove_position(mint_str)
             return True
-        logger.warning(f"[FAST SELL] Starting for {token_info.symbol} ({sell_quantity:.2f} tokens)")
-        
-        # Create fallback seller once
-        fallback_seller = FallbackSeller(
-            client=self.solana_client,
-            wallet=self.wallet,
-            slippage=self.sell_slippage,
-            priority_fee=50000,  # Higher priority for fast sell
-            max_retries=1,  # Single attempt per method
-            jupiter_api_key=self.jupiter_api_key,
-        )
-        
-        async def try_pumpportal():
-            try:
-                return await asyncio.wait_for(
-                    fallback_seller._sell_via_pumpportal(token_info.mint, sell_quantity, token_info.symbol),
-                    timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                return False, None, "PumpPortal timeout 5s"
-            except Exception as e:
-                return False, None, str(e)
-        
-        async def try_jupiter():
-            try:
-                return await asyncio.wait_for(
-                    fallback_seller._sell_via_jupiter(token_info.mint, sell_quantity, token_info.symbol),
-                    timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                return False, None, "Jupiter timeout 5s"
-            except Exception as e:
-                return False, None, str(e)
-        
-        async def try_pumpswap():
-            try:
-                return await asyncio.wait_for(
-                    fallback_seller._sell_via_pumpswap(token_info.mint, sell_quantity, token_info.symbol),
-                    timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                return False, None, "PumpSwap timeout 5s"
-            except Exception as e:
-                return False, None, str(e)
-        
-        start_time = asyncio.get_event_loop().time()
-        
-        # PHASE 1: Parallel attempts (5s)
-        if is_pumpfun:
-            logger.info(f"[FAST SELL] Pump.fun token - Jupiter only (PumpPortal disabled)")
-            # PumpPortal disabled - use Jupiter only
-            success, sig, error = await try_jupiter()
-            if success:
-                logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
-                # Wait and check real balance after sell
-                # Start background verification (non-blocking)
-                original_qty = getattr(position, 'quantity', sell_quantity)
-                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity))
-                position.close_position(current_price, ExitReason.STOP_LOSS)
-                self._remove_position(mint_str)
-                # Also remove from Redis to prevent restore
-                try:
-                    from trading.redis_state import get_redis_state
-                    state = await get_redis_state()
-                    # FORGET FOREVER - remove from Redis + add to sold_mints
-                    from trading.redis_state import forget_position_forever
-                    await forget_position_forever(mint_str, reason="tsl_or_sl")
-                except Exception as e:
-                    logger.warning(f"[FAST SELL] Could not remove from Redis: {e}")
-                return True
-            logger.warning(f"[FAST SELL] Jupiter failed: {error}")
-            results = []  # Skip the loop below
-            
-            for i, result in enumerate(results):
-                method = "PumpPortal" if i == 0 else "Jupiter"
-                if isinstance(result, tuple) and result[0]:
-                    logger.info(f"[FAST SELL] {method} SUCCESS: {result[1]}")
-                    position.close_position(current_price, ExitReason.STOP_LOSS)
-                    self._remove_position(mint_str)
-                    return True
-                elif isinstance(result, tuple):
-                    logger.warning(f"[FAST SELL] {method} failed: {result[2]}")
-        else:
-            logger.info(f"[FAST SELL] Non-pump token - Jupiter first")
-            success, sig, error = await try_jupiter()
-            if success:
-                logger.info(f"[FAST SELL] Jupiter SUCCESS: {sig}")
-                # Start background verification (non-blocking)
-                original_qty = getattr(position, 'quantity', sell_quantity)
-                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity))
-                position.close_position(current_price, ExitReason.STOP_LOSS)
-                self._remove_position(mint_str)
-                try:
-                    from trading.redis_state import get_redis_state
-                    state = await get_redis_state()
-                    # FORGET FOREVER - remove from Redis + add to sold_mints
-                    from trading.redis_state import forget_position_forever
-                    await forget_position_forever(mint_str, reason="tsl_or_sl")
-                except Exception as e:
-                    logger.warning(f"[FAST SELL] Could not remove from Redis: {e}")
-                return True
-            logger.warning(f"[FAST SELL] Jupiter failed: {error}")
-        
-        elapsed = asyncio.get_event_loop().time() - start_time
-        if elapsed >= 10.0:
-            logger.error(f"[FAST SELL] Total timeout 10s reached!")
+
+        logger.warning(f"[FAST SELL] {token_info.symbol} ({sell_quantity:.2f} tokens) via Jupiter")
+
+        try:
+            success, sig, error = await self._fallback_seller._sell_via_jupiter(
+                token_info.mint, sell_quantity, token_info.symbol
+            )
+        except Exception as e:
+            logger.error(f"[FAST SELL] Jupiter exception: {e}")
             return False
-        
-        # PHASE 2: Try PumpSwap
-        logger.warning(f"[FAST SELL] Phase 1 failed, trying PumpSwap...")
-        success, sig, error = await try_pumpswap()
+
         if success:
-            logger.info(f"[FAST SELL] PumpSwap SUCCESS: {sig}")
-            await asyncio.sleep(3)
-            remaining = await self._get_token_balance(mint_str)
-            if remaining is not None and remaining > 0:
-                logger.warning(f"[FAST SELL] Moon bag remaining: {remaining:.2f} tokens - removing from tracking")
+            logger.warning(f"[FAST SELL] Jupiter SUCCESS: {sig}")
+            original_qty = getattr(position, "quantity", sell_quantity)
+            asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity))
             position.close_position(current_price, ExitReason.STOP_LOSS)
             self._remove_position(mint_str)
             try:
-                from trading.redis_state import get_redis_state
-                state = await get_redis_state()
-                if state:
-                    await state.remove_position(mint_str)
-            except:
-                pass
+                from trading.redis_state import forget_position_forever
+                await forget_position_forever(mint_str, reason="sl_sell")
+            except Exception as e:
+                logger.warning(f"[FAST SELL] Redis cleanup failed: {e}")
             return True
-        
-        logger.error(f"[FAST SELL] All methods failed for {token_info.symbol}!")
+
+        logger.error(f"[FAST SELL] Jupiter FAILED: {error}")
         return False
 
     async def _save_token_info(self, token_info: TokenInfo) -> None:
@@ -4315,7 +4191,7 @@ class UniversalTrader:
                     from trading.fallback_seller import FallbackSeller
                     from solders.pubkey import Pubkey
                     
-                    seller = FallbackSeller(self.solana_client, self.wallet, slippage=0.25, priority_fee=500000)  # Higher slippage for retry
+                    seller = self._fallback_seller
                     success, sig, error = await seller._sell_via_jupiter(
                         Pubkey.from_string(mint_str),
                         remaining,
