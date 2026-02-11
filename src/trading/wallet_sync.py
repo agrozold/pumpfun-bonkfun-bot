@@ -208,8 +208,7 @@ async def sync_wallet():
     # Load sold_mints from Redis to avoid re-adding moonbags
     import subprocess as _sp
     _sold_raw = _sp.run(['redis-cli', 'SMEMBERS', 'sold_mints'], capture_output=True, text=True)
-    sold_mints = set(_sold_raw.stdout.strip().split('
-')) if _sold_raw.stdout.strip() else set()
+    sold_mints = set(_sold_raw.stdout.strip().split('\n')) if _sold_raw.stdout.strip() else set()
     if sold_mints:
         print(f'[SOLD_MINTS] {len(sold_mints)} tokens in sold list (will skip)')
 
