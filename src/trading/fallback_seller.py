@@ -32,6 +32,7 @@ logger = get_logger(__name__)
 # Transaction verification (Fire & Forget with background check)
 from core.tx_verifier import get_tx_verifier
 from core.tx_callbacks import on_buy_success, on_buy_failure
+from trading.jito_sender import get_jito_sender
 
 # Constants
 TOKEN_DECIMALS = 6  # Default, use get_token_decimals() for dynamic
@@ -185,6 +186,48 @@ class FallbackSeller:
         self._alt_client = AsyncClient(rpc_url)
         logger.info(f"[FALLBACK] Using RPC: {rpc_url[:60]}...")
         return self._alt_client
+
+    async def _send_tx_parallel(self, signed_tx, rpc_client):
+        """Send TX via Jito + RPC in parallel. Returns first successful signature."""
+        jito = get_jito_sender()
+
+        async def _jito_send():
+            if not jito.enabled:
+                return None
+            return await jito.send_transaction(signed_tx)
+
+        async def _rpc_send():
+            result = await rpc_client.send_transaction(
+                signed_tx,
+                opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
+            )
+            return str(result.value)
+
+        tasks = [asyncio.create_task(_rpc_send())]
+        if jito.enabled:
+            tasks.insert(0, asyncio.create_task(_jito_send()))
+
+        sig = None
+        for coro in asyncio.as_completed(tasks):
+            try:
+                result = await coro
+                if result:
+                    sig = result
+                    break
+            except Exception as e:
+                logger.warning(f'[TX] Parallel send error: {e}')
+                continue
+
+        # Cancel remaining tasks
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+
+        if not sig:
+            raise RuntimeError('Both Jito and RPC send failed')
+        return sig
+
+
 
     async def buy_via_pumpswap(
         self,
@@ -495,10 +538,7 @@ class FallbackSeller:
             tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
 
             logger.info("[TX] Sending PumpSwap BUY transaction...")
-            result = await rpc_client.send_transaction(
-                tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-            )
-            sig = str(result.value)
+            sig = await self._send_tx_parallel(tx, rpc_client)
             logger.info(f"PumpSwap BUY signature: {sig}")
             logger.info(f"https://solscan.io/tx/{sig}")
 
@@ -663,11 +703,7 @@ class FallbackSeller:
                             signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
 
                             logger.info(f"[TX] Jupiter Ultra BUY attempt {attempt + 1}/{self.max_retries}...")
-                            result = await rpc_client.send_transaction(
-                                signed_tx,
-                                opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                            )
-                            sig = str(result.value)
+                            sig = await self._send_tx_parallel(signed_tx, rpc_client)
 
                             logger.info(f"[SIG] Jupiter Ultra BUY signature: {sig}")
                             real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
@@ -770,11 +806,7 @@ class FallbackSeller:
                                 signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
                                 
                                 logger.info(f"[TX] Jupiter Lite BUY attempt {lite_attempt + 1}/{self.max_retries}...")
-                                result = await rpc_client.send_transaction(
-                                    signed_tx,
-                                    opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                                )
-                                sig = str(result.value)
+                                sig = await self._send_tx_parallel(signed_tx, rpc_client)
                                 
                                 real_price = sol_amount / out_amount_tokens if out_amount_tokens > 0 else 0
                                 
@@ -904,11 +936,7 @@ class FallbackSeller:
                             signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
 
                             logger.info(f"[TX] Jupiter BUY attempt {attempt + 1}/{self.max_retries}...")
-                            result = await rpc_client.send_transaction(
-                                signed_tx,
-                                opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                            )
-                            sig = str(result.value)
+                            sig = await self._send_tx_parallel(signed_tx, rpc_client)
 
                             logger.info(f"[SIG] Jupiter BUY signature: {sig}")
 
@@ -1167,10 +1195,7 @@ class FallbackSeller:
             tx = VersionedTransaction(message=msg, keypairs=[self.wallet.keypair])
 
             logger.info("Sending PumpSwap SELL transaction...")
-            result = await rpc_client.send_transaction(
-                tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-            )
-            sig = str(result.value)
+            sig = await self._send_tx_parallel(tx, rpc_client)
             logger.info(f"PumpSwap SELL signature: {sig}")
             logger.info(f"https://solscan.io/tx/{sig}")
 
@@ -1333,10 +1358,7 @@ class FallbackSeller:
                 tx = VersionedTransaction.from_bytes(tx_bytes)
                 signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
 
-                result = await rpc_client.send_transaction(
-                    signed_tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                )
-                sig = str(result.value)
+                sig = await self._send_tx_parallel(signed_tx, rpc_client)
                 logger.info(f"[OK] Jupiter Ultra SELL sent: {sig}")
                 return True, sig, None
 
@@ -1406,10 +1428,7 @@ class FallbackSeller:
                 tx = VersionedTransaction.from_bytes(tx_bytes)
                 signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
 
-                result = await rpc_client.send_transaction(
-                    signed_tx, opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
-                )
-                sig = str(result.value)
+                sig = await self._send_tx_parallel(signed_tx, rpc_client)
                 logger.info(f"[OK] Jupiter Lite SELL sent: {sig}")
                 return True, sig, None
 
