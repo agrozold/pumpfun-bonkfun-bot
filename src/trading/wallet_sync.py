@@ -205,9 +205,21 @@ async def sync_wallet():
     # Import Jupiter price
     from utils.jupiter_price import get_token_price
     
+    # Load sold_mints from Redis to avoid re-adding moonbags
+    import subprocess as _sp
+    _sold_raw = _sp.run(['redis-cli', 'SMEMBERS', 'sold_mints'], capture_output=True, text=True)
+    sold_mints = set(_sold_raw.stdout.strip().split('
+')) if _sold_raw.stdout.strip() else set()
+    if sold_mints:
+        print(f'[SOLD_MINTS] {len(sold_mints)} tokens in sold list (will skip)')
+
     lost_tokens = []
     for token in wallet_tokens:
         if token["mint"] not in position_mints:
+            # Skip sold tokens (moonbags, etc.)
+            if token["mint"] in sold_mints:
+                print(f'  [SKIP] {token["mint"][:16]}... is in sold_mints (moonbag/sold)')
+                continue
             # DUST FILTER: Get real price via Jupiter
             token_price = token.get("price", 0)
             if token_price <= 0:
@@ -339,9 +351,8 @@ async def sync_wallet():
         
         positions.append(new_position)
         added += 1
-        # Remove from sold_mints since token is back on wallet
-        import subprocess
-        subprocess.run(["redis-cli", "SREM", "sold_mints", mint], capture_output=True)
+        # NOTE: Do NOT remove from sold_mints — it protects against moonbag re-add
+        # subprocess.run(["redis-cli", "SREM", "sold_mints", mint], capture_output=True)
         
         print(f"  [ADDED] {symbol}")
         print(f"          Entry Price: {entry_price:.10f} SOL (source: {price_source})")
