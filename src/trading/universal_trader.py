@@ -3301,6 +3301,7 @@ class UniversalTrader:
         MAX_PRICE_ERRORS = 2
         consecutive_price_errors = 0
         last_known_price = position.entry_price  # Use entry price as fallback
+        _anomaly_count = 0  # consecutive price anomaly counter
         check_count = 0
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
@@ -3397,6 +3398,30 @@ class UniversalTrader:
                         f"[RETRY SL] Pending stop loss for {token_info.symbol}, "
                         f"retry #{sell_retry_count}, current price: {current_price:.10f}"
                     )
+
+                # === PRICE ANOMALY DETECTION ===
+                # If price changes > 90% in one tick, likely garbage data from Jupiter/cache
+                if last_known_price > 0 and current_price > 0 and check_count > 1:
+                    price_change_ratio = current_price / last_known_price
+                    if price_change_ratio < 0.1 or price_change_ratio > 10.0:
+                        _anomaly_count += 1
+                        if _anomaly_count < 3:
+                            logger.warning(
+                                f"[PRICE] {token_info.symbol}: ANOMALY #{_anomaly_count} — "
+                                f"{current_price:.10f} vs last {last_known_price:.10f} "
+                                f"({price_change_ratio:.2f}x change) — SKIPPING TICK"
+                            )
+                            current_price = last_known_price  # use last good price
+                        else:
+                            logger.warning(
+                                f"[PRICE] {token_info.symbol}: 3+ anomalies — accepting new price "
+                                f"{current_price:.10f} (was {last_known_price:.10f})"
+                            )
+                            _anomaly_count = 0  # reset, accept new price
+                    else:
+                        _anomaly_count = 0  # normal price, reset counter
+                # === END PRICE ANOMALY DETECTION ===
+
                 # Reset error counter on successful price fetch
                 consecutive_price_errors = 0
                 last_known_price = current_price
@@ -3723,6 +3748,7 @@ class UniversalTrader:
                             if remaining_quantity > 1.0:
                                 position.quantity = remaining_quantity
                                 position.take_profit_price = None  # disable TP forever
+                                position.tp_partial_done = True  # marker for restore
                                 self._save_position(position)
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
                                 continue
@@ -4359,8 +4385,8 @@ class UniversalTrader:
             else:
                 if position.take_profit_price is None and self.take_profit_percentage:
                     # Don't reassign TP if TSL is already active (means TP already fired via partial sell)
-                    if getattr(position, 'tsl_active', False):
-                        logger.info(f"[RESTORE] {position.symbol}: TP=None but TSL active — TP stays disabled (partial sell already done)")
+                    if getattr(position, 'tsl_active', False) or getattr(position, 'tp_partial_done', False):
+                        logger.info(f"[RESTORE] {position.symbol}: TP=None — stays disabled (tsl_active={getattr(position, 'tsl_active', False)}, tp_partial={getattr(position, 'tp_partial_done', False)})")
                     else:
                         position.take_profit_price = position.entry_price * (1 + self.take_profit_percentage)
                         logger.info(f"[RESTORE] {position.symbol}: Calculated TP = {position.take_profit_price:.10f}")

@@ -54,6 +54,7 @@ class Position:
 
     is_active: bool = True
     is_moonbag: bool = False
+    tp_partial_done: bool = False  # True after partial TP sell — prevents re-assign on restore
     
     # DCA (Dollar Cost Averaging) fields
     dca_enabled: bool = False
@@ -105,6 +106,7 @@ class Position:
         "tp_sell_pct": self.tp_sell_pct,
             "is_active": self.is_active,
             "is_moonbag": self.is_moonbag,
+            "tp_partial_done": self.tp_partial_done,
             "dca_enabled": self.dca_enabled,
             "dca_pending": self.dca_pending,
             "dca_trigger_pct": self.dca_trigger_pct,
@@ -141,6 +143,7 @@ class Position:
         tp_sell_pct=data.get("tp_sell_pct", 1.0),
             is_active=data.get("is_active", True),
             is_moonbag=data.get("is_moonbag", False),
+            tp_partial_done=data.get("tp_partial_done", False),
             dca_enabled=data.get("dca_enabled", False),
             dca_pending=data.get("dca_pending", False),
             dca_trigger_pct=data.get("dca_trigger_pct", 0.20),
