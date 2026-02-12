@@ -255,27 +255,27 @@ async def sync_wallet():
         if updated:
             import subprocess
             import json as js
-            subprocess.run(["redis-cli", "DEL", "whale:positions"], capture_output=True)
+            # Update ONLY changed positions in Redis (preserve runtime state like tsl_active, HWM)
             for p in positions:
                 mint = p.get("mint")
-                if mint:
-                    # DUST FILTER: Skip positions worth < 0.003 SOL
-                    qty = p.get("quantity", 0)
-                    price = p.get("entry_price", 0)
-                    # Get current price if entry_price seems wrong
+                if not mint:
+                    continue
+                # Get existing Redis data and merge quantity update
+                existing_raw = subprocess.run(
+                    ["redis-cli", "HGET", "whale:positions", mint],
+                    capture_output=True, text=True
+                )
+                if existing_raw.stdout.strip():
                     try:
-                        current_price, _ = await get_token_price(mint)
-                        if current_price and current_price > 0:
-                            value = qty * current_price
-                        else:
-                            value = qty * price
+                        existing = js.loads(existing_raw.stdout.strip())
+                        # Only update quantity from wallet scan, keep all runtime state
+                        existing["quantity"] = p["quantity"]
+                        subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(existing)], capture_output=True)
                     except:
-                        value = qty * price
-                    if value < 0.003 and value > 0:
-                        print(f"  [DUST] Skipping {p.get('symbol', mint[:8])} from Redis - value {value:.6f} SOL")
-                        continue
+                        subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
+                else:
                     subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
-            print(f"[SYNCED] Redis updated")
+            print(f"[SYNCED] Redis updated (incremental, {updated} positions changed)")
         print("\n[OK] All tokens are tracked!")
         return
     
@@ -372,16 +372,40 @@ async def sync_wallet():
     print(f"[DONE] Added {added} positions")
     print(f"[DONE] Total positions: {len(positions)}")
     print(f"[SAVED] {POSITIONS_FILE}")
-    # Sync Redis with positions.json
+    # Sync Redis with positions.json (incremental — preserve runtime state)
     import subprocess
-    # Clear Redis and re-add from JSON
-    subprocess.run(["redis-cli", "DEL", "whale:positions"], capture_output=True)
+    import json as js
+    # Only ADD new positions and UPDATE quantities — never DEL whale:positions
     for p in positions:
         mint = p.get("mint", "")
-        if mint:
-            import json as js
+        if not mint:
+            continue
+        existing_raw = subprocess.run(
+            ["redis-cli", "HGET", "whale:positions", mint],
+            capture_output=True, text=True
+        )
+        if existing_raw.stdout.strip():
+            try:
+                existing = js.loads(existing_raw.stdout.strip())
+                # Update only quantity and entry_price from file, keep runtime state
+                existing["quantity"] = p.get("quantity", existing.get("quantity", 0))
+                subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(existing)], capture_output=True)
+            except:
+                subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
+        else:
+            # New position — add as-is
             subprocess.run(["redis-cli", "HSET", "whale:positions", mint, js.dumps(p)], capture_output=True)
-    print(f"[SYNCED] Redis whale:positions ({len(positions)} positions)")
+
+    # Remove phantoms from Redis
+    redis_keys_raw = subprocess.run(["redis-cli", "HKEYS", "whale:positions"], capture_output=True, text=True)
+    redis_mints = set(redis_keys_raw.stdout.strip().split("\n")) if redis_keys_raw.stdout.strip() else set()
+    json_mints = {p.get("mint") for p in positions if p.get("mint")}
+    for orphan in redis_mints - json_mints:
+        if orphan:
+            subprocess.run(["redis-cli", "HDEL", "whale:positions", orphan], capture_output=True)
+            print(f"  [REDIS] Removed orphan: {orphan[:16]}...")
+
+    print(f"[SYNCED] Redis whale:positions ({len(positions)} positions, incremental)")
     print("=" * 60)
 
 

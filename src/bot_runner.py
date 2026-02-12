@@ -42,6 +42,7 @@ from config_loader import (
 from trading.universal_trader import UniversalTrader
 from trading.wallet_sync import sync_wallet
 from trading.periodic_sync import start_periodic_sync
+from trading.periodic_dust import start_periodic_dust
 from trading.trader_registry import register_trader
 
 # === Metrics Integration ===
@@ -361,6 +362,9 @@ async def start_bot(config_path: str):
         # === PERIODIC SYNC ===
         start_periodic_sync()
         logger.warning("[STARTUP] Periodic sync scheduled (5 min)")
+        # === PERIODIC DUST CLEANUP ===
+        start_periodic_dust()
+        logger.warning("[STARTUP] Periodic dust scheduled (60 min, first run in 5 min)")
         
         # === HELIUS WEBHOOK SYNC (CRITICAL!) ===
         if HELIUS_SYNC_AVAILABLE and cfg.get("whale_copy", {}).get("enabled", False):
