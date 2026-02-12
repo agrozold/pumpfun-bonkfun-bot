@@ -48,8 +48,8 @@ sell90()  { cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 90; }
 sell100() { cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 100; }
 
 # 🗑️ DUST
-alias dust='cd $BOT_DIR && ./venv/bin/python3 cleanup_dust.py'
-alias dust-dry='cd $BOT_DIR && ./venv/bin/python3 cleanup_dust.py 0.4 --dry'
+alias dust='cd $BOT_DIR && ./venv/bin/python3 cleanup_dust.py 0.30'
+alias dust-dry='cd $BOT_DIR && ./venv/bin/python3 cleanup_dust.py 0.30 --dry'
 
 # 🛡️ NO-SL
 alias no-sl='cd $BOT_DIR && ./venv/bin/python3 scripts/no_sl.py'

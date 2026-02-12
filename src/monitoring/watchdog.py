@@ -18,6 +18,7 @@ class DualChannelWatchdog:
         self._last_webhook_activity: float = 0.0
         self._alert_after = alert_after_seconds
         self._check_interval = check_interval
+        self._last_stale_log = 0.0
         self._running = False
         self._grpc_touch_count: int = 0
         self._grpc_data_count: int = 0
@@ -58,9 +59,12 @@ class DualChannelWatchdog:
 
                 if grpc_ping_ago < 60 and grpc_data_ago > self._alert_after:
                     self._alerts_fired += 1
-                    logger.error(
-                        f"[WATCHDOG] gRPC STALE: ping OK but 0 TX for {grpc_data_ago:.0f}s - reconnecting"
-                    )
+                    # Throttle STALE log to once per 600s (10 min)
+                    if now - self._last_stale_log > 600:
+                        logger.warning(
+                            f"[WATCHDOG] gRPC: ping OK, no whale TX for {grpc_data_ago:.0f}s (normal if whales idle)"
+                        )
+                        self._last_stale_log = now
                     if self._on_grpc_stale:
                         try:
                             self._on_grpc_stale()
