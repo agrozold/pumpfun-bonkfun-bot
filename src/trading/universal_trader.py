@@ -4245,27 +4245,59 @@ class UniversalTrader:
 
             logger.info(f"[VERIFY] {symbol}: old={original_qty:.2f}, new={remaining:.2f}, expected_sell={expected_sell:.2f}, actual_sold={actual_sold:.2f}")
 
-            # CASE 1: Balance decreased (any amount) = something was sold = SUCCESS
+            # CASE 1: Balance decreased (any amount) = something was sold
             if remaining < original_qty:
-                # Near-full sell
+                # Near-full sell (>90% sold)
                 if remaining < original_qty * 0.1:
                     logger.info(f"[VERIFY] {symbol}: Full sell CONFIRMED! Sold {actual_sold:.2f} tokens")
                     return True
 
-                # Partial sell - sold roughly what we expected
-                if sell_quantity is not None:
+                # Partial sell with sell_quantity specified (TP/TSL partial sell — expected)
+                if sell_quantity is not None and sell_quantity < original_qty * 0.95:
                     sell_ratio = actual_sold / sell_quantity if sell_quantity > 0 else 0
                     if sell_ratio >= 0.5:
                         logger.info(f"[VERIFY] {symbol}: Partial sell CONFIRMED! Sold {actual_sold:.2f} tokens, keeping {remaining:.2f}")
                         return True
-                    else:
-                        # Sold less than half of expected - partial fill
-                        logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL - sold {actual_sold:.2f}/{expected_sell:.2f} ({sell_ratio*100:.0f}%). Keeping remaining {remaining:.2f}")
-                        return True  # Still a success, just partial
-                else:
-                    # Full sell expected but partial fill
-                    logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL - sold {actual_sold:.2f}/{expected_sell:.2f}. Remaining {remaining:.2f}")
-                    return True  # Balance decreased = TX worked partially
+
+                # How much of expected did we actually sell?
+                sell_pct = actual_sold / expected_sell if expected_sell > 0 else 0
+
+                if sell_pct >= 0.5:
+                    # Sold 50%+ — acceptable
+                    logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL {sell_pct*100:.0f}% — sold {actual_sold:.2f}/{expected_sell:.2f}. Remaining {remaining:.2f}")
+                    return True
+
+                # Sold < 50% — low liquidity, RETRY remaining
+                logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL {sell_pct*100:.0f}% — sold {actual_sold:.2f}/{expected_sell:.2f}. RETRYING remaining {remaining:.2f}...")
+
+                for retry in range(2):
+                    try:
+                        from solders.pubkey import Pubkey
+                        success, sig, error = await self._fallback_seller._sell_via_jupiter(
+                            Pubkey.from_string(mint_str), remaining, symbol
+                        )
+                        if success:
+                            logger.info(f"[VERIFY] {symbol}: Retry {retry+1} TX sent: {sig}")
+                            await asyncio.sleep(5)
+                            new_remaining = await self._get_token_balance(mint_str)
+                            if new_remaining is not None and new_remaining < remaining * 0.5:
+                                logger.info(f"[VERIFY] {symbol}: Retry CONFIRMED! Remaining: {new_remaining:.2f}")
+                                return True
+                            else:
+                                logger.warning(f"[VERIFY] {symbol}: Retry {retry+1} — balance still {new_remaining:.2f}")
+                                if new_remaining is not None:
+                                    remaining = new_remaining  # Update for next retry
+                        else:
+                            logger.warning(f"[VERIFY] {symbol}: Retry {retry+1} failed: {error}")
+                    except Exception as e:
+                        logger.error(f"[VERIFY] {symbol}: Retry {retry+1} error: {e}")
+                    await asyncio.sleep(3)
+
+                # All retries failed — tokens stuck, remove from sold_mints
+                logger.error(f"[VERIFY] {symbol}: PARTIAL FILL retries failed. {remaining:.2f} tokens stuck on wallet.")
+                await self._remove_from_sold_mints(mint_str, symbol)
+                return False
+
 
             # CASE 2: Balance INCREASED = DCA race condition
             if remaining > original_qty:

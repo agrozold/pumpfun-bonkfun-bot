@@ -277,24 +277,22 @@ def _is_rate_limit_error(e: Exception) -> bool:
     return False
 
 
-async def retry_rpc_call(func, *args, max_retries=2, **kwargs):
-    """Fast retry RPC call - fail quickly on rate limit to use DexScreener fallback."""
+async def retry_rpc_call(func, *args, max_retries=3, **kwargs):
+    """Retry RPC call with backoff on any error (timeout, rate limit, etc)."""
+    last_error = None
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
-            if _is_rate_limit_error(e):
-                if attempt == 0:
-                    # First 429 - try once more with short delay
-                    print(f"⚠️ RPC rate limited, quick retry...")
-                    await asyncio.sleep(0.5)
-                else:
-                    # Second 429 - fail fast, let DexScreener handle it
-                    print(f"⚠️ RPC still rate limited, switching to DexScreener")
-                    raise
+            last_error = e
+            if attempt < max_retries - 1:
+                delay = 1.0 * (attempt + 1)
+                print(f"⚠️  RPC error (attempt {attempt+1}/{max_retries}): {type(e).__name__}. Retry in {delay}s...")
+                await asyncio.sleep(delay)
             else:
+                print(f"❌ RPC failed after {max_retries} attempts: {type(e).__name__}")
                 raise
-    raise Exception(f"RPC call failed after {max_retries} attempts")
+    raise last_error
 
 
 async def get_pool_from_dexscreener(mint: str) -> tuple[str | None, str | None]:
@@ -1012,24 +1010,45 @@ async def sell_token(
     priority_fee: int = 100000,
     max_retries: int = 3,
 ) -> bool:
-    """Sell tokens - автоматически выбирает Pump.fun или PumpSwap."""
+    """Sell tokens - tries multiple RPC endpoints with fallback."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
-    # Use Alchemy for manual scripts to avoid rate limits from bot
-    rpc_endpoint = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-
-    
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
         return False
-    if not rpc_endpoint:
-        print("❌ DRPC_RPC_ENDPOINT or ALCHEMY_RPC_ENDPOINT or SOLANA_NODE_RPC_ENDPOINT not set in .env")
+
+    _helius_key = os.environ.get("HELIUS_API_KEY", "")
+    rpc_endpoints = [
+        ep for ep in [
+            (f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else None),
+            os.environ.get("DRPC_RPC_ENDPOINT"),
+            os.environ.get("ALCHEMY_RPC_ENDPOINT"),
+            os.environ.get("SOLANA_NODE_RPC_ENDPOINT"),
+        ] if ep
+    ]
+
+    if not rpc_endpoints:
+        print("❌ No RPC endpoints configured in .env")
         return False
 
     payer = Keypair.from_bytes(base58.b58decode(private_key))
-    
-    async with AsyncClient(rpc_endpoint, timeout=30) as client:
-        # Always use Jupiter - works for any token
-        return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
+
+    for i, rpc_endpoint in enumerate(rpc_endpoints):
+        try:
+            rpc_name = rpc_endpoint.split("/")[2][:30]
+            print(f"📡 RPC [{i+1}/{len(rpc_endpoints)}]: {rpc_name}")
+            async with AsyncClient(rpc_endpoint, timeout=30) as client:
+                return await sell_via_jupiter(client, payer, mint, percent, slippage, priority_fee, max_retries)
+        except Exception as e:
+            print(f"⚠️  RPC {rpc_name} failed: {type(e).__name__}")
+            if i < len(rpc_endpoints) - 1:
+                print(f"   Trying next RPC...")
+            else:
+                print(f"❌ All {len(rpc_endpoints)} RPC endpoints failed")
+                raise
+    return False
+
+
+
 
 
 def main():

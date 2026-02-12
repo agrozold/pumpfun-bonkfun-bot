@@ -899,59 +899,76 @@ async def buy_token(
     priority_fee: int = 100000,
     max_retries: int = 3,
 ) -> bool:
-    """Buy tokens - автоматически выбирает Pump.fun или PumpSwap."""
+    """Buy tokens - tries multiple RPC endpoints with fallback."""
     private_key = os.environ.get("SOLANA_PRIVATE_KEY")
-    # Use Alchemy for manual scripts to avoid rate limits from bot
-    _helius_key = os.environ.get("HELIUS_API_KEY", "")
-    rpc_endpoint = (
-        (f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else None)
-        or os.environ.get("DRPC_RPC_ENDPOINT")
-        or os.environ.get("ALCHEMY_RPC_ENDPOINT")
-        or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-    )
-    
     if not private_key:
         print("❌ SOLANA_PRIVATE_KEY not set in .env")
         return False
-    if not rpc_endpoint:
-        print("❌ SOLANA_NODE_RPC_ENDPOINT not set in .env")
+
+    _helius_key = os.environ.get("HELIUS_API_KEY", "")
+    rpc_endpoints = [
+        ep for ep in [
+            (f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else None),
+            os.environ.get("DRPC_RPC_ENDPOINT"),
+            os.environ.get("ALCHEMY_RPC_ENDPOINT"),
+            os.environ.get("SOLANA_NODE_RPC_ENDPOINT"),
+        ] if ep
+    ]
+
+    if not rpc_endpoints:
+        print("❌ No RPC endpoints configured in .env")
         return False
 
     payer = Keypair.from_bytes(base58.b58decode(private_key))
-    
-    async with AsyncClient(rpc_endpoint) as client:
-        # Check bonding curve state
-        bonding_curve, _ = get_bonding_curve_address(mint)
-        print(f"📍 Checking bonding curve: {bonding_curve}")
-        
+
+    for _rpc_i, rpc_endpoint in enumerate(rpc_endpoints):
         try:
-            # Таймаут 5 сек на проверку bonding curve
-            curve_state = await asyncio.wait_for(
-                get_curve_state(client, bonding_curve),
-                timeout=5.0
-            )
-        except asyncio.TimeoutError:
-            print(f"⚠️ Bonding curve check timeout - using Jupiter...")
-            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
-        except Exception as e:
-            print(f"⚠️ Bonding curve check failed: {e}")
-            print(f"🪐 Falling back to Jupiter...")
-            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
+            rpc_name = rpc_endpoint.split("/")[2][:30]
+            print(f"📡 RPC [{_rpc_i+1}/{len(rpc_endpoints)}]: {rpc_name}")
+            async with AsyncClient(rpc_endpoint, timeout=30) as client:
+
+                # Check bonding curve state
+                bonding_curve, _ = get_bonding_curve_address(mint)
+                print(f"📍 Checking bonding curve: {bonding_curve}")
         
-        # Decide which method to use
-        if curve_state is None:
-            print("🔄 Bonding curve not found - token migrated to Raydium, using PumpSwap AMM...")
-            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
-        elif curve_state.complete:
-            print(f"🔄 Bonding curve COMPLETE (complete={curve_state.complete}) - using PumpSwap AMM...")
-            print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-            print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-            return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
-        else:
-            print(f"📈 Token on bonding curve (complete={curve_state.complete}) - using Pump.fun...")
-            print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-            print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-            return await buy_via_pumpfun(client, payer, mint, curve_state, amount_sol, slippage, priority_fee, max_retries)
+                try:
+                    # Таймаут 5 сек на проверку bonding curve
+                    curve_state = await asyncio.wait_for(
+                        get_curve_state(client, bonding_curve),
+                        timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    print(f"⚠️ Bonding curve check timeout - using Jupiter...")
+                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
+                except Exception as e:
+                    print(f"⚠️ Bonding curve check failed: {e}")
+                    print(f"🪐 Falling back to Jupiter...")
+                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
+        
+                # Decide which method to use
+                if curve_state is None:
+                    print("🔄 Bonding curve not found - token migrated to Raydium, using PumpSwap AMM...")
+                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
+                elif curve_state.complete:
+                    print(f"🔄 Bonding curve COMPLETE (complete={curve_state.complete}) - using PumpSwap AMM...")
+                    print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
+                    print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
+                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
+                else:
+                    print(f"📈 Token on bonding curve (complete={curve_state.complete}) - using Pump.fun...")
+                    print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
+                    print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
+                    return await buy_via_pumpfun(client, payer, mint, curve_state, amount_sol, slippage, priority_fee, max_retries)
+        except Exception as e:
+            rpc_name = rpc_endpoint.split("/")[2][:30] if "/" in rpc_endpoint else "unknown"
+            print(f"⚠️  RPC {rpc_name} failed: {type(e).__name__}")
+            if _rpc_i < len(rpc_endpoints) - 1:
+                print(f"   Trying next RPC...")
+            else:
+                print(f"❌ All {len(rpc_endpoints)} RPC endpoints failed")
+                raise
+    return False
+
 
 
 def main():
