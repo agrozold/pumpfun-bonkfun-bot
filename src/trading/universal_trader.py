@@ -149,12 +149,12 @@ class UniversalTrader:
         stop_loss_percentage: float | None = None,
         max_hold_time: int | None = None,
         # Trailing Stop-Loss parameters
-        tsl_enabled: bool = False,
-        tsl_activation_pct: float = 0.10,  # Activate after +20% profit
-        tsl_trail_pct: float = 0.20,  # Trail 10% below high
-        tsl_sell_pct: float = 0.90,  # Sell 50% when TSL triggers
-        tp_sell_pct: float = 1.0,  # Sell this % when TP triggers
-        dca_enabled: bool = True,  # DCA (Dollar Cost Averaging)
+        tsl_enabled: bool = True,
+        tsl_activation_pct: float = 0.20,  # MUST match yaml
+        tsl_trail_pct: float = 0.30,  # MUST match yaml
+        tsl_sell_pct: float = 0.70,  # MUST match yaml
+        tp_sell_pct: float = 0.50,  # MUST match yaml
+        dca_enabled: bool = True,  # MUST match yaml
         # Token Vetting (security)
         token_vetting_enabled: bool = False,
         vetting_require_freeze_revoked: bool = True,
@@ -1110,7 +1110,7 @@ class UniversalTrader:
 
                 # DCA: Покупаем только часть позиции сначала (50%)
                 dca_enabled = self.dca_enabled
-                dca_first_buy_pct = 0.50  # 50% первая покупка
+                dca_first_buy_pct = self.dca_first_buy_pct if hasattr(self, 'dca_first_buy_pct') else 0.50  # 50% первая покупка
                 
                 if dca_enabled:
                     actual_buy_amount = self.buy_amount * dca_first_buy_pct
@@ -3167,8 +3167,8 @@ class UniversalTrader:
         if dca_enabled:
             position.dca_enabled = True
             position.dca_pending = True
-            position.dca_trigger_pct = 0.25
-            position.dca_first_buy_pct = 0.50
+            position.dca_trigger_pct = self.dca_trigger_pct if hasattr(self, 'dca_trigger_pct') else 0.25
+            position.dca_first_buy_pct = self.dca_first_buy_pct if hasattr(self, 'dca_first_buy_pct') else 0.50
             position.original_entry_price = buy_result.price
             logger.warning(f"[DCA] Position created with DCA enabled, waiting for -20% dip")
 
@@ -3749,6 +3749,12 @@ class UniversalTrader:
                                 position.quantity = remaining_quantity
                                 position.take_profit_price = None  # disable TP forever
                                 position.tp_partial_done = True  # marker for restore
+                                # Force-activate TSL for remaining position if not already active
+                                if not position.tsl_active and self.tsl_enabled:
+                                    position.tsl_active = True
+                                    position.high_water_mark = current_price
+                                    position.tsl_trigger_price = max(current_price * (1 - self.tsl_trail_pct), position.entry_price)
+                                    logger.warning(f"[TSL] {token_info.symbol}: FORCE-ACTIVATED after partial TP. HWM={current_price:.10f}, trigger={position.tsl_trigger_price:.10f}")
                                 self._save_position(position)
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
                                 continue

@@ -68,3 +68,4 @@ asyncio.run(sync_wallet())
 "'
 
 echo "🐋 Whale Bot aliases loaded"
+alias bot-strategy="python3 /opt/pumpfun-bonkfun-bot/scripts/show_strategy.py"

@@ -218,7 +218,7 @@ class Position:
         if not self.tsl_active and profit_pct >= self.tsl_activation_pct:
             self.tsl_active = True
             self.high_water_mark = current_price
-            self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+            self.tsl_trigger_price = max(current_price * (1 - self.tsl_trail_pct), self.entry_price)
             logger.warning(f"[TSL] {self.symbol} ACTIVATED at {current_price:.10f}, trigger at {self.tsl_trigger_price:.10f}")
             state_changed = True
 
@@ -226,7 +226,7 @@ class Position:
         if self.tsl_active and current_price > self.high_water_mark:
             old_hwm = self.high_water_mark
             self.high_water_mark = current_price
-            self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+            self.tsl_trigger_price = max(current_price * (1 - self.tsl_trail_pct), self.entry_price)
             logger.info(f"[TSL] {self.symbol} HWM: {old_hwm:.10f} -> {current_price:.10f}, new trigger: {self.tsl_trigger_price:.10f}")
             state_changed = True
         

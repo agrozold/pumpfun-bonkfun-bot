@@ -26,6 +26,29 @@ try:
 except ImportError:
     get_real_entry_price = None
 
+# === STRATEGY CONFIG (from yaml — single source of truth) ===
+def _load_strategy_config():
+    """Load strategy params from yaml. NO hardcoded defaults."""
+    import yaml as _yaml
+    from pathlib import Path as _Path
+    for yp in [_Path("bots/bot-whale-copy.yaml"), _Path("/opt/pumpfun-bonkfun-bot/bots/bot-whale-copy.yaml")]:
+        if yp.exists():
+            with open(yp) as _f:
+                _cfg = _yaml.safe_load(_f)
+            _t = _cfg.get("trade", {})
+            return {
+                "stop_loss_pct": _t["stop_loss_percentage"],
+                "take_profit_pct": _t["take_profit_percentage"],
+                "tsl_activation_pct": _t["tsl_activation_pct"],
+                "tsl_trail_pct": _t["tsl_trail_pct"],
+                "tsl_sell_pct": _t["tsl_sell_pct"],
+            }
+    raise FileNotFoundError("bot-whale-copy.yaml not found for strategy config")
+
+_STRAT = _load_strategy_config()
+# === END STRATEGY CONFIG ===
+
+
 # DexScreener для получения цен и символов
 async def get_token_info_dexscreener(mint: str, max_retries: int = 3) -> dict | None:
     """Получить информацию о токене с DexScreener с retry."""
@@ -331,16 +354,16 @@ async def sync_wallet():
             "entry_price": entry_price,
             "quantity": amount,
             "entry_time": datetime.utcnow().isoformat(),
-            "take_profit_price": entry_price * 100.0,  # +10000% (from config)
-            "stop_loss_price": entry_price * 0.8,    # -20%
+            "take_profit_price": entry_price * (1 + _STRAT["take_profit_pct"]),  # from yaml config
+            "stop_loss_price": entry_price * (1 - _STRAT["stop_loss_pct"]),    # from yaml config
             "max_hold_time": 0,
             "tsl_enabled": True,
-            "tsl_activation_pct": 0.3,
-            "tsl_trail_pct": 0.3,
+            "tsl_activation_pct": _STRAT["tsl_activation_pct"],
+            "tsl_trail_pct": _STRAT["tsl_trail_pct"],
             "tsl_active": False,
             "high_water_mark": entry_price,
             "tsl_trigger_price": 0.0,
-            "tsl_sell_pct": 0.7,
+            "tsl_sell_pct": _STRAT["tsl_sell_pct"],
             "is_active": True,
             "state": "open",
             "platform": platform,
@@ -358,8 +381,10 @@ async def sync_wallet():
         print(f"          Current Price: {price:.10f} SOL")
         print(f"          Amount: {amount:,.2f}")
         print(f"          Platform: {platform}")
-        print(f"          SL: {price * 0.8:.10f} (-20%)")
-        print(f"          TP: {price * 100.0:.10f} (+10000%)")
+        sl_pct = _STRAT["stop_loss_pct"]
+        print(f"          SL: {price * (1 - sl_pct):.10f} (-{sl_pct*100:.0f}%)")
+        tp_pct = _STRAT["take_profit_pct"]
+        print(f"          TP: {price * (1 + tp_pct):.10f} (+{tp_pct*100:.0f}%)")
         print()
         
         # Rate limit для DexScreener
@@ -375,6 +400,7 @@ async def sync_wallet():
     # Sync Redis with positions.json (incremental — preserve runtime state)
     import subprocess
     import json as js
+
     # Only ADD new positions and UPDATE quantities — never DEL whale:positions
     for p in positions:
         mint = p.get("mint", "")

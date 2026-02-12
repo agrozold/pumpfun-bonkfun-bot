@@ -22,6 +22,17 @@ REQUIRED_FIELDS = [
     "trade.sell_slippage",
     "filters.listener_type",
     "filters.max_token_age",
+    # Strategy parameters (REQUIRED — crash if missing)
+    "trade.stop_loss_percentage",
+    "trade.take_profit_percentage",
+    "trade.tsl_enabled",
+    "trade.tsl_activation_pct",
+    "trade.tsl_trail_pct",
+    "trade.tsl_sell_pct",
+    "trade.tp_sell_pct",
+    "trade.price_check_interval",
+    "trade.dca_enabled",
+    "trade.moon_bag_percentage",
 ]
 
 CONFIG_VALIDATION_RULES = [
@@ -69,6 +80,15 @@ CONFIG_VALIDATION_RULES = [
         float("inf"),
         "filters.max_token_age must be a non-negative number",
     ),
+    # Strategy validation
+    ("trade.stop_loss_percentage", float, 0.01, 0.99, "stop_loss_percentage must be 0.01-0.99"),
+    ("trade.take_profit_percentage", (int, float), 0.05, 100.0, "take_profit_percentage must be 0.05-100.0"),
+    ("trade.tsl_activation_pct", float, 0.01, 5.0, "tsl_activation_pct must be 0.01-5.0"),
+    ("trade.tsl_trail_pct", float, 0.01, 0.99, "tsl_trail_pct must be 0.01-0.99"),
+    ("trade.tsl_sell_pct", float, 0.01, 1.0, "tsl_sell_pct must be 0.01-1.0"),
+    ("trade.tp_sell_pct", float, 0.01, 1.0, "tp_sell_pct must be 0.01-1.0"),
+    ("trade.price_check_interval", (int, float), 0.1, 60.0, "price_check_interval must be 0.1-60"),
+    ("trade.moon_bag_percentage", (int, float), 0, 0.99, "moon_bag_percentage must be 0-0.99"),
 ]
 
 # Valid values for enum-like fields
