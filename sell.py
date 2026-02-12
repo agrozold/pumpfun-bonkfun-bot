@@ -679,9 +679,8 @@ async def sell_via_pumpswap(
     _helius_key = os.environ.get("HELIUS_API_KEY", "")
     rpc_endpoint = (
         (f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else None)
-        or os.environ.get("CHAINSTACK_RPC_ENDPOINT")
-        or os.environ.get("ALCHEMY_RPC_ENDPOINT")
         or os.environ.get("DRPC_RPC_ENDPOINT")
+        or os.environ.get("ALCHEMY_RPC_ENDPOINT")
         or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
     )
 
