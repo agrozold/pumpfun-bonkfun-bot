@@ -90,6 +90,18 @@
 
 **Где взять:** https://www.publicnode.com — Products — Solana — gRPC (Yellowstone)
 
+#### Как получить gRPC токен (бесплатно)
+
+1. Зайти на [solana.publicnode.com](https://solana.publicnode.com/?yellowstone) → вкладка **Yellowstone GRPC** → кнопка **"Get token →"**
+2. Перекинет на [allnodes.com/portfolio](https://www.allnodes.com/portfolio) — зарегистрироваться (бесплатно) → нажать **GET TOKEN** (можно до 5 штук)
+3. Скопировать токен, вставить в `.env`:
+
+GEYSER_ENDPOINT=solana-yellowstone-grpc.publicnode.com:443 GEYSER_API_KEY=ваш_токен_с_allnodes
+
+
+> Токен даёт swQoS (Staked Weighted Quality of Service) — приоритетный и стабильный доступ к gRPC.
+
+
 ### 4. Jupiter (обязательно)
 
 Для свопов (покупка/продажа токенов) и мониторинга цен.
