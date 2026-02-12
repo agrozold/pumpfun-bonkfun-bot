@@ -4225,12 +4225,19 @@ class UniversalTrader:
                 try:
                     # Get price from batch cache or DexScreener
                     price = None
-                    if hasattr(self, '_batch_price_service') and self._batch_price_service:
-                        price = self._batch_price_service.get_cached_price(mint_str)
-                    if not price:
-                        price = await self._get_price_any_source(mint_str, symbol)
+                    from utils.batch_price_service import get_cached_price
+                    price = get_cached_price(mint_str)
 
-                    if price is None or price <= 0:
+                    if not price or price <= 0:
+                        try:
+                            from utils.jupiter_price import get_token_price
+                            price, _ = await asyncio.wait_for(
+                                get_token_price(mint_str), timeout=5.0
+                            )
+                        except Exception:
+                            pass
+
+                    if not price or price <= 0:
                         continue
 
                     if price <= sl_price:
