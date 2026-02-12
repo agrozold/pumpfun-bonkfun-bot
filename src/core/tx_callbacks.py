@@ -74,12 +74,12 @@ async def on_buy_success(tx: "PendingTransaction"):
         logger.warning(f"[TX_CALLBACK] Post-buy verify failed: {verify_err}")
     
     # TSL and position parameters from context
-    take_profit_pct = tx.context.get("take_profit_pct", 10000)  # 10000% default
+    take_profit_pct = tx.context.get("take_profit_pct", 1.0)  # 10000% default
     stop_loss_pct = tx.context.get("stop_loss_pct", 0.2)  # 20% default
     tsl_enabled = tx.context.get("tsl_enabled", True)
-    tsl_activation_pct = tx.context.get("tsl_activation_pct", 0.1)
-    tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.5)
-    tsl_sell_pct = tx.context.get("tsl_sell_pct", 0.9)
+    tsl_activation_pct = tx.context.get("tsl_activation_pct", 0.2)
+    tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.3)
+    tsl_sell_pct = tx.context.get("tsl_sell_pct", 0.7)
     tp_sell_pct = tx.context.get("tp_sell_pct", 0.50)  # 50% partial TP
     bonding_curve = tx.context.get("bonding_curve", None)
     whale_wallet = tx.context.get("whale_wallet", None)
