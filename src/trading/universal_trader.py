@@ -795,6 +795,7 @@ class UniversalTrader:
             logger.warning(f"[BALANCE] Error getting balance for {mint[:8]}...: {e}")
             return None
 
+    # [edit:s12] reliable decimals from on-chain parsed data
     async def _get_token_balance_with_decimals(self, mint: str) -> tuple[float, int, int] | None:
         """Get token balance WITH decimals from on-chain (parsed, 100% reliable).
         Returns (uiAmount, decimals, rawAmount) or None.
@@ -3508,6 +3509,7 @@ class UniversalTrader:
                     dca_reason = ""
                     
 
+                    # [edit:s12] DCA sanity check
                     # SANITY CHECK: If price is >50x entry, entry price is likely garbage (decimals bug)
                     if position.entry_price > 0 and current_price / position.entry_price > 50:
                         _ratio = current_price / position.entry_price
@@ -3562,6 +3564,7 @@ class UniversalTrader:
                         dca_buy_amount = self.buy_amount * (1 - position.dca_first_buy_pct)
                         
                         try:
+                            # [edit:s12] DCA verify fix
                             # CRITICAL: Snapshot balance BEFORE buy (not after!)
                             _pre_dca_balance = await self._get_token_balance(str(token_info.mint))
                             logger.info(f"[DCA] Pre-buy balance: {_pre_dca_balance}")
@@ -3880,6 +3883,7 @@ class UniversalTrader:
                                     f"for potential moon 🌙"
                                 )
                                 
+                                # [edit:s12] moonbag SL watcher launch
                                 # Launch lightweight SL watcher (checks price every 60s, sells at -35%)
                                 _moonbag_sl = current_price * (1 - 0.35)  # HARD SL at -35%
                                 asyncio.create_task(
@@ -4208,6 +4212,7 @@ class UniversalTrader:
             return address_provider.derive_pool_address(token_info.mint)
 
 
+    # [edit:s12] lightweight moonbag SL watcher
     async def _moonbag_sl_watcher(self, mint_str: str, symbol: str, sl_price: float, check_interval: int = 60):
         """Lightweight background SL watcher for moonbag tokens.
         Checks price every 60s, sells all if price drops below SL.

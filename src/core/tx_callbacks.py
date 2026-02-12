@@ -38,7 +38,8 @@ async def on_buy_success(tx: "PendingTransaction"):
     bot_name = tx.context.get("bot_name", "unknown")
     sol_spent = tx.context.get("buy_amount", 0.02)  # SOL spent on this buy
 
-    # === POST-BUY VERIFY: Check actual balance vs Jupiter estimate ===
+        # [edit:s12] post-buy verify — check actual balance vs Jupiter estimate
+# === POST-BUY VERIFY: Check actual balance vs Jupiter estimate ===
     # Jupiter quote can be wildly wrong for tokens with non-standard decimals
     # (e.g. 9 decimals when get_token_decimals() returned 6 → 1000x error)
     try:

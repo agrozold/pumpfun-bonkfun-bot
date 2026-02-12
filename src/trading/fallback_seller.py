@@ -137,6 +137,7 @@ async def verify_transaction_success(rpc_client, signature: str, max_wait: float
 
 
 
+# [edit:s12] post-buy verify — corrects Jupiter estimate if decimals mismatch
 async def _post_buy_verify_balance(wallet_pubkey: str, mint_str: str, expected_tokens: float, 
                                      sol_spent: float, token_decimals_expected: int,
                                      rpc_url: str = None) -> tuple[float, float, int]:
@@ -1054,7 +1055,8 @@ class FallbackSeller:
                 return success, sig, None
             logger.info(f"PumpSwap failed: {error}, trying Jupiter...")
         else:
-            # Non pump.fun tokens - Jupiter FIRST (universal, handles any DEX/decimals)
+                        # [edit:s12] Jupiter-first sell routing for non-pump tokens
+# Non pump.fun tokens - Jupiter FIRST (universal, handles any DEX/decimals)
             logger.info(f"[FALLBACK] Non-pump token {symbol}, using Jupiter directly")
 
         # Jupiter as PRIMARY sell (works for ALL tokens)
@@ -1343,7 +1345,8 @@ class FallbackSeller:
         try:
             logger.info(f"[JUPITER] Jupiter SELL for {symbol}...")
 
-            # Get token decimals — use on-chain parsed data (NOT get_token_decimals which can fallback to wrong value!)
+                        # [edit:s12] sell uses on-chain raw balance instead of unreliable get_token_decimals
+# Get token decimals — use on-chain parsed data (NOT get_token_decimals which can fallback to wrong value!)
             rpc_client = await self._get_rpc_client()
             sell_amount = None
             token_decimals = 6  # default fallback

@@ -310,7 +310,7 @@ class WhaleWebhookReceiver:
             
             if sol_spent < self.min_buy_amount:
                 self._stats["below_min"] += 1
-                logger.info(f"[SKIP] Below min: {sol_spent:.4f} SOL < {self.min_buy_amount} SOL, token={token_received[:16]}...")
+                logger.info(f"[SKIP] Below min: {sol_spent:.4f} SOL < {self.min_buy_amount} SOL, token={token_received}")
                 return
             
             if token_received in self.token_blacklist:
@@ -339,7 +339,7 @@ class WhaleWebhookReceiver:
             timestamp = tx.get("timestamp", 0)
             block_time = timestamp if timestamp else None
             
-            logger.warning(f"[READY TO EMIT] whale={whale_info.get('label','?')}, token={token_received[:16]}..., sol={sol_spent:.4f}")
+            logger.warning(f"[READY TO EMIT] whale={whale_info.get('label','?')}, token={token_received}, sol={sol_spent:.4f}")
             await self._emit_whale_buy(
                 wallet=fee_payer,
                 token_mint=token_received,
