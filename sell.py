@@ -675,8 +675,9 @@ async def sell_via_pumpswap(
     # Get RPC endpoint for blockhash cache
     # Helius primary for CLI (reliable, fast, separate from bot RPC)
     _helius_key = os.environ.get("HELIUS_API_KEY", "")
+    _helius_base = os.environ.get("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com")
     rpc_endpoint = (
-        (f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else None)
+        (f"{_helius_base}/?api-key={_helius_key}" if _helius_key else None)
         or os.environ.get("DRPC_RPC_ENDPOINT")
         or os.environ.get("ALCHEMY_RPC_ENDPOINT")
         or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
@@ -1017,9 +1018,10 @@ async def sell_token(
         return False
 
     _helius_key = os.environ.get("HELIUS_API_KEY", "")
+    _helius_base = os.environ.get("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com")
     rpc_endpoints = [
         ep for ep in [
-            (f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else None),
+            (f"{_helius_base}/?api-key={_helius_key}" if _helius_key else None),
             os.environ.get("DRPC_RPC_ENDPOINT"),
             os.environ.get("ALCHEMY_RPC_ENDPOINT"),
             os.environ.get("SOLANA_NODE_RPC_ENDPOINT"),

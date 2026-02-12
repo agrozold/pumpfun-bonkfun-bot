@@ -82,7 +82,8 @@ async def refresh_blacklist():
         logger.error("[BLACKLIST] HELIUS_API_KEY not set")
         return
 
-    helius_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    _helius_base = os.environ.get("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com")
+    helius_url = f"{_helius_base}/?api-key={helius_key}"
 
     _deployer_wallets = {d["wallet"]: d.get("label", "unknown") for d in deployers}
 

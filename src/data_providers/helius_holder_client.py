@@ -25,7 +25,7 @@ class HolderAnalysis:
 
 
 class HeliusHolderClient:
-    BASE_URL = "https://mainnet.helius-rpc.com"
+    BASE_URL = os.environ.get("HELIUS_RPC_URL", "https://mainnet.helius-rpc.com")
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("HELIUS_API_KEY")
