@@ -43,6 +43,7 @@ from trading.universal_trader import UniversalTrader
 from trading.wallet_sync import sync_wallet
 from trading.periodic_sync import start_periodic_sync
 from trading.periodic_dust import start_periodic_dust
+from trading.deployer_blacklist import start_deployer_blacklist, is_mint_blacklisted
 from trading.trader_registry import register_trader
 
 # === Metrics Integration ===
@@ -366,6 +367,9 @@ async def start_bot(config_path: str):
         start_periodic_dust()
         logger.warning("[STARTUP] Periodic dust scheduled (60 min, first run in 5 min)")
         
+        # === DEPLOYER BLACKLIST ===
+        start_deployer_blacklist()
+        logger.warning("[STARTUP] Deployer blacklist scheduled (refresh every 5 min)")
         # === HELIUS WEBHOOK SYNC (CRITICAL!) ===
         if HELIUS_SYNC_AVAILABLE and cfg.get("whale_copy", {}).get("enabled", False):
             logger.warning("[STARTUP] Syncing Helius webhook...")

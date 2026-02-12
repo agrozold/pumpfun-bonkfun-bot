@@ -69,3 +69,4 @@ asyncio.run(sync_wallet())
 
 echo "🐋 Whale Bot aliases loaded"
 alias bot-strategy="python3 /opt/pumpfun-bonkfun-bot/scripts/show_strategy.py"
+alias blacklist="cd /opt/pumpfun-bonkfun-bot && ./venv/bin/python3 scripts/blacklist_cli.py"

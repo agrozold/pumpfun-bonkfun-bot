@@ -996,6 +996,14 @@ class UniversalTrader:
             return
 
         # ============================================
+        # DEPLOYER BLACKLIST CHECK (instant O(1))
+        # ============================================
+        from trading.deployer_blacklist import is_mint_blacklisted
+        if is_mint_blacklisted(mint_str):
+            logger.warning(f"[WHALE] ⛔ BLACKLISTED deployer token: {whale_buy.token_symbol} ({mint_str[:12]}...) — skipping")
+            return
+
+        # ============================================
         # ============================================
         # SCORING CHECK + PRE-FETCH QUOTE (Phase 3.3)
         # Run scoring and Jupiter quote in PARALLEL
