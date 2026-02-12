@@ -927,38 +927,8 @@ async def buy_token(
             print(f"📡 RPC [{_rpc_i+1}/{len(rpc_endpoints)}]: {rpc_name}")
             async with AsyncClient(rpc_endpoint, timeout=30) as client:
 
-                # Check bonding curve state
-                bonding_curve, _ = get_bonding_curve_address(mint)
-                print(f"📍 Checking bonding curve: {bonding_curve}")
-        
-                try:
-                    # Таймаут 5 сек на проверку bonding curve
-                    curve_state = await asyncio.wait_for(
-                        get_curve_state(client, bonding_curve),
-                        timeout=5.0
-                    )
-                except asyncio.TimeoutError:
-                    print(f"⚠️ Bonding curve check timeout - using Jupiter...")
-                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
-                except Exception as e:
-                    print(f"⚠️ Bonding curve check failed: {e}")
-                    print(f"🪐 Falling back to Jupiter...")
-                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
-        
-                # Decide which method to use
-                if curve_state is None:
-                    print("🔄 Bonding curve not found - token migrated to Raydium, using PumpSwap AMM...")
-                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
-                elif curve_state.complete:
-                    print(f"🔄 Bonding curve COMPLETE (complete={curve_state.complete}) - using PumpSwap AMM...")
-                    print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-                    print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-                    return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
-                else:
-                    print(f"📈 Token on bonding curve (complete={curve_state.complete}) - using Pump.fun...")
-                    print(f"   Virtual SOL: {curve_state.virtual_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-                    print(f"   Real SOL: {curve_state.real_sol_reserves / LAMPORTS_PER_SOL:.4f}")
-                    return await buy_via_pumpfun(client, payer, mint, curve_state, amount_sol, slippage, priority_fee, max_retries)
+                # [edit:s12] Jupiter first — universal, works for all tokens
+                return await buy_via_jupiter(payer, mint, amount_sol, slippage, priority_fee, rpc_endpoint, max_retries)
         except Exception as e:
             rpc_name = rpc_endpoint.split("/")[2][:30] if "/" in rpc_endpoint else "unknown"
             print(f"⚠️  RPC {rpc_name} failed: {type(e).__name__}")

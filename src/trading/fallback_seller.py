@@ -1122,7 +1122,7 @@ class FallbackSeller:
             )
 
             if not response.value:
-                return False, None, "PumpSwap market not found", 0.0, 0.0
+                return False, None, "PumpSwap market not found"
 
             market = response.value[0].pubkey
             logger.info(f"[MARKET] Found PumpSwap market: {market}")
@@ -1157,7 +1157,7 @@ class FallbackSeller:
             accounts = response.value if response.value else []
 
             if len(accounts) < 2 or not accounts[0] or not accounts[1]:
-                return False, None, "Pool vault accounts not found", 0.0, 0.0
+                return False, None, "Pool vault accounts not found"
 
             # Parse token account data
             base_data = accounts[0].data
@@ -1307,7 +1307,7 @@ class FallbackSeller:
             return True, sig, None
 
         except Exception as e:
-            return False, None, str(e), 0.0, 0.0
+            return False, None, str(e)
 
     def _parse_market_data(self, data: bytes) -> dict:
         """Parse PumpSwap pool account data."""
@@ -1420,7 +1420,7 @@ class FallbackSeller:
 
         except Exception as e:
             logger.error(f"[JUPITER] SELL error: {e}")
-            return False, None, str(e), 0.0, 0.0
+            return False, None, str(e)
 
     async def _jupiter_ultra_sell(
         self, session, rpc_client, mint, sell_amount, slippage_bps, symbol
@@ -1443,7 +1443,7 @@ class FallbackSeller:
             try:
                 async with session.get(jupiter_url, params=order_params, headers=headers) as resp:
                     if resp.status == 404:
-                        return False, None, "404 Not Found", 0.0, 0.0
+                        return False, None, "404 Not Found"
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.warning(f"Jupiter Ultra SELL failed ({resp.status}): {error_text}")
@@ -1471,9 +1471,9 @@ class FallbackSeller:
                 error_msg = str(e) if str(e) else f"{type(e).__name__}"
                 logger.warning(f"Jupiter Ultra attempt {attempt + 1} failed: {error_msg}")
                 if attempt == self.max_retries - 1:
-                    return False, None, error_msg, 0.0, 0.0
+                    return False, None, error_msg
 
-        return False, None, "All Jupiter Ultra attempts failed", 0.0, 0.0
+        return False, None, "All Jupiter Ultra attempts failed"
 
     async def _jupiter_lite_sell(
         self, session, rpc_client, mint, sell_amount, slippage_bps, symbol
@@ -1497,10 +1497,10 @@ class FallbackSeller:
             async with session.get(jupiter_quote_url, params=quote_params, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    return False, None, f"Jupiter Lite quote failed: {error_text}", 0.0, 0.0
+                    return False, None, f"Jupiter Lite quote failed: {error_text}"
                 quote = await resp.json()
         except Exception as e:
-            return False, None, f"Jupiter Lite quote error: {e}", 0.0, 0.0
+            return False, None, f"Jupiter Lite quote error: {e}"
 
         out_amount = int(quote.get("outAmount", 0))
         out_amount_sol = out_amount / LAMPORTS_PER_SOL
@@ -1527,7 +1527,7 @@ class FallbackSeller:
 
                 swap_tx_base64 = swap_data.get("swapTransaction")
                 if not swap_tx_base64:
-                    return False, None, "No swap transaction in response", 0.0, 0.0
+                    return False, None, "No swap transaction in response"
 
                 tx_bytes = base64.b64decode(swap_tx_base64)
                 tx = VersionedTransaction.from_bytes(tx_bytes)
@@ -1541,9 +1541,9 @@ class FallbackSeller:
                 error_msg = str(e) if str(e) else f"{type(e).__name__}"
                 logger.warning(f"Jupiter Lite attempt {attempt + 1} failed: {error_msg}")
                 if attempt == self.max_retries - 1:
-                    return False, None, error_msg, 0.0, 0.0
+                    return False, None, error_msg
 
-        return False, None, "All Jupiter Lite attempts failed", 0.0, 0.0
+        return False, None, "All Jupiter Lite attempts failed"
 
 
     async def _sell_via_pumpportal(
@@ -1579,7 +1579,7 @@ class FallbackSeller:
             )
 
             if response.status_code != 200:
-                return False, None, f"PumpPortal error: {response.text}", 0.0, 0.0
+                return False, None, f"PumpPortal error: {response.text}"
 
             # Sign TX
             tx = VersionedTransaction(
@@ -1606,9 +1606,9 @@ class FallbackSeller:
                 logger.info(f"[PUMPPORTAL] Sell TX: {sig}")
                 return True, sig, None
             elif "error" in result:
-                return False, None, str(result["error"]), 0.0, 0.0
+                return False, None, str(result["error"])
             else:
-                return False, None, str(result), 0.0, 0.0
+                return False, None, str(result)
 
         except Exception as e:
-            return False, None, str(e), 0.0, 0.0
+            return False, None, str(e)
