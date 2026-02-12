@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Управление списком китов: add/del/list + auto sync webhook"""
 import os, sys, json, asyncio
+sys.path.insert(0, "/opt/pumpfun-bonkfun-bot/src")
 from dotenv import load_dotenv
 load_dotenv('/opt/pumpfun-bonkfun-bot/.env')
 
