@@ -53,9 +53,17 @@ async def get_token_decimals(client, mint: "Pubkey") -> int:
     if mint_str in _decimals_cache:
         return _decimals_cache[mint_str]
     
+    # Fast path: ALL memecoins are 6 decimals - skip RPC entirely
+    # Only WSOL is 9 decimals, everything else we trade = 6
+    if mint_str == "So11111111111111111111111111111111111111112":
+        _decimals_cache[mint_str] = 9
+        return 9
+    _decimals_cache[mint_str] = 6
+    return 6
+    
     try:
         # Get mint account info
-        response = await client.get_account_info(mint, encoding="base64")
+        response = await asyncio.wait_for(client.get_account_info(mint, encoding="base64"), timeout=2.0)
         if response and response.value:
             data = response.value.data
             # Handle base64 encoded data

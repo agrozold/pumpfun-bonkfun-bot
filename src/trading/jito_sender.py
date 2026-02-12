@@ -30,7 +30,7 @@ JITO_TIP_ACCOUNTS = [
     "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT"
 ]
 
-DEFAULT_JITO_URL = "https://mainnet.block-engine.jito.wtf"
+DEFAULT_JITO_URL = "https://frankfurt.mainnet.block-engine.jito.wtf"
 
 
 class JitoSender:

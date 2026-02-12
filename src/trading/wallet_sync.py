@@ -200,7 +200,7 @@ async def sync_wallet():
     wallet = str(kp.pubkey())
     
     print(f"[WALLET] {wallet}")
-    print(f"[RPC] {rpc[:50]}...")
+    print(f"[RPC] {rpc.split(chr(47))[2]}...")
     print()
     
     # Получаем токены в кошельке

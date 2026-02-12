@@ -37,7 +37,7 @@ async def get_wallet_tokens_for_sync(wallet: str) -> tuple[set, bool]:
     mints = set()
     for rpc in get_rpc_endpoints():
         try:
-            logger.info(f"[SYNC] Trying RPC: {rpc[:50]}...")
+            logger.info(f"[SYNC] Trying RPC: {rpc.split(chr(47))[2]}...")
             success = False
             for prog_id in ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]:
                 payload = {
@@ -67,7 +67,7 @@ async def get_wallet_tokens_for_sync(wallet: str) -> tuple[set, bool]:
                 logger.info(f"[SYNC] RPC success, found {len(mints)} tokens")
                 return mints, True
         except asyncio.TimeoutError:
-            logger.warning(f"[SYNC] RPC timeout: {rpc[:50]}...")
+            logger.warning(f"[SYNC] RPC timeout: {rpc.split(chr(47))[2]}...")
         except Exception as e:
             logger.error(f"[SYNC] RPC error: {e}")
     logger.error("[SYNC] All RPCs failed!")
@@ -141,15 +141,21 @@ async def run_periodic_sync():
                 if mint in wallet_mints:
                     valid.append(pos)
                 else:
-                    # Grace period: don't remove positions younger than 60 seconds
-                    # (transaction may not be confirmed yet)
+                    # Grace period: don't remove positions younger than 120 seconds
+                    # (RPC may not index tokens immediately after TX confirmation)
                     entry_time_str = pos.get("entry_time", "")
                     if entry_time_str:
                         try:
-                            from datetime import datetime
-                            entry_time = datetime.fromisoformat(entry_time_str.replace('Z', '+00:00'))
-                            age_seconds = (datetime.now(entry_time.tzinfo) - entry_time).total_seconds()
-                            if age_seconds < 60:
+                            from datetime import datetime, timezone
+                            entry_time_str_clean = entry_time_str.replace('Z', '+00:00')
+                            entry_time = datetime.fromisoformat(entry_time_str_clean)
+                            # Make both aware or both naive for comparison
+                            if entry_time.tzinfo is None:
+                                now = datetime.utcnow()
+                            else:
+                                now = datetime.now(timezone.utc)
+                            age_seconds = (now - entry_time).total_seconds()
+                            if age_seconds < 120:
                                 logger.info(f"[SYNC] {pos.get('symbol', '?')} is new ({age_seconds:.0f}s old), keeping despite no tokens on wallet")
                                 valid.append(pos)
                                 continue
