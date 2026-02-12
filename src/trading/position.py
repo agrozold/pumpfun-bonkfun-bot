@@ -43,7 +43,7 @@ class Position:
     max_hold_time: int | None = None
 
     tsl_enabled: bool = False
-    tsl_activation_pct: float = 0.20
+    tsl_activation_pct: float = 0.40
     tsl_trail_pct: float = 0.30
     tsl_sell_pct: float = 0.70
     tp_sell_pct: float = 0.50
@@ -133,7 +133,7 @@ class Position:
             stop_loss_price=data.get("stop_loss_price"),
             max_hold_time=data.get("max_hold_time"),
             tsl_enabled=data.get("tsl_enabled", False),
-            tsl_activation_pct=data.get("tsl_activation_pct", 0.20),
+            tsl_activation_pct=data.get("tsl_activation_pct", 0.40),
             tsl_trail_pct=data.get("tsl_trail_pct", 0.30),
             tsl_active=data.get("tsl_active", False),
             high_water_mark=data.get("high_water_mark", data["entry_price"]),
@@ -170,7 +170,7 @@ class Position:
         platform: str = "pump_fun",
         bonding_curve: str | None = None,
         tsl_enabled: bool = False,
-        tsl_activation_pct: float = 0.20,
+        tsl_activation_pct: float = 0.40,
         tsl_trail_pct: float = 0.30,
         tsl_sell_pct: float = 0.70,
     ) -> "Position":

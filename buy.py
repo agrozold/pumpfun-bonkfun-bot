@@ -1092,12 +1092,12 @@ def main():
                     if current_price > 0:
                         old_entry = pos.get("entry_price", 0)
                         pos["entry_price"] = current_price
-                        pos["stop_loss_price"] = current_price * 0.7
+                        pos["stop_loss_price"] = current_price * 0.75
                         pos["high_water_mark"] = current_price
                         pos["tsl_active"] = False
                         pos["tsl_trigger_price"] = 0
                         print(f"📊 Entry: {old_entry:.10f} -> {current_price:.10f}")
-                        print(f"📊 SL: {current_price * 0.7:.10f} (-30%)")
+                        print(f"📊 SL: {current_price * 0.75:.10f} (-25%)")
 
                     # Отключаем DCA для ручных покупок
                     pos["dca_enabled"] = False
@@ -1165,12 +1165,13 @@ def main():
                         "entry_time": datetime.utcnow().isoformat(),
                         "platform": "jupiter",
                         "take_profit_price": current_price * 100,
-                        "stop_loss_price": current_price * 0.7,
+                        "stop_loss_price": current_price * 0.75,
                         "max_hold_time": 0,
                         "tsl_enabled": True,
-                        "tsl_activation_pct": 0.3,
+                        "tsl_activation_pct": 0.4,
                         "tsl_trail_pct": 0.3,
                         "tsl_sell_pct": 0.7,
+                        "tp_sell_pct": 0.5,
                         "tsl_active": False,
                         "tsl_trigger_price": 0,
                         "high_water_mark": current_price,
@@ -1218,7 +1219,7 @@ def main():
                     print(f"   Symbol: {symbol}")
                     print(f"   Qty: {real_balance:,.2f}")
                     print(f"   Entry: {current_price:.10f}")
-                    print(f"   SL: {current_price * 0.7:.10f} (-30%)")
+                    print(f"   SL: {current_price * 0.75:.10f} (-25%)")
             else:
                 print(f"⚠️ RPC не обновился. Текущий баланс: {real_balance:,.2f}")
                 print(f"   Запусти: wsync && bot-restart")
