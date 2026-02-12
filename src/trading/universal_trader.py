@@ -4358,6 +4358,37 @@ class UniversalTrader:
                     logger.info(f"[RESTORE] {position.symbol}: Calculated SL = {position.stop_loss_price:.10f}")
             # === END TP/SL FIX ===
             
+
+            # === SMART RESTORE: Check current price vs TP/DCA ===
+            # Prevent instant TP trigger or DCA buy when price already moved
+            try:
+                from utils.batch_price_service import get_cached_price
+                restore_price = get_cached_price(mint_str)
+                if restore_price and restore_price > 0 and not position.is_moonbag:
+                    # TP CHECK: If price already above TP, disable TP (let TSL handle)
+                    if position.take_profit_price and restore_price >= position.take_profit_price:
+                        old_tp = position.take_profit_price
+                        position.take_profit_price = None
+                        logger.warning(
+                            f"[RESTORE] {position.symbol}: Price {restore_price:.10f} >= TP {old_tp:.10f} — "
+                            f"TP DISABLED, TSL will manage exit"
+                        )
+                    # DCA CHECK: If DCA pending but price already moved, skip DCA
+                    if getattr(position, "dca_pending", False) and not getattr(position, "dca_bought", False):
+                        orig_entry = getattr(position, "original_entry_price", position.entry_price)
+                        dca_pct = getattr(position, "dca_trigger_pct", 0.25)
+                        dca_up = orig_entry * (1 + dca_pct)
+                        dca_down = orig_entry * (1 - dca_pct)
+                        if restore_price >= dca_up or restore_price <= dca_down:
+                            position.dca_pending = False
+                            position.dca_bought = True
+                            logger.warning(
+                                f"[RESTORE] {position.symbol}: Price {restore_price:.10f} past DCA trigger — DCA SKIPPED"
+                            )
+            except Exception as e:
+                logger.debug(f"[RESTORE] {position.symbol}: Smart restore price check failed: {e}")
+            # === END SMART RESTORE ===
+
             self.active_positions.append(position)
 
             # Get creator from bonding curve state for proper sell instruction
