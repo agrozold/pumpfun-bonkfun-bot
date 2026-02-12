@@ -2539,11 +2539,22 @@ class UniversalTrader:
                         # Don't listen for new tokens, just keep running for whale/trending/volume
                         logger.warning("[MODE] Sniper DISABLED - running in whale/trending/volume only mode")
                         # Keep running forever until interrupted (with balance check)
+                        _low_bal_logged = False
                         while True:
                             if self._critical_low_balance:
-                                logger.error("🛑 Bot stopped due to critical low balance")
-                                logger.error("🛑 Please top up your wallet and restart the bot.")
-                                break
+                                if not _low_bal_logged:
+                                    logger.warning("⛔ LOW BALANCE — new buys paused. Monitoring/selling continues. Top up wallet to resume.")
+                                    _low_bal_logged = True
+                                # Re-check balance every 60s — auto-resume if topped up
+                                try:
+                                    client = await self.solana_client.get_client()
+                                    bal_resp = await client.get_balance(self.wallet.pubkey)
+                                    bal_sol = bal_resp.value / 1_000_000_000
+                                    if bal_sol >= self.min_sol_balance:
+                                        self._critical_low_balance = False
+                                        _low_bal_logged = False
+                                except Exception:
+                                    pass
                             await asyncio.sleep(60)
                 except Exception:
                     logger.exception("Token listening stopped due to error")
@@ -2690,9 +2701,9 @@ class UniversalTrader:
             # CRITICAL BALANCE CHECK - STOP BOT
             # ============================================
             if self._critical_low_balance:
-                logger.error("🛑 Bot stopped due to critical low balance")
-                logger.error("🛑 Please top up your wallet and restart the bot.")
-                break
+                # Don't break — just skip buying, keep processing queue
+                await asyncio.sleep(5)
+                continue
 
             token_info = None
             try:
@@ -3414,6 +3425,15 @@ class UniversalTrader:
                         logger.warning(f"[DCA] {token_info.symbol}: Price {current_price:.10f} >= {dca_up_trigger:.10f} ({dca_reason})")
                     
                     if dca_triggered:
+                        # Balance check before DCA buy
+                        dca_balance_ok = await self._check_balance_before_buy()
+                        if not dca_balance_ok:
+                            logger.warning(f"[DCA] {token_info.symbol}: SKIPPED — insufficient balance")
+                            position.dca_pending = False
+                            position.dca_bought = True
+                            dca_triggered = False
+
+                    if dca_triggered:
                         logger.warning(f"[DCA] Executing second buy for {token_info.symbol} ({dca_reason})...")
                         
                         # Докупаем оставшиеся 50%
@@ -3440,8 +3460,9 @@ class UniversalTrader:
                                 position.dca_bought = True
                                 position.dca_pending = False
                                 
-                                # SL/TSL от НОВОЙ цены
-                                position.stop_loss_price = dca_price * 0.70  # -30% SL
+                                # SL/TSL от НОВОЙ цены (use config SL percentage)
+                                sl_pct = self.stop_loss_percentage if self.stop_loss_percentage else 0.25
+                                position.stop_loss_price = dca_price * (1 - sl_pct)  # Config SL
                                 position.high_water_mark = dca_price
                                 position.tsl_active = False
                                 position.tsl_trigger_price = 0
