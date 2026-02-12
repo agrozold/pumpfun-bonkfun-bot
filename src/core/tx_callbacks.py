@@ -36,6 +36,31 @@ async def on_buy_success(tx: "PendingTransaction"):
     price = tx.price
     platform = tx.context.get("platform", "jupiter")
     bot_name = tx.context.get("bot_name", "unknown")
+    sol_spent = tx.context.get("buy_amount", 0.02)  # SOL spent on this buy
+
+    # === POST-BUY VERIFY: Check actual balance vs Jupiter estimate ===
+    # Jupiter quote can be wildly wrong for tokens with non-standard decimals
+    # (e.g. 9 decimals when get_token_decimals() returned 6 → 1000x error)
+    try:
+        from trading.fallback_seller import _post_buy_verify_balance
+        verified_tokens, verified_price, actual_decimals = await _post_buy_verify_balance(
+            wallet_pubkey=tx.context.get("wallet_pubkey", ""),
+            mint_str=mint,
+            expected_tokens=token_amount,
+            sol_spent=sol_spent,
+            token_decimals_expected=6,  # default assumption
+        )
+        if abs(verified_tokens - token_amount) / max(token_amount, 1) > 0.1:
+            logger.warning(
+                f"[TX_CALLBACK] PRICE CORRECTED: {symbol} "
+                f"tokens {token_amount:,.2f} -> {verified_tokens:,.2f}, "
+                f"price {price:.10f} -> {verified_price:.10f} "
+                f"(decimals={actual_decimals})"
+            )
+            token_amount = verified_tokens
+            price = verified_price
+    except Exception as verify_err:
+        logger.warning(f"[TX_CALLBACK] Post-buy verify failed: {verify_err}")
     
     # TSL and position parameters from context
     take_profit_pct = tx.context.get("take_profit_pct", 10000)  # 10000% default

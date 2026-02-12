@@ -795,6 +795,48 @@ class UniversalTrader:
             logger.warning(f"[BALANCE] Error getting balance for {mint[:8]}...: {e}")
             return None
 
+    async def _get_token_balance_with_decimals(self, mint: str) -> tuple[float, int, int] | None:
+        """Get token balance WITH decimals from on-chain (parsed, 100% reliable).
+        Returns (uiAmount, decimals, rawAmount) or None.
+        Also updates fallback_seller decimals cache for consistency.
+        """
+        import aiohttp
+        try:
+            rpc_url = os.getenv("DRPC_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT") or self.rpc_endpoint
+            wallet = str(self.wallet.pubkey)
+
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [
+                        wallet, {"mint": mint},
+                        {"encoding": "jsonParsed", "commitment": "confirmed"}
+                    ]
+                }
+                async with session.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        accounts = data.get("result", {}).get("value", [])
+                        if accounts:
+                            token_amount = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]
+                            ui_amount = float(token_amount.get("uiAmount") or 0)
+                            decimals = int(token_amount.get("decimals", 6))
+                            raw_amount = int(token_amount.get("amount", "0"))
+                            # Update fallback_seller decimals cache (CRITICAL!)
+                            try:
+                                from trading.fallback_seller import _decimals_cache
+                                if mint in _decimals_cache and _decimals_cache[mint] != decimals:
+                                    logger.warning(f"[DECIMALS FIX] {mint[:8]}...: cache had {_decimals_cache[mint]}, on-chain says {decimals}. FIXING!")
+                                _decimals_cache[mint] = decimals
+                            except Exception:
+                                pass
+                            return (ui_amount, decimals, raw_amount)
+            return None
+        except Exception as e:
+            logger.warning(f"[BALANCE+DEC] Error for {mint[:8]}...: {e}")
+            return None
+
     async def _on_pump_signal(
         self, mint: str, symbol: str, patterns: list, strength: float
     ):
@@ -3465,6 +3507,36 @@ class UniversalTrader:
                     dca_triggered = False
                     dca_reason = ""
                     
+
+                    # SANITY CHECK: If price is >50x entry, entry price is likely garbage (decimals bug)
+                    if position.entry_price > 0 and current_price / position.entry_price > 50:
+                        _ratio = current_price / position.entry_price
+                        logger.warning(
+                            f"[DCA] {token_info.symbol}: SKIP — entry price looks wrong! "
+                            f"current={current_price:.10f} vs entry={position.entry_price:.10f} (ratio={_ratio:.0f}x). "
+                            f"Attempting price correction..."
+                        )
+                        _bwd = await self._get_token_balance_with_decimals(str(token_info.mint))
+                        if _bwd:
+                            _actual_ui, _actual_dec, _actual_raw = _bwd
+                            if _actual_ui > 0:
+                                _corrected = self.buy_amount / _actual_ui
+                                logger.warning(
+                                    f"[DCA] PRICE FIX: {token_info.symbol} entry {position.entry_price:.10f} -> {_corrected:.10f} "
+                                    f"(balance={_actual_ui:,.2f}, decimals={_actual_dec})"
+                                )
+                                position.entry_price = _corrected
+                                position.original_entry_price = _corrected
+                                sl_pct = self.stop_loss_percentage if self.stop_loss_percentage else 0.25
+                                position.stop_loss_price = _corrected * (1 - sl_pct)
+                                if self.take_profit_percentage is not None:
+                                    position.take_profit_price = _corrected * (1 + self.take_profit_percentage)
+                                position.high_water_mark = _corrected
+                                save_positions(self.active_positions)
+                        position.dca_pending = False
+                        position.dca_bought = True
+                        continue
+
                     if current_price <= dca_down_trigger:
                         dca_triggered = True
                         dca_reason = f"-{position.dca_trigger_pct*100:.0f}%"
@@ -3490,6 +3562,10 @@ class UniversalTrader:
                         dca_buy_amount = self.buy_amount * (1 - position.dca_first_buy_pct)
                         
                         try:
+                            # CRITICAL: Snapshot balance BEFORE buy (not after!)
+                            _pre_dca_balance = await self._get_token_balance(str(token_info.mint))
+                            logger.info(f"[DCA] Pre-buy balance: {_pre_dca_balance}")
+
                             success, tx_sig, dex_used, dca_tokens, dca_price = await self._buy_any_dex(
                                 mint_str=str(token_info.mint),
                                 symbol=token_info.symbol,
@@ -3497,69 +3573,97 @@ class UniversalTrader:
                                 jupiter_first=True,
                                 is_dca=True,
                             )
-                            
+
                             if success:
-                                # CRITICAL: Verify TX on-chain before updating quantity!
-                                # buy_via_jupiter returns True on TX send (fire & forget).
-                                # We must confirm tokens actually arrived in wallet.
-                                logger.warning(f"[DCA] TX sent for {token_info.symbol}, verifying on-chain...")
-                                
-                                old_balance = await self._get_token_balance(str(token_info.mint))
-                                if old_balance is None:
-                                    old_balance = position.quantity
-                                
+                                logger.warning(f"[DCA] TX sent for {token_info.symbol} (sig={tx_sig}), verifying on-chain...")
+
                                 dca_confirmed = False
-                                for _vcheck in range(6):  # 6 x 2s = 12s max
-                                    await asyncio.sleep(2)
-                                    new_balance = await self._get_token_balance(str(token_info.mint))
-                                    if new_balance is not None and new_balance > old_balance + 1:
-                                        real_dca_tokens = new_balance - old_balance
-                                        dca_confirmed = True
-                                        logger.warning(f"[DCA] ✅ CONFIRMED on-chain! Got {real_dca_tokens:.2f} tokens (expected {dca_tokens:.2f})")
-                                        break
-                                    logger.info(f"[DCA] Verify {_vcheck+1}/6: balance={new_balance}, waiting...")
-                                
+                                real_dca_tokens = dca_tokens  # fallback to Jupiter estimate
+
+                                # PRIMARY: Verify via TX signature (deterministic, no timing issues)
+                                if tx_sig:
+                                    try:
+                                        from trading.fallback_seller import verify_transaction_success
+                                        _rpc = self._fallback_buyer._alt_client or await self._fallback_buyer._get_rpc_client()
+                                        _tx_ok, _tx_err = await verify_transaction_success(_rpc, tx_sig, max_wait=12.0)
+                                        if _tx_ok:
+                                            dca_confirmed = True
+                                            logger.warning(f"[DCA] \u2705 TX CONFIRMED via signature!")
+                                            await asyncio.sleep(1)
+                                            _post_balance = await self._get_token_balance(str(token_info.mint))
+                                            if _post_balance is not None and _pre_dca_balance is not None and _post_balance > _pre_dca_balance + 1:
+                                                real_dca_tokens = _post_balance - _pre_dca_balance
+                                                logger.warning(f"[DCA] Balance diff: {real_dca_tokens:,.2f} tokens (expected {dca_tokens:,.2f})")
+                                            else:
+                                                _bwd = await self._get_token_balance_with_decimals(str(token_info.mint))
+                                                if _bwd and _pre_dca_balance is not None:
+                                                    _new_ui, _dec, _raw = _bwd
+                                                    if _new_ui > _pre_dca_balance + 1:
+                                                        real_dca_tokens = _new_ui - _pre_dca_balance
+                                                        logger.warning(f"[DCA] Balance diff (v2): {real_dca_tokens:,.2f} (decimals={_dec})")
+                                                    else:
+                                                        logger.info(f"[DCA] Balance diff unavailable, using estimate {dca_tokens:,.2f}")
+                                                else:
+                                                    logger.info(f"[DCA] Balance check failed, using estimate {dca_tokens:,.2f}")
+                                        else:
+                                            logger.error(f"[DCA] \u274c TX FAILED via signature: {_tx_err}")
+                                    except Exception as _ve:
+                                        logger.warning(f"[DCA] TX sig verify error: {_ve}, falling back to balance check")
+
+                                # FALLBACK: Balance diff (if TX sig verify didn't confirm)
+                                if not dca_confirmed:
+                                    _old_bal = _pre_dca_balance if _pre_dca_balance is not None else position.quantity
+                                    for _vcheck in range(6):
+                                        await asyncio.sleep(2)
+                                        _new_bal = await self._get_token_balance(str(token_info.mint))
+                                        if _new_bal is not None and _new_bal > _old_bal + 1:
+                                            real_dca_tokens = _new_bal - _old_bal
+                                            dca_confirmed = True
+                                            logger.warning(f"[DCA] \u2705 CONFIRMED via balance diff! Got {real_dca_tokens:,.2f} tokens")
+                                            break
+                                        logger.info(f"[DCA] Verify {_vcheck+1}/6: balance={_new_bal}, waiting...")
+
                                 if dca_confirmed:
-                                    total_quantity = old_balance + real_dca_tokens
-                                    
+                                    total_quantity = (_pre_dca_balance or position.quantity) + real_dca_tokens
+
                                     logger.warning(f"[DCA] Total tokens: {position.quantity:.2f} -> {total_quantity:.2f}")
-                                    
+
                                     # Entry = НОВАЯ цена (не средняя!)
                                     position.quantity = total_quantity
                                     position.entry_price = dca_price
                                     position.dca_bought = True
                                     position.dca_pending = False
-                                    
+
                                     # SL/TSL от НОВОЙ цены (use config SL percentage)
                                     sl_pct = self.stop_loss_percentage if self.stop_loss_percentage else 0.25
-                                    position.stop_loss_price = dca_price * (1 - sl_pct)  # Config SL
+                                    position.stop_loss_price = dca_price * (1 - sl_pct)
                                     position.high_water_mark = dca_price
                                     position.tsl_active = False
                                     position.tsl_trigger_price = 0
-                                    
+
                                     logger.warning(f"[DCA] New entry: {dca_price:.10f}")
                                     logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-{sl_pct*100:.0f}%)")
                                     logger.warning(f"[DCA] TSL reset")
-                                    
-                                    # Пересчитываем TP от новой цены
+
                                     if self.take_profit_percentage is not None:
                                         position.take_profit_price = dca_price * (1 + self.take_profit_percentage)
                                         logger.warning(f"[DCA] New TP: {position.take_profit_price:.10f} (+{self.take_profit_percentage*100:.0f}%)")
-                                    
+
                                     pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
                                     logger.warning(f"[DCA] New PnL: {pnl_pct:+.1f}%")
-                                    
+
                                     save_positions(self.active_positions)
                                 else:
-                                    # TX failed on-chain (like error 6005) — do NOT update quantity
-                                    logger.error(f"[DCA] ❌ TX NOT CONFIRMED for {token_info.symbol} — quantity UNCHANGED at {position.quantity:.2f}")
-                                    position.dca_bought = True  # Don't retry — price already moved
+                                    logger.error(f"[DCA] \u274c TX NOT CONFIRMED for {token_info.symbol} \u2014 quantity UNCHANGED at {position.quantity:.2f}")
+                                    position.dca_bought = True
                                     position.dca_pending = False
                                     save_positions(self.active_positions)
                             else:
-                                logger.error(f"[DCA] ❌ FAILED to buy more {token_info.symbol}")
+                                logger.error(f"[DCA] \u274c FAILED to buy more {token_info.symbol}")
                         except Exception as e:
                             logger.error(f"[DCA] Error during second buy: {e}")
+
+
 
                 # ============================================
                 # STOP LOSS CHECKS - ORDER MATTERS!
@@ -3776,11 +3880,19 @@ class UniversalTrader:
                                     f"for potential moon 🌙"
                                 )
                                 
-                                # NO monitoring — fall through to FULL EXIT cleanup
-                                # Tokens stay on wallet as dust moonbag
+                                # Launch lightweight SL watcher (checks price every 60s, sells at -35%)
+                                _moonbag_sl = current_price * (1 - 0.35)  # HARD SL at -35%
+                                asyncio.create_task(
+                                    self._moonbag_sl_watcher(
+                                        mint_str=str(token_info.mint),
+                                        symbol=token_info.symbol,
+                                        sl_price=_moonbag_sl,
+                                        check_interval=60,
+                                    )
+                                )
                                 logger.warning(
-                                    f"[MOONBAG] {token_info.symbol}: NOT monitoring. "
-                                    f"Tokens remain on wallet. Use sell CLI to liquidate."
+                                    f"[MOONBAG] {token_info.symbol}: SL watcher started at {_moonbag_sl:.10f} (-35%). "
+                                    f"Checks every 60s. Tokens remain on wallet."
                                 )
                             else:
                                 logger.info(f"[MOONBAG] {token_info.symbol}: Remaining {remaining_quantity:.4f} too small, closing fully")
@@ -4094,6 +4206,69 @@ class UniversalTrader:
         else:
             # Fallback to deriving the address using platform provider
             return address_provider.derive_pool_address(token_info.mint)
+
+
+    async def _moonbag_sl_watcher(self, mint_str: str, symbol: str, sl_price: float, check_interval: int = 60):
+        """Lightweight background SL watcher for moonbag tokens.
+        Checks price every 60s, sells all if price drops below SL.
+        No position tracking — just price check + sell + exit.
+        """
+        logger.warning(f"[MOONBAG SL] {symbol}: Watcher started. SL={sl_price:.10f}, interval={check_interval}s")
+        try:
+            while True:
+                await asyncio.sleep(check_interval)
+                try:
+                    # Get price from batch cache or DexScreener
+                    price = None
+                    if hasattr(self, '_batch_price_service') and self._batch_price_service:
+                        price = self._batch_price_service.get_cached_price(mint_str)
+                    if not price:
+                        price = await self._get_price_any_source(mint_str, symbol)
+
+                    if price is None or price <= 0:
+                        continue
+
+                    if price <= sl_price:
+                        logger.warning(
+                            f"[MOONBAG SL] {symbol}: TRIGGERED! Price {price:.10f} <= SL {sl_price:.10f}. Selling all..."
+                        )
+                        # Get actual balance
+                        balance_info = await self._get_token_balance_with_decimals(mint_str)
+                        if balance_info and balance_info[0] > 1.0:
+                            ui_amount, decimals, raw_amount = balance_info
+                            from models.token_info import TokenInfo
+                            from solders.pubkey import Pubkey
+                            token_info = TokenInfo(
+                                name=symbol, symbol=symbol, uri="",
+                                mint=Pubkey.from_string(mint_str),
+                                platform=self.platform,
+                            )
+                            # Create minimal position for _fast_sell_with_timeout
+                            from trading.position import Position
+                            temp_pos = Position(
+                                mint=mint_str, symbol=symbol,
+                                quantity=ui_amount, entry_price=sl_price,
+                            )
+                            sold = await self._fast_sell_with_timeout(
+                                token_info, temp_pos, price,
+                                sell_quantity=ui_amount, skip_cleanup=True
+                            )
+                            if sold:
+                                logger.warning(f"[MOONBAG SL] {symbol}: SOLD {ui_amount:,.2f} tokens at {price:.10f}")
+                            else:
+                                logger.error(f"[MOONBAG SL] {symbol}: Sell FAILED, will retry next cycle")
+                                continue  # Don't exit, retry
+                        else:
+                            logger.info(f"[MOONBAG SL] {symbol}: No tokens on wallet, exiting watcher")
+                        return  # Done — sold or no tokens
+
+                except Exception as e:
+                    logger.warning(f"[MOONBAG SL] {symbol}: Check error: {e}")
+                    continue
+        except asyncio.CancelledError:
+            logger.info(f"[MOONBAG SL] {symbol}: Watcher cancelled")
+        except Exception as e:
+            logger.error(f"[MOONBAG SL] {symbol}: Watcher crashed: {e}")
 
 
     async def _fast_sell_with_timeout(

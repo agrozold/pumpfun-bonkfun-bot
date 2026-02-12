@@ -136,6 +136,61 @@ async def verify_transaction_success(rpc_client, signature: str, max_wait: float
     return False, "Confirmation timeout"
 
 
+
+async def _post_buy_verify_balance(wallet_pubkey: str, mint_str: str, expected_tokens: float, 
+                                     sol_spent: float, token_decimals_expected: int,
+                                     rpc_url: str = None) -> tuple[float, float, int]:
+    """Verify actual tokens received after buy. Returns (corrected_tokens, corrected_price, actual_decimals).
+    
+    Compares Jupiter estimate with actual on-chain balance.
+    If >50% difference, recalculates using real balance (likely decimals mismatch).
+    """
+    import aiohttp, os
+    if not rpc_url:
+        rpc_url = os.getenv("DRPC_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT") or "https://api.mainnet-beta.solana.com"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getTokenAccountsByOwner",
+                "params": [wallet_pubkey, {"mint": mint_str}, 
+                          {"encoding": "jsonParsed", "commitment": "confirmed"}]
+            }
+            async with session.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    accounts = data.get("result", {}).get("value", [])
+                    if accounts:
+                        token_info = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]
+                        actual_ui = float(token_info.get("uiAmount") or 0)
+                        actual_decimals = int(token_info.get("decimals", 6))
+                        actual_raw = int(token_info.get("amount", "0"))
+                        
+                        # Update decimals cache
+                        _decimals_cache[mint_str] = actual_decimals
+                        
+                        if expected_tokens > 0 and actual_ui > 0:
+                            ratio = actual_ui / expected_tokens
+                            if ratio < 0.5 or ratio > 2.0:
+                                corrected_price = sol_spent / actual_ui if actual_ui > 0 else 0
+                                logger.warning(
+                                    f"[POST-BUY VERIFY] CORRECTED! Expected {expected_tokens:,.2f} tokens "
+                                    f"(decimals={token_decimals_expected}), actual {actual_ui:,.2f} "
+                                    f"(decimals={actual_decimals}). Ratio={ratio:.4f}. "
+                                    f"Price: {sol_spent/expected_tokens:.10f} -> {corrected_price:.10f}"
+                                )
+                                return actual_ui, corrected_price, actual_decimals
+                            else:
+                                logger.info(f"[POST-BUY VERIFY] OK: expected={expected_tokens:,.2f}, actual={actual_ui:,.2f}, ratio={ratio:.2f}")
+                        
+                        return expected_tokens, sol_spent / expected_tokens if expected_tokens > 0 else 0, actual_decimals
+    except Exception as e:
+        logger.warning(f"[POST-BUY VERIFY] Failed: {e}")
+    
+    return expected_tokens, sol_spent / expected_tokens if expected_tokens > 0 else 0, token_decimals_expected
+
+
 class FallbackSeller:
     """Handles selling tokens via PumpSwap or Jupiter when bonding curve unavailable."""
 
@@ -741,7 +796,7 @@ class FallbackSeller:
                                 signature=sig, mint=str(mint), symbol=symbol, action="buy",
                                 token_amount=out_amount_tokens, price=real_price,
                                 on_success=on_buy_success, on_failure=on_buy_failure,
-                                context={"platform": "jupiter_ultra", "bot_name": "fallback_seller", "pre_verified": True, **(position_config or {})},
+                                context={"platform": "jupiter_ultra", "bot_name": "fallback_seller", "pre_verified": True, "buy_amount": sol_amount, "wallet_pubkey": str(self.wallet.pubkey), **(position_config or {})},
                             )
                             return True, sig, None, out_amount_tokens, real_price
 
@@ -862,7 +917,7 @@ class FallbackSeller:
                                     signature=sig, mint=str(mint), symbol=symbol, action="buy",
                                     token_amount=out_amount_tokens, price=real_price,
                                     on_success=on_buy_success, on_failure=on_buy_failure,
-                                    context={"platform": "jupiter_lite", "bot_name": "fallback_seller", "pre_verified": True, **(position_config or {})},
+                                    context={"platform": "jupiter_lite", "bot_name": "fallback_seller", "pre_verified": True, "buy_amount": sol_amount, "wallet_pubkey": str(self.wallet.pubkey), **(position_config or {})},
                                 )
                                 return True, sig, None, out_amount_tokens, real_price
                                 
@@ -955,7 +1010,7 @@ class FallbackSeller:
                                 price=real_price,
                                 on_success=on_buy_success,
                                 on_failure=on_buy_failure,
-                                context={"platform": "jupiter", "bot_name": "fallback_seller", **(position_config or {})},
+                                context={"platform": "jupiter", "bot_name": "fallback_seller", "buy_amount": sol_amount, "wallet_pubkey": str(self.wallet.pubkey), **(position_config or {})},
                             )
                             
                             # Return immediately - position added by callback on success
@@ -999,14 +1054,18 @@ class FallbackSeller:
                 return success, sig, None
             logger.info(f"PumpSwap failed: {error}, trying Jupiter...")
         else:
-            # Non pump.fun tokens - try PumpSwap first
-            success, sig, error = await self._sell_via_pumpswap(mint, token_amount, symbol)
-            if success:
-                return success, sig, None
-            logger.info(f"PumpSwap failed: {error}, trying Jupiter...")
+            # Non pump.fun tokens - Jupiter FIRST (universal, handles any DEX/decimals)
+            logger.info(f"[FALLBACK] Non-pump token {symbol}, using Jupiter directly")
 
-        # Jupiter as last resort (for fully migrated tokens)
+        # Jupiter as PRIMARY sell (works for ALL tokens)
         success, sig, error = await self._sell_via_jupiter(mint, token_amount, symbol)
+        if success:
+            return success, sig, None
+
+        # PumpSwap as last resort fallback
+        if not is_pumpfun:
+            logger.info(f"Jupiter sell failed: {error}, trying PumpSwap fallback...")
+            success, sig, error = await self._sell_via_pumpswap(mint, token_amount, symbol)
         return success, sig, error
 
     async def _get_token_program_id(self, mint: Pubkey) -> Pubkey:
@@ -1284,10 +1343,49 @@ class FallbackSeller:
         try:
             logger.info(f"[JUPITER] Jupiter SELL for {symbol}...")
 
-            # Get token decimals
+            # Get token decimals — use on-chain parsed data (NOT get_token_decimals which can fallback to wrong value!)
             rpc_client = await self._get_rpc_client()
-            token_decimals = await get_token_decimals(rpc_client, mint)
-            sell_amount = int(token_amount * 10**token_decimals)
+            sell_amount = None
+            token_decimals = 6  # default fallback
+
+            # Try to get ACTUAL raw balance from on-chain (most reliable)
+            try:
+                import aiohttp as _aiohttp
+                _rpc_url = os.getenv("DRPC_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT") or "https://api.mainnet-beta.solana.com"
+                async with _aiohttp.ClientSession() as _sess:
+                    _payload = {
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "getTokenAccountsByOwner",
+                        "params": [str(self.wallet.pubkey), {"mint": str(mint)},
+                                  {"encoding": "jsonParsed", "commitment": "confirmed"}]
+                    }
+                    async with _sess.post(_rpc_url, json=_payload, timeout=_aiohttp.ClientTimeout(total=10)) as _resp:
+                        if _resp.status == 200:
+                            _data = await _resp.json()
+                            _accounts = _data.get("result", {}).get("value", [])
+                            if _accounts:
+                                _ti = _accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]
+                                _ui = float(_ti.get("uiAmount") or 0)
+                                token_decimals = int(_ti.get("decimals", 6))
+                                _raw = int(_ti.get("amount", "0"))
+                                # Update cache
+                                _decimals_cache[str(mint)] = token_decimals
+                                # Calculate raw sell amount from proportion
+                                if _ui > 0 and token_amount > 0:
+                                    sell_pct = min(token_amount / _ui, 1.0)
+                                    sell_amount = int(_raw * sell_pct)
+                                    logger.info(f"[SELL] On-chain: {_ui:,.2f} tokens (decimals={token_decimals}, raw={_raw}), selling {sell_pct*100:.1f}% = {sell_amount} raw")
+                                else:
+                                    sell_amount = _raw  # sell everything
+            except Exception as _e:
+                logger.warning(f"[SELL] On-chain balance check failed: {_e}, falling back to get_token_decimals")
+
+            if sell_amount is None:
+                # Fallback to old method
+                token_decimals = await get_token_decimals(rpc_client, mint)
+                sell_amount = int(token_amount * 10**token_decimals)
+                logger.info(f"[SELL] Fallback: decimals={token_decimals}, sell_amount={sell_amount}")
+
             slippage_bps = int(self.slippage * 10000)
 
             async with aiohttp.ClientSession() as session:
