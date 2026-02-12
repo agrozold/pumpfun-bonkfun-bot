@@ -4527,7 +4527,7 @@ class UniversalTrader:
                                 logger.info(f"[VERIFY] {symbol}: Retry CONFIRMED! Remaining: {new_remaining:.2f}")
                                 return True
                             else:
-                                logger.warning(f"[VERIFY] {symbol}: Retry {retry+1} — balance still {new_remaining:.2f}")
+                                logger.warning(f"[VERIFY] {symbol}: Retry {retry+1} — balance still {new_remaining}")
                                 if new_remaining is not None:
                                     remaining = new_remaining  # Update for next retry
                         else:
