@@ -4,6 +4,21 @@
       "wallet": "C4udGwTg6oqcrr8SmSLmkcXDbaFEcopsiaT21KUE4psU",
       "label": "serial-scammer-1",
       "added": "2026-02-12"
+    },
+    {
+      "wallet": "AxmFqz3pbhj6HDK9dC1u7LsYP3rbsTJyKkeCMSpAxrgU",
+      "label": "scammer-2",
+      "added": "2026-02-12"
+    },
+    {
+      "wallet": "ESkjM39HzdTxE3RmqcKFETawRBeG22ENfidsTyiaMy9J",
+      "label": "scammer-3",
+      "added": "2026-02-12"
+    },
+    {
+      "wallet": "bwamJzztZsepfkteWRChggmXuiiCQvpLqPietdNfSXa",
+      "label": "scammer-4",
+      "added": "2026-02-12"
     }
   ]
 }

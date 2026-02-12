@@ -585,6 +585,16 @@ class UniversalTrader:
             max_retries=1,
             jupiter_api_key=self.jupiter_api_key,
         )
+        # Separate buyer with BUY slippage (30%) — never use _fallback_seller for buys!
+        self._fallback_buyer = FallbackSeller(
+            client=self.solana_client,
+            wallet=self.wallet,
+            slippage=buy_slippage,
+            priority_fee=50000,
+            max_retries=1,
+            jupiter_api_key=self.jupiter_api_key,
+        )
+        logger.warning(f"[INIT] _fallback_seller slippage={sell_slippage} (sells), _fallback_buyer slippage={buy_slippage} (buys)")
         # Initialize the appropriate listener with platform filtering
         self.token_listener = ListenerFactory.create_listener(
             listener_type=listener_type,
@@ -1675,7 +1685,7 @@ class UniversalTrader:
         logger.info(f"[CHECK] [3/4] Trying Jupiter aggregator for {symbol}...")
 
         try:
-            fallback = self._fallback_seller
+            fallback = self._fallback_buyer  # Use BUY slippage (30%), not sell (20%)
             # Jupiter returns 5 values: success, sig, error, token_amount, price
             # Position config for callback
             position_config = {
@@ -3489,37 +3499,63 @@ class UniversalTrader:
                             )
                             
                             if success:
-                                total_quantity = position.quantity + dca_tokens
+                                # CRITICAL: Verify TX on-chain before updating quantity!
+                                # buy_via_jupiter returns True on TX send (fire & forget).
+                                # We must confirm tokens actually arrived in wallet.
+                                logger.warning(f"[DCA] TX sent for {token_info.symbol}, verifying on-chain...")
                                 
-                                logger.warning(f"[DCA] ✅ SUCCESS! Bought {dca_tokens:.2f} more at {dca_price:.10f}")
-                                logger.warning(f"[DCA] Total tokens: {position.quantity:.2f} -> {total_quantity:.2f}")
+                                old_balance = await self._get_token_balance(str(token_info.mint))
+                                if old_balance is None:
+                                    old_balance = position.quantity
                                 
-                                # Entry = НОВАЯ цена (не средняя!)
-                                position.quantity = total_quantity
-                                position.entry_price = dca_price
-                                position.dca_bought = True
-                                position.dca_pending = False
+                                dca_confirmed = False
+                                for _vcheck in range(6):  # 6 x 2s = 12s max
+                                    await asyncio.sleep(2)
+                                    new_balance = await self._get_token_balance(str(token_info.mint))
+                                    if new_balance is not None and new_balance > old_balance + 1:
+                                        real_dca_tokens = new_balance - old_balance
+                                        dca_confirmed = True
+                                        logger.warning(f"[DCA] ✅ CONFIRMED on-chain! Got {real_dca_tokens:.2f} tokens (expected {dca_tokens:.2f})")
+                                        break
+                                    logger.info(f"[DCA] Verify {_vcheck+1}/6: balance={new_balance}, waiting...")
                                 
-                                # SL/TSL от НОВОЙ цены (use config SL percentage)
-                                sl_pct = self.stop_loss_percentage if self.stop_loss_percentage else 0.25
-                                position.stop_loss_price = dca_price * (1 - sl_pct)  # Config SL
-                                position.high_water_mark = dca_price
-                                position.tsl_active = False
-                                position.tsl_trigger_price = 0
-                                
-                                logger.warning(f"[DCA] New entry: {dca_price:.10f}")
-                                logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-30%)")
-                                logger.warning(f"[DCA] TSL reset")
-
-                                # Пересчитываем TP от новой цены
-                                if self.take_profit_percentage is not None:
-                                    position.take_profit_price = dca_price * (1 + self.take_profit_percentage)
-                                    logger.warning(f"[DCA] New TP: {position.take_profit_price:.10f} (+{self.take_profit_percentage*100:.0f}%)")
-                                
-                                pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
-                                logger.warning(f"[DCA] New PnL: {pnl_pct:+.1f}%")
-                                
-                                save_positions(self.active_positions)
+                                if dca_confirmed:
+                                    total_quantity = old_balance + real_dca_tokens
+                                    
+                                    logger.warning(f"[DCA] Total tokens: {position.quantity:.2f} -> {total_quantity:.2f}")
+                                    
+                                    # Entry = НОВАЯ цена (не средняя!)
+                                    position.quantity = total_quantity
+                                    position.entry_price = dca_price
+                                    position.dca_bought = True
+                                    position.dca_pending = False
+                                    
+                                    # SL/TSL от НОВОЙ цены (use config SL percentage)
+                                    sl_pct = self.stop_loss_percentage if self.stop_loss_percentage else 0.25
+                                    position.stop_loss_price = dca_price * (1 - sl_pct)  # Config SL
+                                    position.high_water_mark = dca_price
+                                    position.tsl_active = False
+                                    position.tsl_trigger_price = 0
+                                    
+                                    logger.warning(f"[DCA] New entry: {dca_price:.10f}")
+                                    logger.warning(f"[DCA] New SL: {position.stop_loss_price:.10f} (-{sl_pct*100:.0f}%)")
+                                    logger.warning(f"[DCA] TSL reset")
+                                    
+                                    # Пересчитываем TP от новой цены
+                                    if self.take_profit_percentage is not None:
+                                        position.take_profit_price = dca_price * (1 + self.take_profit_percentage)
+                                        logger.warning(f"[DCA] New TP: {position.take_profit_price:.10f} (+{self.take_profit_percentage*100:.0f}%)")
+                                    
+                                    pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+                                    logger.warning(f"[DCA] New PnL: {pnl_pct:+.1f}%")
+                                    
+                                    save_positions(self.active_positions)
+                                else:
+                                    # TX failed on-chain (like error 6005) — do NOT update quantity
+                                    logger.error(f"[DCA] ❌ TX NOT CONFIRMED for {token_info.symbol} — quantity UNCHANGED at {position.quantity:.2f}")
+                                    position.dca_bought = True  # Don't retry — price already moved
+                                    position.dca_pending = False
+                                    save_positions(self.active_positions)
                             else:
                                 logger.error(f"[DCA] ❌ FAILED to buy more {token_info.symbol}")
                         except Exception as e:
@@ -4086,6 +4122,18 @@ class UniversalTrader:
             if not skip_cleanup:
                 self._remove_position(mint_str)
             return True
+
+        # Check actual wallet balance — never try to sell more than we have
+        actual_balance = await self._get_token_balance(str(token_info.mint))
+        if actual_balance is not None:
+            if actual_balance < sell_quantity * 0.9:
+                logger.warning(f"[FAST SELL] Quantity mismatch: position={sell_quantity:.2f} wallet={actual_balance:.2f}, using wallet balance")
+                sell_quantity = actual_balance
+            if actual_balance < MIN_SELL_TOKENS:
+                logger.warning(f"[FAST SELL] SKIP DUST: {token_info.symbol} wallet has {actual_balance:.4f} tokens")
+                if not skip_cleanup:
+                    self._remove_position(str(token_info.mint))
+                return True
 
         logger.warning(f"[FAST SELL] {token_info.symbol} ({sell_quantity:.2f} tokens) via Jupiter")
 
