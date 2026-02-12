@@ -44,8 +44,18 @@ async def on_buy_success(tx: "PendingTransaction"):
     # (e.g. 9 decimals when get_token_decimals() returned 6 → 1000x error)
     try:
         from trading.fallback_seller import _post_buy_verify_balance
+        # Get wallet from context, or from trader registry as fallback
+        _wallet = tx.context.get("wallet_pubkey", "")
+        if not _wallet:
+            try:
+                from trading.trader_registry import get_trader
+                _trader = get_trader()
+                if _trader and hasattr(_trader, 'wallet'):
+                    _wallet = str(_trader.wallet.pubkey)
+            except Exception:
+                pass
         verified_tokens, verified_price, actual_decimals = await _post_buy_verify_balance(
-            wallet_pubkey=tx.context.get("wallet_pubkey", ""),
+            wallet_pubkey=_wallet,
             mint_str=mint,
             expected_tokens=token_amount,
             sol_spent=sol_spent,

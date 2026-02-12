@@ -150,6 +150,10 @@ async def _post_buy_verify_balance(wallet_pubkey: str, mint_str: str, expected_t
     if not rpc_url:
         rpc_url = os.getenv("DRPC_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT") or "https://api.mainnet-beta.solana.com"
     
+    if not wallet_pubkey:
+        logger.warning("[POST-BUY VERIFY] No wallet_pubkey, skipping")
+        return expected_tokens, sol_spent / expected_tokens if expected_tokens > 0 else 0, token_decimals_expected
+
     try:
         async with aiohttp.ClientSession() as session:
             payload = {
