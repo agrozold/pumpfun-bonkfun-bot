@@ -3409,6 +3409,13 @@ class UniversalTrader:
                 # Только 2 покупки! После DCA - SL/TSL от НОВОЙ цены
                 # ============================================
                 if position.dca_enabled and position.dca_pending and not position.dca_bought:
+                    # PRICE SANITY CHECK: Skip DCA if price moved > 80% from entry in wrong direction
+                    # This catches garbage prices from Jupiter/batch cache
+                    price_vs_entry = abs(current_price - position.entry_price) / position.entry_price if position.entry_price > 0 else 0
+                    if current_price < position.entry_price * 0.1:
+                        logger.warning(f"[DCA] {token_info.symbol}: SKIPPED — price {current_price:.10f} looks like bad data (>90% below entry {position.entry_price:.10f})")
+                        continue
+
                     dca_down_trigger = position.original_entry_price * (1 - position.dca_trigger_pct)  # -25%
                     dca_up_trigger = position.original_entry_price * (1 + position.dca_trigger_pct)    # +25%
                     
@@ -4351,8 +4358,12 @@ class UniversalTrader:
                 logger.info(f"[RESTORE] {position.symbol}: MOONBAG — no TP/SL assigned")
             else:
                 if position.take_profit_price is None and self.take_profit_percentage:
-                    position.take_profit_price = position.entry_price * (1 + self.take_profit_percentage)
-                    logger.info(f"[RESTORE] {position.symbol}: Calculated TP = {position.take_profit_price:.10f}")
+                    # Don't reassign TP if TSL is already active (means TP already fired via partial sell)
+                    if getattr(position, 'tsl_active', False):
+                        logger.info(f"[RESTORE] {position.symbol}: TP=None but TSL active — TP stays disabled (partial sell already done)")
+                    else:
+                        position.take_profit_price = position.entry_price * (1 + self.take_profit_percentage)
+                        logger.info(f"[RESTORE] {position.symbol}: Calculated TP = {position.take_profit_price:.10f}")
                 if position.stop_loss_price is None and self.stop_loss_percentage:
                     position.stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage)
                     logger.info(f"[RESTORE] {position.symbol}: Calculated SL = {position.stop_loss_price:.10f}")
