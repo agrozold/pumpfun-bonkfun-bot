@@ -17,6 +17,4 @@ redis>=5.0.0
 requests>=2.31.0
 solana>=0.34.0
 solders>=0.21.0
-spl-token>=0.3.0
-anchorpy>=0.20.0
 websockets>=12.0
