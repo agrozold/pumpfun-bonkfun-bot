@@ -47,18 +47,37 @@ SOL_MINT = "So11111111111111111111111111111111111111112"
 
 
 async def _fetch_symbol_dexscreener(mint: str) -> str:
+    """Fetch token symbol: DexScreener -> Jupiter Token API -> short mint fallback."""
+    # 1. Try DexScreener (fastest for established tokens)
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=2)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     pairs = data.get("pairs", [])
                     if pairs:
-                        return pairs[0].get("baseToken", {}).get("symbol", "")
+                        sym = pairs[0].get("baseToken", {}).get("symbol", "")
+                        if sym:
+                            return sym
     except Exception:
         pass
-    return ""
+    # 2. Fallback: Jupiter Token API V2 (indexes new tokens faster)
+    try:
+        url = f"https://api.jup.ag/tokens/v2/search?query={mint}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=2)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list) and data:
+                        sym = data[0].get("symbol", "")
+                        if sym:
+                            return sym
+    except Exception:
+        pass
+    # 3. Last resort: short mint as symbol
+    return mint[:8] if mint else ""
+
 
 
 @dataclass
