@@ -62,10 +62,15 @@ async def get_token_decimals(client, mint: "Pubkey") -> int:
     if mint_str.endswith("pump") or mint_str.endswith("bonk"):
         _decimals_cache[mint_str] = 6
         return 6
+
+    # Fast path: Bags.fm / Meteora DBC tokens = 9 decimals (confirmed on-chain via Solscan)
+    if mint_str.endswith("BAGS"):
+        _decimals_cache[mint_str] = 9
+        return 9
     
     try:
         # Get mint account info
-        response = await asyncio.wait_for(client.get_account_info(mint, encoding="base64"), timeout=2.0)
+        response = await asyncio.wait_for(client.get_account_info(mint, encoding="base64"), timeout=1.0)
         if response and response.value:
             data = response.value.data
             # Handle base64 encoded data

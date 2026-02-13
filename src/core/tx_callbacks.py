@@ -59,7 +59,7 @@ async def on_buy_success(tx: "PendingTransaction"):
             mint_str=mint,
             expected_tokens=token_amount,
             sol_spent=sol_spent,
-            token_decimals_expected=6,  # default assumption
+            token_decimals_expected=9 if mint.endswith("BAGS") else 6,  # BAGS=9, pump/bonk=6
         )
         if abs(verified_tokens - token_amount) / max(token_amount, 1) > 0.1:
             logger.warning(
