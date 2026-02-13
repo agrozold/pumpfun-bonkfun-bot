@@ -227,6 +227,9 @@ class WhaleGeyserReceiver:
         watchdog.set_reconnect_callback(self._trigger_reconnect)
 
     def _trigger_reconnect(self):
+        # Reset watchdog data timer so next reconnect waits full 300s
+        if self._watchdog:
+            self._watchdog.touch_grpc_data()
         self._reconnect_event.set()
 
     async def start(self):
