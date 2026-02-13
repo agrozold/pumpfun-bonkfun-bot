@@ -58,8 +58,10 @@ async def get_token_decimals(client, mint: "Pubkey") -> int:
     if mint_str == "So11111111111111111111111111111111111111112":
         _decimals_cache[mint_str] = 9
         return 9
-    _decimals_cache[mint_str] = 6
-    return 6
+    # Fast path for known platforms (no RPC needed)
+    if mint_str.endswith("pump") or mint_str.endswith("bonk"):
+        _decimals_cache[mint_str] = 6
+        return 6
     
     try:
         # Get mint account info
