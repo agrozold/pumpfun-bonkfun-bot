@@ -4248,7 +4248,7 @@ class UniversalTrader:
                         balance_info = await self._get_token_balance_with_decimals(mint_str)
                         if balance_info and balance_info[0] > 1.0:
                             ui_amount, decimals, raw_amount = balance_info
-                            from models.token_info import TokenInfo
+                            from interfaces.core import TokenInfo
                             from solders.pubkey import Pubkey
                             token_info = TokenInfo(
                                 name=symbol, symbol=symbol, uri="",
