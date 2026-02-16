@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+import struct
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +45,46 @@ TOKEN_BLACKLIST = {
 }
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
+
+
+
+@dataclass
+class VaultSubscription:
+    """Tracks a vault pair subscription for price calculation."""
+    mint: str
+    symbol: str
+    base_vault: str
+    quote_vault: str
+    decimals: int = 6
+    base_reserve: float = 0.0
+    quote_reserve: float = 0.0
+    price: float = 0.0
+    last_update: float = 0.0
+
+
+@dataclass
+class CurveSubscription:
+    """Tracks a bonding curve subscription for price calculation.
+    Bonding curve layout (pump.fun program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P):
+      offset 0x00: u64 discriminator
+      offset 0x08: u64 virtualTokenReserves
+      offset 0x10: u64 virtualSolReserves
+      offset 0x18: u64 realTokenReserves
+      offset 0x20: u64 realSolReserves
+      offset 0x28: u64 tokenTotalSupply
+      offset 0x30: bool complete
+    Price formula (same as pumpfun/curve_manager.py):
+      price = (vsr / vtr) * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+    """
+    mint: str
+    symbol: str
+    curve_address: str
+    decimals: int = 6
+    virtual_token_reserves: int = 0
+    virtual_sol_reserves: int = 0
+    complete: bool = False
+    price: float = 0.0
+    last_update: float = 0.0
 
 
 async def _fetch_symbol_dexscreener(mint: str) -> str:
@@ -192,6 +233,15 @@ class WhaleGeyserReceiver:
         self._watchdog = None
         self._reconnect_event = asyncio.Event()
 
+        # Vault tracking for price monitoring (Phase 4b)
+        self._vault_subscriptions: dict[str, VaultSubscription] = {}  # mint -> VaultSubscription
+        self._vault_address_map: dict[str, str] = {}  # vault_address -> mint
+        self._vault_prices: dict[str, tuple[float, float]] = {}  # mint -> (price, timestamp)
+
+        # Bonding curve tracking for price monitoring (Phase 4c)
+        self._curve_subscriptions: dict[str, CurveSubscription] = {}  # mint -> CurveSubscription
+        self._curve_address_map: dict[str, str] = {}  # curve_address -> mint
+
         logger.warning(
             f"[GEYSER] Initialized: {len(self.whale_wallets)} whales, "
             f"min_buy={min_buy_amount} SOL, endpoint={self.geyser_endpoint}"
@@ -299,7 +349,7 @@ class WhaleGeyserReceiver:
         return geyser_pb2_grpc.GeyserStub(self._channel)
 
     def _create_subscribe_request(self):
-        """Create gRPC subscribe request for whale wallets."""
+        """Create gRPC subscribe request for whale wallets + vault accounts."""
         request = geyser_pb2.SubscribeRequest()
 
         # Subscribe to transactions involving ANY of the whale wallets
@@ -312,12 +362,27 @@ class WhaleGeyserReceiver:
         # Only successful transactions
         tx_filter.failed = False
 
+        # Vault account subscriptions for price tracking (Phase 4b)
+        vault_addresses = list(self._vault_address_map.keys())
+        if vault_addresses:
+            acct_filter = request.accounts["vault_tracker"]
+            for addr in vault_addresses:
+                acct_filter.account.append(addr)
+
+        # Bonding curve account subscriptions for price tracking (Phase 4c)
+        curve_addresses = list(self._curve_address_map.keys())
+        if curve_addresses:
+            curve_filter = request.accounts["curve_tracker"]
+            for addr in curve_addresses:
+                curve_filter.account.append(addr)
+
         # PROCESSED = fastest, see tx before full confirmation
         request.commitment = geyser_pb2.CommitmentLevel.PROCESSED
 
         logger.info(
             f"[GEYSER] Subscribe request: {len(whale_addresses)} wallets, "
-            f"commitment=PROCESSED"
+            f"{len(vault_addresses)} vault accounts, "
+            f"{len(self._curve_address_map)} curve accounts, commitment=PROCESSED"
         )
         return request
 
@@ -438,6 +503,18 @@ class WhaleGeyserReceiver:
                                 logger.warning(
                                     "[GEYSER] Ping queue full, could not respond to server ping"
                                 )
+                            continue
+
+                        # --- Phase 4b/4c: Handle account updates (vaults + curves) ---
+                        if update.HasField("account"):
+                            acct = update.account.account
+                            if acct:
+                                pk_bytes = bytes(acct.pubkey)
+                                pk_str = base58.b58encode(pk_bytes).decode()
+                                if pk_str in self._vault_address_map:
+                                    self._handle_vault_account_update(update.account)
+                                elif pk_str in self._curve_address_map:
+                                    self._handle_curve_account_update(update.account)
                             continue
 
                         # --- We only care about transactions ---
@@ -937,12 +1014,318 @@ class WhaleGeyserReceiver:
             return "lets_bonk"
         return source
 
+
+    # ================================================================
+    # Bonding Curve Price Tracking (Phase 4c)
+    # ================================================================
+
+    async def subscribe_bonding_curve(
+        self,
+        mint: str,
+        curve_address: str,
+        symbol: str = "",
+        decimals: int = 6,
+    ):
+        """Subscribe to bonding curve account updates for price monitoring."""
+        try:
+            if mint in self._curve_subscriptions:
+                logger.info(f'[GEYSER] Curve already subscribed for {symbol} ({mint[:8]}...)')
+                return
+
+            sub = CurveSubscription(
+                mint=mint,
+                symbol=symbol,
+                curve_address=curve_address,
+                decimals=decimals,
+            )
+            self._curve_subscriptions[mint] = sub
+            self._curve_address_map[curve_address] = mint
+
+            logger.warning(
+                f'[GEYSER] +CURVE_SUBSCRIBE {symbol} '
+                f'(curve={curve_address[:16]}...)'
+            )
+
+            # Push updated subscribe request with new curve account
+            new_request = self._create_subscribe_request()
+            if self._ping_queue:
+                try:
+                    self._ping_queue.put_nowait(new_request)
+                    logger.info(
+                        f'[GEYSER] Pushed resubscribe: '
+                        f'{len(self.whale_wallets)} whales '
+                        f'+ {len(self._vault_subscriptions)} vault pairs '
+                        f'+ {len(self._curve_subscriptions)} curves '
+                        f'({len(self._vault_address_map) + len(self._curve_address_map)} accounts)'
+                    )
+                except asyncio.QueueFull:
+                    logger.warning('[GEYSER] Ping queue full, curve sub will apply on reconnect')
+
+        except Exception as e:
+            logger.error(f'[GEYSER] Failed to subscribe curve for {symbol}: {e}')
+
+    async def unsubscribe_bonding_curve(self, mint: str) -> bool:
+        """Remove bonding curve subscription and push updated request."""
+        try:
+            sub = self._curve_subscriptions.pop(mint, None)
+            if not sub:
+                return False
+
+            self._curve_address_map.pop(sub.curve_address, None)
+            # Also remove from vault prices cache (shared cache)
+            self._vault_prices.pop(mint, None)
+
+            logger.info(f'[GEYSER] -CURVE_UNSUBSCRIBE {sub.symbol} ({mint[:8]}...)')
+
+            new_request = self._create_subscribe_request()
+            if self._ping_queue:
+                try:
+                    self._ping_queue.put_nowait(new_request)
+                except asyncio.QueueFull:
+                    pass
+            return True
+        except Exception as e:
+            logger.error(f'[GEYSER] Failed to unsubscribe curve for {mint[:8]}: {e}')
+            return False
+
+    def get_curve_price(self, mint: str, max_age: float = 120.0) -> float | None:
+        """Get current bonding curve-derived price. Returns None if no data or stale."""
+        sub = self._curve_subscriptions.get(mint)
+        if not sub or sub.price <= 0:
+            return None
+        if time.time() - sub.last_update > max_age:
+            return None
+        return sub.price
+
+    def _handle_curve_account_update(self, account_update) -> None:
+        """Process bonding curve account update from gRPC stream.
+        Decodes virtualTokenReserves and virtualSolReserves, calculates price.
+        Uses EXACT same formula as pumpfun/curve_manager.py:
+          price = (vsr / vtr) * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+        Where TOKEN_DECIMALS=6, LAMPORTS_PER_SOL=1_000_000_000.
+        """
+        try:
+            acct = account_update.account
+            if not acct:
+                return
+
+            pubkey_bytes = bytes(acct.pubkey)
+            pubkey_str = base58.b58encode(pubkey_bytes).decode()
+
+            mint = self._curve_address_map.get(pubkey_str)
+            if not mint:
+                return
+
+            sub = self._curve_subscriptions.get(mint)
+            if not sub:
+                return
+
+            data = bytes(acct.data)
+            # Minimum size: 8 (discriminator) + 5*8 (reserves) + 1 (complete) = 49 bytes
+            if len(data) < 49:
+                logger.warning(f'[GEYSER] Curve data too short: {len(data)}b for {sub.symbol}')
+                return
+
+            # Decode bonding curve fields (all little-endian u64)
+            virtual_token_reserves = struct.unpack('<Q', data[8:16])[0]
+            virtual_sol_reserves = struct.unpack('<Q', data[16:24])[0]
+            complete = bool(data[48])
+
+            # If curve completed (migrated), log and stop tracking
+            if complete and not sub.complete:
+                sub.complete = True
+                logger.warning(f'[GEYSER] Curve COMPLETE (migrated): {sub.symbol} — will need vault tracking')
+                return
+
+            if complete:
+                return
+
+            if virtual_token_reserves <= 0 or virtual_sol_reserves <= 0:
+                return
+
+            sub.virtual_token_reserves = virtual_token_reserves
+            sub.virtual_sol_reserves = virtual_sol_reserves
+            sub.last_update = time.time()
+
+            # Price formula — EXACT same as pumpfun/curve_manager.py:
+            # price = (virtual_sol_reserves / virtual_token_reserves) * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+            TOKEN_DECIMALS = sub.decimals  # 6 for pump.fun
+            LAMPORTS_PER_SOL = 1_000_000_000
+            old_price = sub.price
+            sub.price = (virtual_sol_reserves / virtual_token_reserves) * (10 ** TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+
+            # Store in shared vault_prices cache so get_vault_price() also returns it
+            self._vault_prices[mint] = (sub.price, time.time())
+
+            if old_price <= 0:
+                logger.warning(
+                    f'[GEYSER] Curve FIRST price: {sub.symbol} '
+                    f'{sub.price:.10f} SOL '
+                    f'(vtr={virtual_token_reserves}, vsr={virtual_sol_reserves})'
+                )
+            elif abs(sub.price - old_price) / max(old_price, 1e-15) > 0.005:
+                change_pct = (sub.price - old_price) / old_price * 100
+                logger.info(
+                    f'[GEYSER] Curve price: {sub.symbol} '
+                    f'{sub.price:.10f} SOL ({change_pct:+.1f}%)'
+                )
+
+        except Exception as e:
+            logger.error(f'[GEYSER] Curve account update error: {e}')
+
+        # Vault Price Tracking (Phase 4b)
+    # ================================================================
+
+    async def subscribe_vault_accounts(
+        self,
+        mint: str,
+        base_vault: str,
+        quote_vault: str,
+        symbol: str = '???',
+        decimals: int = 6,
+    ) -> bool:
+        """Subscribe to vault account updates for price monitoring."""
+        try:
+            if mint in self._vault_subscriptions:
+                logger.info(f'[GEYSER] Vault already subscribed for {symbol} ({mint[:8]}...)')
+                return True
+
+            sub = VaultSubscription(
+                mint=mint,
+                symbol=symbol,
+                base_vault=base_vault,
+                quote_vault=quote_vault,
+                decimals=decimals,
+            )
+
+            self._vault_subscriptions[mint] = sub
+            self._vault_address_map[base_vault] = mint
+            self._vault_address_map[quote_vault] = mint
+
+            logger.warning(
+                f'[GEYSER] +VAULT_SUBSCRIBE {symbol} '
+                f'(base={base_vault[:16]}..., quote={quote_vault[:16]}...)'
+            )
+
+            # Push updated subscription request through the queue
+            if self._ping_queue:
+                new_request = self._create_subscribe_request()
+                try:
+                    self._ping_queue.put_nowait(new_request)
+                    logger.warning(
+                        f'[GEYSER] Subscribe request: {len(self.whale_wallets)} wallets '
+                        f'+ {len(self._vault_subscriptions)} vault pairs '
+                        f'({len(self._vault_address_map)} vault accounts)'
+                    )
+                except asyncio.QueueFull:
+                    logger.warning('[GEYSER] Ping queue full, vault sub will apply on reconnect')
+
+            return True
+
+        except Exception as e:
+            logger.error(f'[GEYSER] Failed to subscribe vaults for {symbol}: {e}')
+            return False
+
+    async def unsubscribe_vault_accounts(self, mint: str) -> bool:
+        """Remove vault subscription and push updated request."""
+        try:
+            sub = self._vault_subscriptions.pop(mint, None)
+            if not sub:
+                return False
+
+            self._vault_address_map.pop(sub.base_vault, None)
+            self._vault_address_map.pop(sub.quote_vault, None)
+            self._vault_prices.pop(mint, None)
+
+            logger.info(f'[GEYSER] -VAULT_UNSUBSCRIBE {sub.symbol} ({mint[:8]}...)')
+
+            if self._ping_queue:
+                new_request = self._create_subscribe_request()
+                try:
+                    self._ping_queue.put_nowait(new_request)
+                except asyncio.QueueFull:
+                    pass
+
+            return True
+
+        except Exception as e:
+            logger.error(f'[GEYSER] Failed to unsubscribe vaults for {mint[:8]}: {e}')
+            return False
+
+    def get_vault_price(self, mint: str, max_age: float = 120.0) -> float | None:
+        """Get current vault-derived price. Returns None if no data or stale."""
+        price_data = self._vault_prices.get(mint)
+        if not price_data:
+            return None
+        price, timestamp = price_data
+        if time.time() - timestamp > max_age:
+            return None
+        return price
+
+    def _handle_vault_account_update(self, account_update) -> None:
+        """Process vault account update from gRPC stream.
+        Decodes SPL Token Account balance and recalculates price."""
+        try:
+            acct = account_update.account
+            if not acct:
+                return
+
+            pubkey_bytes = bytes(acct.pubkey)
+            pubkey_str = base58.b58encode(pubkey_bytes).decode()
+
+            mint = self._vault_address_map.get(pubkey_str)
+            if not mint:
+                return
+
+            sub = self._vault_subscriptions.get(mint)
+            if not sub:
+                return
+
+            data = bytes(acct.data)
+            if len(data) < 72:
+                logger.warning(f'[GEYSER] Vault data too short: {len(data)}b for {sub.symbol}')
+                return
+
+            raw_amount = struct.unpack('<Q', data[64:72])[0]
+
+            if pubkey_str == sub.base_vault:
+                sub.base_reserve = raw_amount / (10 ** sub.decimals)
+            elif pubkey_str == sub.quote_vault:
+                sub.quote_reserve = raw_amount / (10 ** 9)
+            else:
+                return
+
+            sub.last_update = time.time()
+
+            if sub.base_reserve > 0 and sub.quote_reserve > 0:
+                old_price = sub.price
+                sub.price = sub.quote_reserve / sub.base_reserve
+                self._vault_prices[mint] = (sub.price, time.time())
+
+                if old_price <= 0:
+                    logger.warning(
+                        f'[GEYSER] Vault FIRST price: {sub.symbol} '
+                        f'{sub.price:.10f} SOL '
+                        f'(base={sub.base_reserve:.2f}, quote={sub.quote_reserve:.6f})'
+                    )
+                elif abs(sub.price - old_price) / max(old_price, 1e-15) > 0.05:
+                    logger.info(
+                        f'[GEYSER] Vault price move: {sub.symbol} '
+                        f'{sub.price:.10f} SOL ({((sub.price - old_price) / old_price * 100):+.1f}%)'
+                    )
+
+        except Exception as e:
+            logger.error(f'[GEYSER] Vault account update error: {e}')
+
+
     def get_stats(self) -> dict:
         stats = {**self._stats, "latency_ms": self._last_latency_ms}
         if self._last_pong_time > 0:
             stats["last_pong_ago_s"] = round(
                 time.monotonic() - self._last_pong_time, 1
             )
+        stats["curve_subscriptions"] = len(self._curve_subscriptions)
+        stats["curve_accounts"] = len(self._curve_address_map)
         if self.local_parser:
             stats["local_parser"] = self.local_parser.get_stats()
         return stats

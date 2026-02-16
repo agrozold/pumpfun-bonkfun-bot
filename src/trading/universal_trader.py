@@ -103,6 +103,8 @@ logger = get_logger(__name__)
 
 # === ТОКЕНЫ БЕЗ STOP-LOSS (даже emergency) ===
 NO_SL_MINTS = {
+    "DprzJaFkjaNkGXGUCuNWcfEJmxw3dmCzjweoqknhpump",
+    "GSeuzQrtQaDAjb1NKQ69Uw2GwuZUsAWhDj6AP6Rapump",
     "FDBnaGYQeGjkLVs2E53yg5ErKnUd2xSjL5SQMLgGy4wP",
     "4aiLCRmCkVeVGZBTCFXYCGtW4MFsq4dWhGSyNnoGTrrv",
     "8MdkXe5G77xaMheVQxLqAYV8e2m2Dfc5ZbuXup2epump",
@@ -1189,6 +1191,13 @@ class UniversalTrader:
                     whale_label=whale_buy.whale_label,
                 )
 
+                # Fatal errors — не ретраить, токен невалидный
+                if not success and dex_used and isinstance(dex_used, str):
+                    _err_upper = dex_used.upper()
+                    if "NOT_TRADABLE" in _err_upper or "NOT TRADABLE" in _err_upper:
+                        logger.warning(f"[WHALE] ⛔ TOKEN NOT TRADABLE: {mint_str[:12]}... — abort")
+                        break
+
                 if success:
                     break
 
@@ -1557,6 +1566,7 @@ class UniversalTrader:
                                     "whale_wallet": whale_wallet,
                                     "whale_label": whale_label,
                                     "dca_enabled": self.dca_enabled,
+                                    "bonding_curve": str(bonding_curve),
                                 },
                             )
                             return True, buy_result.tx_signature, "pump_fun", buy_result.amount or 0, buy_result.price or 0
@@ -1703,6 +1713,8 @@ class UniversalTrader:
                                     "tsl_sell_pct": self.tsl_sell_pct,
                                     "tp_sell_pct": self.tp_sell_pct,
                                     "max_hold_time": self.max_hold_time,
+                                    "whale_wallet": whale_wallet,
+                                    "whale_label": whale_label,
                                     "dca_enabled": self.dca_enabled,
                                 },
                             )
@@ -1730,6 +1742,12 @@ class UniversalTrader:
         try:
             fallback = self._fallback_buyer  # Use BUY slippage (30%), not sell (20%)
             # Jupiter returns 5 values: success, sig, error, token_amount, price
+            # Derive bonding_curve PDA for curve tracking (pump.fun tokens)
+            from platforms.pumpfun.address_provider import PumpFunAddresses
+            _bc_for_ctx, _ = Pubkey.find_program_address(
+                [b"bonding-curve", bytes(mint)],
+                PumpFunAddresses.PROGRAM,
+            )
             # Position config for callback
             position_config = {
                 "take_profit_pct": self.take_profit_percentage,
@@ -1738,9 +1756,14 @@ class UniversalTrader:
                 "tsl_activation_pct": self.tsl_activation_pct,
                 "tsl_trail_pct": self.tsl_trail_pct,
                 "tsl_sell_pct": self.tsl_sell_pct,
-                                    "tp_sell_pct": self.tp_sell_pct,
+                "tp_sell_pct": self.tp_sell_pct,
                 "max_hold_time": self.max_hold_time,
                 "bot_name": "universal_trader",
+                # Whale info
+                "whale_wallet": whale_wallet,
+                "whale_label": whale_label,
+                # Bonding curve for gRPC price tracking
+                "bonding_curve": str(_bc_for_ctx),
                 # DCA parameters
                 "dca_enabled": self.dca_enabled,
                 "dca_pending": self.dca_enabled,  # If DCA enabled, wait for dip
@@ -2531,9 +2554,11 @@ class UniversalTrader:
 
             # Phase 4: Start PriceStream for real-time price monitoring
             price_stream_task = None
-            if self._price_stream:
-                price_stream_task = asyncio.create_task(self._price_stream.start())
-                logger.warning("[PRICE_STREAM] Background task STARTED")
+            # Phase 4b: PriceStream disabled - vault tracking moved to whale_geyser
+            # if self._price_stream:
+            #     price_stream_task = asyncio.create_task(self._price_stream.start())
+            #     logger.warning("[PRICE_STREAM] Background task STARTED")
+            logger.info("[PRICE_STREAM] Disabled - using whale_geyser vault tracking instead")
             if not self.whale_tracker and not self.whale_tracker_secondary:
                 if self.enable_whale_copy:
                     logger.error("[WHALE] Whale copy enabled but no tracker initialized!")
@@ -3402,10 +3427,10 @@ class UniversalTrader:
                 mint_str = str(token_info.mint)
                 price_source = "batch_cache"
                 
-                # Phase 4: Try gRPC price stream first (real-time, ~300ms latency)
+                # Phase 4b: Try vault price from whale_geyser first (real-time, ~300ms latency)
                 current_price = None
-                if self._price_stream:
-                    grpc_price = self._price_stream.get_price(mint_str)
+                if self.whale_tracker and hasattr(self.whale_tracker, 'get_vault_price'):
+                    grpc_price = self.whale_tracker.get_vault_price(mint_str)
                     if grpc_price and grpc_price > 0:
                         current_price = grpc_price
                         price_source = "grpc_stream"
@@ -4454,15 +4479,22 @@ class UniversalTrader:
         save_positions(self.active_positions)
         # Add to batch price monitoring
         watch_token(str(position.mint))
-        # Phase 4: Subscribe to gRPC price stream if vault data available
-        if self._price_stream and position.pool_base_vault and position.pool_quote_vault:
-            self._price_stream.subscribe_position(
+        # Phase 4b/4c: Subscribe to price tracking via whale_geyser (shared gRPC stream)
+        if self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_vault_accounts') and position.pool_base_vault and position.pool_quote_vault:
+            asyncio.create_task(self.whale_tracker.subscribe_vault_accounts(
                 mint=str(position.mint),
                 base_vault=position.pool_base_vault,
                 quote_vault=position.pool_quote_vault,
                 symbol=position.symbol,
-                token_decimals=6,
-            )
+                decimals=6,
+            ))
+        elif self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_bonding_curve') and position.bonding_curve and not position.pool_base_vault:
+            asyncio.create_task(self.whale_tracker.subscribe_bonding_curve(
+                mint=str(position.mint),
+                curve_address=str(position.bonding_curve),
+                symbol=position.symbol,
+                decimals=6,
+            ))
 
     async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None):
         """Background task to verify sell. Smarter logic for partial fills and DCA races."""
@@ -4510,14 +4542,19 @@ class UniversalTrader:
                     logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL {sell_pct*100:.0f}% — sold {actual_sold:.2f}/{expected_sell:.2f}. Remaining {remaining:.2f}")
                     return True
 
-                # Sold < 50% — low liquidity, RETRY remaining
-                logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL {sell_pct*100:.0f}% — sold {actual_sold:.2f}/{expected_sell:.2f}. RETRYING remaining {remaining:.2f}...")
+                # Sold < 50% — low liquidity, RETRY what's still needed
+                still_need_to_sell = expected_sell - actual_sold
+                retry_sell_amount = min(still_need_to_sell, remaining)
+                if retry_sell_amount < 1.0:
+                    logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL {sell_pct*100:.0f}% — remaining sell {retry_sell_amount:.2f} too small, accepting")
+                    return True
+                logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL {sell_pct*100:.0f}% — sold {actual_sold:.2f}/{expected_sell:.2f}. RETRYING {retry_sell_amount:.2f} (keeping {remaining - retry_sell_amount:.2f})...")
 
                 for retry in range(2):
                     try:
                         from solders.pubkey import Pubkey
                         success, sig, error = await self._fallback_seller._sell_via_jupiter(
-                            Pubkey.from_string(mint_str), remaining, symbol
+                            Pubkey.from_string(mint_str), retry_sell_amount, symbol
                         )
                         if success:
                             logger.info(f"[VERIFY] {symbol}: Retry {retry+1} TX sent: {sig}")
@@ -4613,9 +4650,11 @@ class UniversalTrader:
         save_positions(self.active_positions)
         # Remove from batch price monitoring
         unwatch_token(mint)
-        # Phase 4: Unsubscribe from gRPC price stream
-        if self._price_stream:
-            self._price_stream.unsubscribe_position(mint)
+        # Phase 4b/4c: Unsubscribe vault/curve tracking via whale_geyser
+        if self.whale_tracker and hasattr(self.whale_tracker, 'unsubscribe_vault_accounts'):
+            asyncio.create_task(self.whale_tracker.unsubscribe_vault_accounts(mint))
+        if self.whale_tracker and hasattr(self.whale_tracker, 'unsubscribe_bonding_curve'):
+            asyncio.create_task(self.whale_tracker.unsubscribe_bonding_curve(mint))
         # FORGET FOREVER - add to sold_mints so never restored
         asyncio.create_task(self._forget_position_async(mint))
     
@@ -4800,15 +4839,44 @@ class UniversalTrader:
                 continue
             
             logger.info(f"[RESTORE] Starting monitor for {position.symbol} (TP: {position.take_profit_price}, SL: {position.stop_loss_price})")
-            # Phase 4: Subscribe restored position to gRPC price stream
-            if self._price_stream and position.pool_base_vault and position.pool_quote_vault:
-                self._price_stream.subscribe_position(
+            # === Resolve missing vault addresses for existing positions ===
+            if not position.pool_base_vault or not position.pool_quote_vault:
+                try:
+                    from trading.vault_resolver import resolve_vaults
+                    logger.info(f"[RESTORE] Resolving vaults for {position.symbol}...")
+                    vault_result = await resolve_vaults(mint_str)
+                    if vault_result:
+                        position.pool_base_vault = vault_result[0]
+                        position.pool_quote_vault = vault_result[1]
+                        position.pool_address = vault_result[2]
+                        save_positions(self.active_positions)
+                        logger.warning(
+                            f"[RESTORE] ✅ VAULTS RESOLVED for {position.symbol}: "
+                            f"base={vault_result[0][:12]}..., quote={vault_result[1][:12]}..."
+                        )
+                    else:
+                        logger.warning(f"[RESTORE] No pool found for {position.symbol} - Jupiter polling fallback")
+                except Exception as ve:
+                    logger.warning(f"[RESTORE] Vault resolve error for {position.symbol}: {ve}")
+            # === END vault resolve ===
+            # Phase 4b/4c: Subscribe restored position to price tracking via whale_geyser
+            if self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_vault_accounts') and position.pool_base_vault and position.pool_quote_vault:
+                await self.whale_tracker.subscribe_vault_accounts(
                     mint=mint_str,
                     base_vault=position.pool_base_vault,
                     quote_vault=position.pool_quote_vault,
                     symbol=position.symbol,
+                    decimals=6,
                 )
-                logger.info(f"[RESTORE] {position.symbol}: Subscribed to gRPC price stream")
+                logger.info(f"[RESTORE] {position.symbol}: Subscribed to vault tracking via whale_geyser")
+            elif self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_bonding_curve') and position.bonding_curve and not position.pool_base_vault:
+                await self.whale_tracker.subscribe_bonding_curve(
+                    mint=mint_str,
+                    curve_address=str(position.bonding_curve),
+                    symbol=position.symbol,
+                    decimals=6,
+                )
+                logger.info(f"[RESTORE] {position.symbol}: Subscribed to bonding curve tracking via whale_geyser")
             asyncio.create_task(self._monitor_position_until_exit(token_info, position))
 
 

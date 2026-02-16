@@ -192,6 +192,74 @@ async def on_buy_success(tx: "PendingTransaction"):
             logger.error(f"[TX_CALLBACK] Monitor start error: {monitor_err}")
         # Schedule delayed symbol update (for newly indexed tokens)
         asyncio.create_task(_delayed_symbol_update(mint, symbol, delay=30))
+        # === Phase 4: Resolve vault addresses for gRPC price stream ===
+        if not pool_base_vault or not pool_quote_vault:
+            try:
+                from trading.vault_resolver import resolve_vaults
+                logger.info(f"[TX_CALLBACK] Resolving vault addresses for {symbol}...")
+                vault_result = await resolve_vaults(mint)
+                if vault_result:
+                    pool_base_vault, pool_quote_vault, pool_address = vault_result
+                    logger.warning(
+                        f"[TX_CALLBACK] ✅ VAULTS RESOLVED for {symbol}: "
+                        f"base={pool_base_vault[:12]}..., quote={pool_quote_vault[:12]}..."
+                    )
+                    # Update position in memory and on disk
+                    positions = load_positions()
+                    for p in positions:
+                        if str(p.mint) == mint:
+                            p.pool_base_vault = pool_base_vault
+                            p.pool_quote_vault = pool_quote_vault
+                            p.pool_address = pool_address
+                    save_positions(positions)
+                    # Update Redis directly
+                    try:
+                        from trading.position import save_position_redis, Position as _Pos
+                        for p in positions:
+                            if str(p.mint) == mint:
+                                await save_position_redis(p)
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"[TX_CALLBACK] Could not resolve vaults for {symbol} - trying bonding curve tracking")
+            except Exception as vault_err:
+                logger.warning(f"[TX_CALLBACK] Vault resolve error for {symbol}: {vault_err}")
+
+        # === Phase 4c: Subscribe to bonding curve if no vaults found ===
+        if not pool_base_vault and not pool_quote_vault and bonding_curve:
+            try:
+                from trading.trader_registry import get_trader
+                _trader = get_trader()
+                if _trader and _trader.whale_tracker and hasattr(_trader.whale_tracker, 'subscribe_bonding_curve'):
+                    import asyncio as _aio
+                    _aio.create_task(_trader.whale_tracker.subscribe_bonding_curve(
+                        mint=mint,
+                        curve_address=str(bonding_curve),
+                        symbol=symbol,
+                        decimals=6,
+                    ))
+                    logger.warning(f"[TX_CALLBACK] +CURVE_SUBSCRIBE via whale_geyser for {symbol} (curve={str(bonding_curve)[:16]}...)")
+            except Exception as curve_err:
+                logger.warning(f"[TX_CALLBACK] Curve subscribe error: {curve_err}")
+
+        # === Subscribe to gRPC price stream (vault tracking) ===
+        if pool_base_vault and pool_quote_vault:
+            try:
+                from trading.trader_registry import get_trader
+                _trader = get_trader()
+                if _trader and _trader.whale_tracker and hasattr(_trader.whale_tracker, 'subscribe_vault_accounts'):
+                    import asyncio as _aio
+                    _aio.create_task(_trader.whale_tracker.subscribe_vault_accounts(
+                        mint=mint,
+                        base_vault=pool_base_vault,
+                        quote_vault=pool_quote_vault,
+                        symbol=symbol,
+                        decimals=6,
+                    ))
+                    logger.warning(f"[TX_CALLBACK] ✅ VAULT_SUBSCRIBE via whale_geyser for {symbol}")
+            except Exception as stream_err:
+                logger.warning(f"[TX_CALLBACK] Vault subscribe error: {stream_err}")
+        # === END vault resolve ===
         logger.warning(f"[TX_CALLBACK] ✅ BUY COMPLETE: {symbol} - {token_amount:,.2f} @ {price:.10f}")
         
     except Exception as e:
