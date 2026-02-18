@@ -69,6 +69,8 @@ class Position:
     original_entry_price: float = 0.0
     whale_wallet: str | None = None
     whale_label: str | None = None  # Цена первой покупки
+    entry_price_provisional: bool = False
+    entry_price_source: str = "unknown"
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
@@ -121,6 +123,8 @@ class Position:
             "original_entry_price": self.original_entry_price,
             "whale_wallet": self.whale_wallet,
             "whale_label": self.whale_label,
+            "entry_price_provisional": self.entry_price_provisional,
+            "entry_price_source": self.entry_price_source,
             "state": self.state,
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
@@ -162,6 +166,8 @@ class Position:
             original_entry_price=data.get("original_entry_price", 0.0),
             whale_wallet=data.get("whale_wallet"),
             whale_label=data.get("whale_label"),
+            entry_price_provisional=data.get("entry_price_provisional", False),
+            entry_price_source=data.get("entry_price_source", "unknown"),
             platform=data.get("platform", "pump_fun"),
             bonding_curve=data.get("bonding_curve"),
             pool_base_vault=data.get("pool_base_vault"),

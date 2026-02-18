@@ -1301,6 +1301,14 @@ class WhaleGeyserReceiver:
             # Store in shared vault_prices cache so get_vault_price() also returns it
             self._vault_prices[mint] = (sub.price, time.time())
 
+            # First curve price tick: sync entry_price for provisional positions (async, non-blocking)
+            try:
+                if old_price <= 0 and sub.price > 0:
+                    import asyncio as _asyncio
+                    _asyncio.ensure_future(self._sync_entry_price_from_curve(mint, sub.price))
+            except Exception:
+                pass
+
             # === REACTIVE SL/TP — check at every gRPC tick ===
             _trigger = self._sl_tp_triggers.get(mint)
             if _trigger and not _trigger["triggered"]:
@@ -1533,6 +1541,82 @@ class WhaleGeyserReceiver:
     def unregister_sl_tp(self, mint: str):
         """Remove SL/TP trigger for mint."""
         self._sl_tp_triggers.pop(mint, None)
+
+    async def _sync_entry_price_from_curve(self, mint: str, curve_price: float):
+        """One-time correction of entry_price from first curve tick (non-blocking)."""
+        if curve_price <= 0:
+            return
+        try:
+            from trading.trader_registry import get_trader
+            trader = get_trader()
+            if not trader:
+                return
+            pos = None
+            for p in trader.active_positions:
+                if str(p.mint) == mint:
+                    pos = p
+                    break
+            if not pos:
+                return
+
+            # Старые позиции без поля не трогаем
+            if not getattr(pos, "entry_price_provisional", False):
+                return
+
+            old = pos.entry_price or 0.0
+            if old <= 0:
+                pos.entry_price = curve_price
+            else:
+                deviation = abs(curve_price - old) / max(old, 1e-15)
+                # Если в пределах 5% — считаем нормальной, не трогаем
+                if deviation <= 0.05:
+                    pos.entry_price_provisional = False
+                    return
+                pos.entry_price = curve_price
+
+            pos.high_water_mark = pos.entry_price
+
+            # Обновляем TP/SL если заданы
+            if pos.take_profit_price is not None:
+                # trader.take_profit_percentage может быть None
+                try:
+                    tp_pct = getattr(trader, "take_profit_percentage", None)
+                    if tp_pct is not None:
+                        pos.take_profit_price = pos.entry_price * (1 + tp_pct)
+                except Exception:
+                    pass
+            if pos.stop_loss_price is not None:
+                try:
+                    sl_pct = getattr(trader, "stop_loss_percentage", None)
+                    if sl_pct is not None:
+                        pos.stop_loss_price = pos.entry_price * (1 - sl_pct)
+                except Exception:
+                    pass
+
+            pos.entry_price_provisional = False
+
+            # Синхронизируем базу для реактивного SL/TP
+            trig = self._sl_tp_triggers.get(mint)
+            if trig:
+                trig["entry_price"] = pos.entry_price
+
+            try:
+                from trading.position import save_positions
+                save_positions(trader.active_positions)
+            except Exception:
+                pass
+
+            try:
+                sym = getattr(pos, "symbol", mint[:8])
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"[ENTRY_SYNC] {sym}: entry fixed to {pos.entry_price:.10f} from curve"
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger(__name__).error(f"[ENTRY_SYNC] Failed for {mint[:8]}: {e}")
 
     def get_vault_price(self, mint: str, max_age: float = 120.0) -> float | None:
         """Get current vault-derived price. Returns None if no data or stale."""

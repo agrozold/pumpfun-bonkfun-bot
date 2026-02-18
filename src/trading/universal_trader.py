@@ -1382,6 +1382,10 @@ class UniversalTrader:
                     tsl_trail_pct=self.tsl_trail_pct,
                     tsl_sell_pct=self.tsl_sell_pct,
                 )
+                # Mark entry as provisional: will be corrected to first curve/batch price
+                if hasattr(position, "entry_price_provisional"):
+                    position.entry_price_provisional = True
+                    position.entry_price_source = "tx_price"
                 position.tp_sell_pct = self.tp_sell_pct  # from yaml (0.8)
                 position.buy_confirmed = False  # PATCH: race condition guard — wait for TX confirmation
                 position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
