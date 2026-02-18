@@ -704,6 +704,12 @@ class UniversalTrader:
         # CRITICAL BALANCE PROTECTION
         # When balance <= 0.02 SOL, bot stops completely
         self._critical_low_balance: bool = False
+
+        # === BALANCE CACHE (Session 9: eliminates 271ms RPC from critical path) ===
+        self._cached_sol_balance: float = 0.0
+        self._balance_cache_time: float = 0.0
+        self._balance_cache_max_age: float = 60.0  # fallback to RPC if cache older than 60s
+        self._balance_cache_task: asyncio.Task | None = None
     # === DEDUP STORE HELPER METHODS ===
     
     async def _get_dedup_store(self):
@@ -2741,6 +2747,10 @@ class UniversalTrader:
         # Initialize batch price service (ONE request for ALL prices)
         logger.warning("[BATCH] Initializing batch price service...")
         await init_batch_price_service()
+
+        # Session 9: Start balance cache (eliminates 271ms RPC from buy critical path)
+        await self._start_balance_cache()
+
         await self._restore_positions()
 
         try:
@@ -2846,16 +2856,10 @@ class UniversalTrader:
                                 if not _low_bal_logged:
                                     logger.warning("⛔ LOW BALANCE — new buys paused. Monitoring/selling continues. Top up wallet to resume.")
                                     _low_bal_logged = True
-                                # Re-check balance every 60s — auto-resume if topped up
-                                try:
-                                    client = await self.solana_client.get_client()
-                                    bal_resp = await client.get_balance(self.wallet.pubkey)
-                                    bal_sol = bal_resp.value / 1_000_000_000
-                                    if bal_sol >= self.min_sol_balance:
-                                        self._critical_low_balance = False
-                                        _low_bal_logged = False
-                                except Exception:
-                                    pass
+                                # Session 9: balance cache auto-resumes in _refresh_balance_cache()
+                                # Just check if it already recovered
+                                if not self._critical_low_balance:
+                                    _low_bal_logged = False
                             await asyncio.sleep(60)
                 except Exception:
                     logger.exception("Token listening stopped due to error")
@@ -3337,39 +3341,119 @@ class UniversalTrader:
             logger.exception(f"Error handling token {token_info.symbol}")
             return False
 
+    # === SESSION 9: BALANCE CACHE — eliminates 271ms RPC from critical path ===
+
+    async def _start_balance_cache(self):
+        """Initialize balance cache: fetch once + start background loop."""
+        await self._refresh_balance_cache()
+        self._balance_cache_task = asyncio.create_task(self._balance_cache_loop())
+        logger.warning(
+            f"[BAL_CACHE] Started: {self._cached_sol_balance:.4f} SOL, "
+            f"refresh every 30s"
+        )
+
+    async def _balance_cache_loop(self):
+        """Background loop: refresh SOL balance every 30 seconds."""
+        while True:
+            try:
+                await asyncio.sleep(30)
+                await self._refresh_balance_cache()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning(f"[BAL_CACHE] Loop error: {e}")
+                await asyncio.sleep(10)
+
+    async def _refresh_balance_cache(self):
+        """Fetch SOL balance from RPC and update cache.
+        Uses Chainstack (fastest paid RPC) with fallback to default client.
+        """
+        try:
+            import aiohttp
+            chainstack_url = os.getenv("CHAINSTACK_RPC_ENDPOINT")
+            balance_sol = None
+
+            # Try Chainstack first (fastest, ~20ms)
+            if chainstack_url:
+                try:
+                    payload = {
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "getBalance",
+                        "params": [str(self.wallet.pubkey), {"commitment": "confirmed"}]
+                    }
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            chainstack_url, json=payload,
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        ) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                if "result" in data and "value" in data["result"]:
+                                    balance_sol = data["result"]["value"] / 1_000_000_000
+                except Exception as e:
+                    logger.debug(f"[BAL_CACHE] Chainstack failed: {e}")
+
+            # Fallback to default client
+            if balance_sol is None:
+                client = await self.solana_client.get_client()
+                balance_resp = await client.get_balance(self.wallet.pubkey)
+                balance_sol = balance_resp.value / 1_000_000_000
+            self._cached_sol_balance = balance_sol
+            self._balance_cache_time = monotonic()
+            logger.debug(f"[BAL_CACHE] Refreshed: {balance_sol:.4f} SOL")
+
+            # Auto-resume if balance recovered
+            if balance_sol >= self.min_sol_balance and self._critical_low_balance:
+                self._critical_low_balance = False
+                logger.warning(f"[BAL_CACHE] Balance recovered to {balance_sol:.4f} SOL — buys RESUMED")
+        except Exception as e:
+            logger.warning(f"[BAL_CACHE] Refresh failed: {e}")
+
+    async def _update_balance_after_trade(self):
+        """Called after buy/sell to refresh cache immediately (in background)."""
+        try:
+            await self._refresh_balance_cache()
+        except Exception as e:
+            logger.debug(f"[BAL_CACHE] Post-trade refresh failed: {e}")
+
     async def _check_balance_before_buy(self) -> bool:
-        """Check if wallet has enough SOL to buy new tokens.
+        """Check cached SOL balance (0ms instead of 271ms RPC).
 
         Returns:
             True if balance >= min_sol_balance, False otherwise.
 
-        NOTE: When balance < min_sol_balance:
-        - Sets _critical_low_balance = True
-        - STOPS new buys
-        - Monitoring and selling CONTINUE working!
+        NOTE: Uses cached balance from _balance_cache_loop (refreshed every 30s).
+        Falls back to RPC only if cache is older than 60s.
         """
-        try:
-            client = await self.solana_client.get_client()
-            balance_resp = await client.get_balance(self.wallet.pubkey)
-            balance_sol = balance_resp.value / 1_000_000_000  # LAMPORTS_PER_SOL
+        cache_age = monotonic() - self._balance_cache_time
 
-            # BALANCE CHECK: Stop buying if balance < min_sol_balance
-            # Monitoring and selling will continue regardless of balance!
-            if balance_sol < self.min_sol_balance:
-                logger.warning("=" * 70)
-                logger.warning(f"⛔ LOW BALANCE: {balance_sol:.4f} SOL < {self.min_sol_balance} SOL minimum")
-                logger.warning("⛔ STOPPING NEW BUYS - but monitoring/selling continues!")
-                logger.warning("⛔ Top up wallet to resume buying.")
-                logger.warning("=" * 70)
-                self._critical_low_balance = True
-                return False
+        # If cache is fresh enough, use it (0ms!)
+        if cache_age < self._balance_cache_max_age and self._balance_cache_time > 0:
+            balance_sol = self._cached_sol_balance
+        else:
+            # Cache too old or never set — do RPC (rare, only on startup race)
+            try:
+                client = await self.solana_client.get_client()
+                balance_resp = await client.get_balance(self.wallet.pubkey)
+                balance_sol = balance_resp.value / 1_000_000_000
+                self._cached_sol_balance = balance_sol
+                self._balance_cache_time = monotonic()
+                logger.info(f"[BAL_CACHE] Fallback RPC refresh: {balance_sol:.4f} SOL (cache was {cache_age:.0f}s old)")
+            except Exception as e:
+                logger.warning(f"Failed to check balance: {e} - proceeding anyway")
+                return True
 
-            logger.debug(f"Balance OK: {balance_sol:.4f} SOL")
-            return True
+        if balance_sol < self.min_sol_balance:
+            logger.warning("=" * 70)
+            logger.warning(f"⛔ LOW BALANCE: {balance_sol:.4f} SOL < {self.min_sol_balance} SOL minimum")
+            logger.warning("⛔ STOPPING NEW BUYS - but monitoring/selling continues!")
+            logger.warning("⛔ Top up wallet to resume buying.")
+            logger.warning("=" * 70)
+            self._critical_low_balance = True
+            return False
 
-        except Exception as e:
-            logger.warning(f"Failed to check balance: {e} - proceeding anyway")
-            return True  # Don't block on balance check errors
+        logger.debug(f"Balance OK (cached): {balance_sol:.4f} SOL")
+        return True
 
     async def _handle_successful_buy(
         self, token_info: TokenInfo, buy_result: TradeResult
@@ -3386,6 +3470,8 @@ class UniversalTrader:
             buy_result.tx_signature,
         )
         self.traded_mints.add(token_info.mint)
+        # Session 9: Refresh balance cache after buy (background, non-blocking)
+        asyncio.create_task(self._update_balance_after_trade())
         # Track token program for cleanup
         mint_str = str(token_info.mint)
         if token_info.token_program_id:
@@ -3838,6 +3924,22 @@ class UniversalTrader:
                     _stale_count = 0
                 _prev_price = current_price
                 # === END PATCH 9A ===
+
+                # Session 9: BATCH PRICE GUARD — reject anomalous batch prices
+                # If batch price shows >50% drop, it's likely stale/wrong data — skip this tick
+                if price_source in ("batch_cache", "batch_retry") and position.entry_price > 0:
+                    _batch_pnl = (current_price - position.entry_price) / position.entry_price
+                    if _batch_pnl < -0.50:
+                        _anomaly_count += 1
+                        if _anomaly_count <= 3:
+                            logger.warning(
+                                f"[PRICE GUARD] {token_info.symbol}: batch price {current_price:.10f} "
+                                f"looks anomalous ({_batch_pnl*100:+.1f}% vs entry), skipping tick #{_anomaly_count}"
+                            )
+                        await asyncio.sleep(self.price_check_interval)
+                        continue
+                    else:
+                        _anomaly_count = 0
 
                 # Calculate current PnL FIRST (needed for all checks)
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
@@ -4746,6 +4848,8 @@ class UniversalTrader:
             _elapsed = (_time.monotonic() - _t0) * 1000
             if success:
                 logger.warning(f"[FAST SELL] Jupiter SUCCESS (confirmed): {sig} [{_elapsed:.0f}ms]")
+                # Session 9: Refresh balance cache after sell (background)
+                asyncio.create_task(self._update_balance_after_trade())
                 original_qty = getattr(position, "quantity", sell_quantity)
                 _exit_reason_str = exit_reason.value if isinstance(exit_reason, ExitReason) else (str(exit_reason) if exit_reason else "")
                 asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity, exit_reason=_exit_reason_str))
