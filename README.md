@@ -1,21 +1,29 @@
 # Whale Copy Trading Bot for Solana
 
 Автоматический бот для копирования сделок крупных трейдеров (китов) на Solana.
-Полный pipeline от обнаружения TX кита до отправки нашей покупки — **~0.5 секунды**.
+Полный pipeline от обнаружения TX кита до отправки нашей покупки — **~155ms**.
 
 ---
 
 ## Возможности
 
-- **Whale Copy Trading** — отслеживание 16+ кошельков китов через два канала одновременно (gRPC + Helius Webhook) с дедупликацией сигналов
+- **Whale Copy Trading** — отслеживание нескольких кошельков китов через три канала (Dual gRPC + Helius Webhook) с дедупликацией сигналов
+- **Dual gRPC Yellowstone** — два параллельных gRPC канала, первый сигнал выигрывает
 - **Ultra-low latency** — локальный парсинг TX из protobuf за ~2ms (вместо ~650ms через Helius API)
+- **Async pipeline** — DexScreener и deployer check вынесены в фон, не блокируют покупку
 - **Параллельная отправка TX** — Jito + RPC одновременно, первый успешный ответ побеждает
-- **Параллельный scoring + quote** — оценка токена и запрос Jupiter Quote запускаются одновременно
-- **Real-time цены** — gRPC подписки на vault-аккаунты пулов для мгновенного SL/TP
-- **Stop Loss / TSL / Take Profit** — автоматическое управление позициями
-- **DCA** — усреднение при просадке или росте, максимум 2 покупки
+- **Real-time цены** — gRPC подписки на bonding curve accounts для мгновенного SL/TP (<5ms)
+- **Dynamic Stop Loss** — адаптивный SL в зависимости от возраста позиции (защита от импакт-дипа)
+- **Trailing Stop Loss** — активируется при заданном профите, трейлит от максимума
+- **Take Profit** — частичная продажа при TP, остаток на TSL
+- **HARD SL / EMERGENCY SL** — аварийные стоп-лоссы
+- **INSTANT позиции** — позиция создаётся ДО подтверждения TX (с guard-барьерами)
+- **Reactive SL/TP** — gRPC price stream тригерит продажу за <5ms (не ждёт polling interval)
+- **Balance RPC chain** — несколько RPC провайдеров с fallback
+- **Deployer blacklist** — автоматическая блокировка токенов от scam-deployers
+- **DCA** — усреднение при просадке или росте
 - **Dual-channel watchdog** — мониторинг здоровья gRPC и Webhook каналов
-- **Token scoring** — фильтрация мусорных токенов по объёму, давлению покупок, моментуму, ликвидности
+- **Token scoring** — фильтрация токенов по объёму, давлению покупок, моментуму, ликвидности
 - **Поддержка DEX** — Pump.fun, PumpSwap, Jupiter, Raydium, Orca, Meteora
 - **Dust cleanup** — автоочистка мусорных токенов с возвратом ренты
 
@@ -26,226 +34,203 @@
 | Этап | До оптимизации | После оптимизации |
 |------|---------------|-------------------|
 | Парсинг TX | ~650ms (Helius API) | **~2ms** (локальный protobuf) |
+| DexScreener symbol | ~200ms (blocking) | **0ms** (async background) |
+| Deployer check | ~265ms (blocking RPC) | **0ms** (async background) |
 | Scoring + Quote | ~200ms (sequential) | **~170ms** (parallel) |
 | Отправка TX | ~500ms (Jito only) | **~350ms** (Jito + RPC parallel) |
-| **Полный pipeline** | **~2850ms** | **~528ms** |
+| **Полный pipeline** | **~2850ms** | **~155ms** |
 | Стабильность gRPC | RST каждые 20-40мин | **0 disconnects** |
-| SL/TP реакция | 1-3 сек (polling) | **~300-500ms** (gRPC stream) |
-| Каналы приёма | 1 | **2** (gRPC + Webhook) |
+| SL/TP реакция | 1-3 сек (polling) | **<5ms** (gRPC stream) |
+| Каналы приёма | 1 | **3** (Dual gRPC + Webhook) |
 
 ---
 
 ## Как работает pipeline
 
-1. **Кит покупает токен** — TX попадает в Solana (~700ms на распространение)
-2. **gRPC ловит TX** — локальный парсер декодирует swap за ~2ms (Phase 1)
-3. **Webhook ловит тот же TX** — ~9 сек позже, SignalDedup отсекает дубликат (Phase 2)
-4. **Параллельно запускаются** scoring (DexScreener ~100ms) + Jupiter Quote (~100ms) = ~170ms (Phase 3.3)
-5. **TX отправляется** через Jito + RPC одновременно = ~350ms (Phase 3.1)
-6. **Итого: ~528ms** от сигнала до отправки нашей TX
+1. **Кит покупает токен** — TX попадает в Solana
+2. **Dual gRPC ловит TX** — оба канала параллельно, первый выигрывает (~1-2ms latency)
+3. **Локальный парсер** — декодирует swap из protobuf за ~2ms
+4. **INSTANT покупка** — Jupiter swap TX отправляется через Jito (~150ms)
+5. **Фоновые задачи** — DexScreener symbol, deployer check, TX confirmation — параллельно
+6. **Позиция активна** — gRPC price stream мониторит SL/TP/TSL в реальном времени
+7. **Webhook** — дублирующий канал, ловит тот же TX через ~6с (SignalDedup отсекает)
 
 ---
 
-## Необходимые API ключи
+## Три канала приёма сигналов
 
-Все бесплатные тарифы достаточны для работы бота.
+| Канал | Тип | Latency | Роль |
+|-------|-----|---------|------|
+| gRPC Yellowstone #1 | gRPC stream | ~1-2ms | PRIMARY |
+| gRPC Yellowstone #2 | gRPC stream | ~1-2ms | SECONDARY |
+| Helius Webhook | HTTP POST | ~6-9s | BACKUP |
 
-### 1. Solana RPC (обязательно хотя бы один)
+Оба gRPC канала работают параллельно. Signal dedup через shared set — первый канал выигрывает. Webhook — страховка на случай gRPC disconnects.
 
-Нужен для отправки транзакций, проверки балансов, получения данных аккаунтов.
+---
 
-| Провайдер | Переменная в .env | Бесплатный план | Где взять |
-|-----------|------------------|-----------------|-----------|
-| **Chainstack** | `CHAINSTACK_RPC_ENDPOINT` | 3M запросов/мес | https://chainstack.com |
-| **Alchemy** | `ALCHEMY_RPC_ENDPOINT` | 300M CU/мес | https://alchemy.com |
-| **dRPC** | `DRPC_RPC_ENDPOINT` | Бесплатно | https://drpc.org |
+## Управление позициями
 
-Достаточно одного, но лучше два-три для fallback. Бот автоматически переключается при ошибках.
+### Dynamic Stop Loss (защита от импакт-дипа)
 
-### 2. Helius (обязательно)
+При копировании крупной покупки кита цена часто проседает на 15-30% в первые секунды (price impact). Обычный SL тут же продаёт в убыток, хотя цена восстановится. Dynamic SL адаптирует пороги в зависимости от возраста позиции.
 
-Для webhook подписки на транзакции китов + fallback парсинг TX.
+### Reactive SL/TP
 
-| Переменная | Назначение |
-|-----------|-----------|
-| `HELIUS_API_KEY` | Webhook подписка на кошельки китов |
-| `GEYSER_PARSE_API_KEY` | Fallback парсинг TX (если локальный парсер не справился) |
+gRPC подписка на bonding curve account даёт обновления цены в реальном времени (<5ms). При достижении SL/TP/TSL порога — мгновенная продажа без ожидания polling interval.
 
-**Бесплатно:** 1M кредитов/мес (бот расходует ~10-50K/мес)
+### INSTANT позиции
 
-**Где взять:** https://helius.dev
+Позиция создаётся СРАЗУ после отправки BUY TX (до подтверждения). Guard-барьеры (buy_confirmed, tokens_arrived) защищают от продажи до получения токенов.
 
-Можно использовать один ключ для обоих переменных.
+---
 
-### 3. gRPC Yellowstone (обязательно)
+## API ключи
 
-Для ultra-fast отслеживания транзакций китов + real-time цены.
+Бот использует несколько внешних сервисов. Все ключи хранятся в `.env`.
 
-| Переменная | Назначение |
-|-----------|-----------|
-| `GEYSER_ENDPOINT` | gRPC сервер (по умолчанию PublicNode) |
-| `GEYSER_API_KEY` | Токен авторизации |
+### 1. Solana RPC (несколько провайдеров)
 
-**Бесплатно:** Без лимитов
+Используются для проверки баланса, подтверждения TX и fallback. Несколько провайдеров с автоматическим переключением.
 
-**Где взять:** https://www.publicnode.com — Products — Solana — gRPC (Yellowstone)
+| Переменная | Описание |
+|-----------|----------|
+| `CHAINSTACK_RPC_ENDPOINT` | Основной RPC |
+| `DRPC_RPC_ENDPOINT` | Fallback RPC |
+| `ALCHEMY_RPC_ENDPOINT` | Fallback RPC |
+| `SOLANA_PUBLIC_RPC_ENDPOINT` | Бесплатный fallback |
 
-#### Как получить gRPC токен (бесплатно)
+### 2. Helius
 
-1. Зайти на [solana.publicnode.com](https://solana.publicnode.com/?yellowstone) → вкладка **Yellowstone GRPC** → кнопка **"Get token →"**
-2. Перекинет на [allnodes.com/portfolio](https://www.allnodes.com/portfolio) — зарегистрироваться (бесплатно) → нажать **GET TOKEN** (можно до 5 штук)
-3. Скопировать токен, вставить в `.env`:
+Webhook приём + fallback парсинг TX.
 
-GEYSER_ENDPOINT=solana-yellowstone-grpc.publicnode.com:443 GEYSER_API_KEY=ваш_токен_с_allnodes
+| Переменная | Описание |
+|-----------|----------|
+| `HELIUS_API_KEY` | Webhook + Enhanced TX API |
 
+Сайт: https://helius.dev
 
-> Токен даёт swQoS (Staked Weighted Quality of Service) — приоритетный и стабильный доступ к gRPC.
+### 3. gRPC Yellowstone (Dual)
 
+Ultra-fast приём TX + real-time цены.
 
-### 4. Jupiter (обязательно)
+| Переменная | Описание |
+|-----------|----------|
+| `GEYSER_ENDPOINT` | gRPC endpoint #1 |
+| `GEYSER_API_KEY` | Auth token #1 |
+| `CHAINSTACK_GEYSER_ENDPOINT` | gRPC endpoint #2 |
+| `CHAINSTACK_GEYSER_TOKEN` | Auth token #2 |
 
-Для свопов (покупка/продажа токенов) и мониторинга цен.
+Бесплатный gRPC: https://www.publicnode.com — Products > Solana > gRPC (Yellowstone)
 
-| Переменная | Назначение |
-|-----------|-----------|
-| `JUPITER_API_KEY` | Мониторинг цен (Price API) |
-| `JUPITER_TRADE_API_KEY` | Свопы (Quote + Swap API) |
+### 4. Jupiter
 
-**Бесплатно:** 60 запросов/мин на каждый bucket
+Покупка/продажа токенов.
 
-**Где взять:** https://station.jup.ag/docs
+| Переменная | Описание |
+|-----------|----------|
+| `JUPITER_API_KEY` | Price API |
+| `JUPITER_TRADE_API_KEY` | Quote + Swap API |
 
-### 5. Jito (рекомендуется)
+Документация: https://station.jup.ag/docs
 
-Для приоритетной отправки TX через Jito block engine.
+### 5. Jito
 
-| Переменная | Значение по умолчанию |
-|-----------|----------------------|
-| `JITO_ENABLED` | `true` |
-| `JITO_TIP_LAMPORTS` | `500000` (0.0005 SOL) |
-| `JITO_BLOCK_ENGINE_URL` | `https://frankfurt.mainnet.block-engine.jito.wtf` |
+Отправка TX через Jito block engine.
 
-**Не требует API ключа.** Tip оплачивается из баланса кошелька.
+| Переменная | Описание |
+|-----------|----------|
+| `JITO_ENABLED` | true / false |
+| `JITO_TIP_LAMPORTS` | Tip в lamports |
+| `JITO_BLOCK_ENGINE_URL` | URL block engine |
 
-Регионы: `frankfurt` (Европа), `ny` (US East), `tokyo` (Азия). Выберите ближайший к VPS.
+Доступные регионы: frankfurt (EU), ny (US East), tokyo (Asia). Выбирать ближайший к VPS.
 
 ---
 
 ## Установка
 
-### 1. Подготовка сервера (Ubuntu 20.04+)
+### 1. Зависимости (Ubuntu 20.04+)
 
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install python3.10 python3.10-venv python3-pip redis-server git -y
-sudo systemctl enable redis-server && sudo systemctl start redis-server
-```
+    sudo apt update && sudo apt upgrade -y
+    sudo apt install python3.10 python3.10-venv python3-pip redis-server git -y
+    sudo systemctl enable redis-server && sudo systemctl start redis-server
 
 ### 2. Клонирование
 
-```bash
-cd /opt
-git clone https://github.com/agrozold/pumpfun-bonkfun-bot.git
-cd pumpfun-bonkfun-bot
-```
+    cd /opt
+    git clone https://github.com/agrozold/pumpfun-bonkfun-bot.git
+    cd pumpfun-bonkfun-bot
 
 ### 3. Виртуальное окружение
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
 
-### 4. Настройка .env
+### 4. Конфигурация
 
-```bash
-cp .env.example .env
-nano .env
-```
+    cp .env.example .env
+    nano .env                    # API ключи
 
-Заполните все API ключи (см. раздел "Необходимые API ключи" выше).
+    cp bots/bot-whale-copy.example.yaml bots/bot-whale-copy.yaml
+    nano bots/bot-whale-copy.yaml  # Настройки торговли
 
-### 5. Конфиг бота
+    cp smart_money_wallets.example.json smart_money_wallets.json
+    nano smart_money_wallets.json  # Кошельки китов
 
-```bash
-cp bots/bot-whale-copy.example.yaml bots/bot-whale-copy.yaml
-nano bots/bot-whale-copy.yaml
-```
+Формат smart_money_wallets.json:
 
-### 6. База китов
+    {
+      "whales": [
+        { "wallet": "АДРЕС_КОШЕЛЬКА_1", "label": "whale-1" },
+        { "wallet": "АДРЕС_КОШЕЛЬКА_2", "label": "smart-money-2" }
+      ]
+    }
 
-```bash
-cp smart_money_wallets.example.json smart_money_wallets.json
-nano smart_money_wallets.json
-```
+### 5. Systemd сервис
 
-Формат:
-
-```json
-{
-  "whales": [
-    { "wallet": "АДРЕС_КОШЕЛЬКА_1", "label": "whale-1" },
-    { "wallet": "АДРЕС_КОШЕЛЬКА_2", "label": "smart-money-2" }
-  ]
-}
-```
-
-### 7. Systemd сервис
-
-```bash
-sudo nano /etc/systemd/system/whale-bot.service
-```
+    sudo nano /etc/systemd/system/whale-bot.service
 
 Содержимое:
 
-```ini
-[Unit]
-Description=Whale Copy Trading Bot
-After=network.target redis.service
-Wants=redis.service
+    [Unit]
+    Description=Whale Copy Trading Bot
+    After=network.target redis.service
+    Wants=redis.service
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/pumpfun-bonkfun-bot
-Environment=PATH=/opt/pumpfun-bonkfun-bot/venv/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=/opt/pumpfun-bonkfun-bot/.env
-ExecStartPre=/bin/bash -c 'rm -f /tmp/whale-bot.pid'
-ExecStart=/opt/pumpfun-bonkfun-bot/venv/bin/python3 src/bot_runner.py bots/bot-whale-copy.yaml
-ExecStopPost=/bin/bash -c 'rm -f /tmp/whale-bot.pid'
-Restart=on-failure
-RestartSec=10
-KillMode=control-group
-KillSignal=SIGTERM
-TimeoutStopSec=15
-StandardOutput=append:/opt/pumpfun-bonkfun-bot/logs/bot-whale-copy.log
-StandardError=append:/opt/pumpfun-bonkfun-bot/logs/bot-whale-copy.log
+    [Service]
+    Type=simple
+    User=root
+    WorkingDirectory=/opt/pumpfun-bonkfun-bot
+    Environment=PATH=/opt/pumpfun-bonkfun-bot/venv/bin:/usr/local/bin:/usr/bin:/bin
+    EnvironmentFile=/opt/pumpfun-bonkfun-bot/.env
+    ExecStart=/opt/pumpfun-bonkfun-bot/venv/bin/python3 src/bot_runner.py bots/bot-whale-copy.yaml
+    Restart=on-failure
+    RestartSec=10
+    KillMode=control-group
+    KillSignal=SIGTERM
+    TimeoutStopSec=15
+    StandardOutput=append:/opt/pumpfun-bonkfun-bot/logs/bot-whale-copy.log
+    StandardError=append:/opt/pumpfun-bonkfun-bot/logs/bot-whale-copy.log
 
-[Install]
-WantedBy=multi-user.target
-```
+    [Install]
+    WantedBy=multi-user.target
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable whale-bot
-sudo systemctl start whale-bot
-```
+Запуск:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable whale-bot
+    sudo systemctl start whale-bot
 
 ---
 
-## CLI-команды (aliases)
+## CLI-алиасы
 
-Бот включает файл `aliases.sh` с удобными короткими командами для терминала.
+Файл `aliases.sh` содержит удобные команды. Подключение:
 
-### Установка алиасов
-
-```bash
-echo 'source /opt/pumpfun-bonkfun-bot/aliases.sh' >> ~/.bashrc
-source ~/.bashrc
-```
-
-После этого все команды ниже доступны из любой директории.
+    echo 'source /opt/pumpfun-bonkfun-bot/aliases.sh' >> ~/.bashrc
+    source ~/.bashrc
 
 ### Управление ботом
 
@@ -253,146 +238,85 @@ source ~/.bashrc
 |---------|----------|
 | `bot-start` | Запуск бота |
 | `bot-stop` | Остановка бота |
-| `bot-restart` | Перезапуск (убивает старый процесс, без дублей) |
-| `bot-status` | Статус systemd сервиса |
-| `bot-health` | Проверка webhook сервера |
-| `bot-mode` | Показать текущий режим (gRPC+Webhook или Webhook-only) |
-| `bot-webhook` | Переключить на Webhook-only |
-| `bot-geyser` | Переключить на gRPC+Webhook |
+| `bot-restart` | Перезапуск |
+| `bot-status` | Статус сервиса |
+| `bot-health` | Проверка webhook |
 
-### Команды
-
-### Управление ботом
+### Мониторинг
 
 | Команда | Описание |
 |---------|----------|
-| `bot-start` | Запуск бота |
-| `bot-stop` | Остановка бота |
-| `bot-restart` | Перезапуск (убивает старый процесс, запускает новый, без дублей) |
-| `bot-status` | Статус systemd сервиса |
-| `bot-health` | Проверка webhook сервера |
+| `bot-logs` | Live логи (Ctrl+C для выхода) |
+| `bot-trades` | Последние сделки |
+| `bot-whales` | Активность китов |
+| `bot-errors` | Ошибки |
 
-### Логи
-
-| Команда | Описание |
-|---------|----------|
-| `bot-logs` | Live логи (Ctrl+C выход) |
-| `bot-trades` | Последние покупки/продажи |
-| `bot-whales` | Сигналы китов |
-| `bot-errors` | Последние ошибки |
-| `bot-watchdog` | Статус watchdog (здоровье каналов) |
-
-### Торговля
+### Ручная торговля
 
 | Команда | Описание |
 |---------|----------|
-| `buy TOKEN SOL_AMOUNT` | Ручная покупка токена |
-| `sell TOKEN PERCENT` | Продажа по проценту |
-| `sell10 TOKEN` ... `sell100 TOKEN` | Быстрая продажа (10%-100%) |
+| `buy TOKEN SOL_AMOUNT` | Купить токен |
+| `sell TOKEN PERCENT` | Продать % токена |
+| `sell10 TOKEN` ... `sell100 TOKEN` | Быстрые продажи (10%-100%) |
 
 ### Утилиты
 
 | Команда | Описание |
 |---------|----------|
-| `dust` | Сжечь мусорные токены < $0.40 (возврат ренты ~0.002 SOL каждый) |
-| `dust-dry` | Показать что удалится (без удаления) |
-| `no-sl list` | Показать токены без стоп-лосса |
-| `no-sl add MINT` | Добавить токен в исключения SL |
-| `wsync` | Синхронизация кошелька с ботом |
+| `dust` | Очистка мелких токенов |
+| `dust-dry` | Предпросмотр очистки |
+| `no-sl list` | Список токенов без SL |
+| `no-sl add MINT` | Отключить SL для токена |
+| `wsync` | Синхронизация кошелька |
 
 ---
 
-## Оптимизации (технические детали)
+## Архитектура
 
-Все оптимизации реализованы и работают в production. Каждая фаза описана с коммитом для отката.
-
-### Phase 1: Локальный парсер TX (коммит `d3167bd`)
-
-**Файл:** `src/monitoring/local_tx_parser.py` (578 строк)
-
-Полный локальный парсер свопов из gRPC protobuf данных. Два метода парсинга: Pump.fun discriminator (первые 8 байт instruction data) и Universal balance diff (для любого DEX). Распознаёт 11 DEX по program ID. Blacklist из 54 токенов (стейблкоины, LST, wrapped активы). Экономия: ~649ms на каждой транзакции.
-
-### Phase 5.1: Bidirectional gRPC Keepalive (коммит `d3167bd`)
-
-Клиент отправляет ping каждые 10 секунд, сервер отвечает pong. RST_STREAM обрабатывается fast reconnect (0.5s). Результат: 0 disconnects вместо разрыва каждые 20-40 минут.
-
-### Phase 3.1: Параллельная отправка Jito + RPC (коммит `fdcf2c5`)
-
-Обе отправки запускаются через `asyncio.create_task`, первый успех побеждает. Одна signature — Solana гарантирует идемпотентность. Экономия: ~200-400ms.
-
-### Phase 2: Параллельный gRPC + Webhook с дедупликацией (коммит `9f0081f`)
-
-**Файл:** `src/monitoring/signal_dedup.py` (63 строки)
-
-Оба канала работают одновременно. Первый поймавший TX побеждает, второй отсекается. Три уровня защиты от дублей: SignalDedup (по signature), buying/bought tokens (по mint), Redis dedup (межпроцессный).
-
-### Phase 5.3: Dual-Channel Watchdog (коммит `51639ca`)
-
-**Файл:** `src/monitoring/watchdog.py` (~115 строк)
-
-Мониторинг здоровья gRPC и Webhook каналов. Если оба молчат > 5 минут — ERROR. Если один молчит — WARNING.
-
-### Phase 4: Real-time Price Stream через gRPC (коммит `f65c2fc`)
-
-**Файл:** `src/monitoring/price_stream.py` (525 строк)
-
-Второе gRPC соединение для подписки на vault-аккаунты пулов. При любом свопе в пуле — мгновенное обновление цены. Для PumpSwap позиций — vault data пробрасывается автоматически. Для Jupiter — fallback на Jupiter Price API polling. Экономия: SL/TP реакция ~300-500ms вместо 1-3 секунд.
-
-### Phase 3.3: Pre-fetch Jupiter Quote (коммит `f65c2fc`)
-
-Scoring и Jupiter Quote запускаются параллельно. Если scoring отклонит — quote отменяется. Если пройдёт — quote уже готов. Экономия: ~30-300ms (зависит от нагрузки API).
-
----
-
-## Структура проекта
-
-```
-pumpfun-bonkfun-bot/
-|-- bots/
-|   |-- bot-whale-copy.yaml          # Конфиг бота (ваш, не в git)
-|   |-- bot-whale-copy.example.yaml  # Шаблон конфига
-|-- src/
-|   |-- bot_runner.py                # Главный запуск
-|   |-- monitoring/
-|   |   |-- whale_geyser.py          # gRPC receiver (ловит TX китов)
-|   |   |-- whale_webhook.py         # Webhook receiver (backup канал)
-|   |   |-- local_tx_parser.py       # Локальный парсер свопов из protobuf
-|   |   |-- signal_dedup.py          # Дедупликатор сигналов
-|   |   |-- watchdog.py              # Мониторинг здоровья каналов
-|   |   |-- price_stream.py          # Real-time цены через gRPC
-|   |-- trading/
-|   |   |-- universal_trader.py      # Главная торговая логика
-|   |   |-- position.py              # Позиции (dataclass + persistence)
-|   |   |-- fallback_seller.py       # Buy/Sell через PumpSwap/Jupiter
-|   |   |-- platform_aware.py        # Buy/Sell через bonding curve
-|   |-- core/
-|   |   |-- client.py                # SolanaClient (TX build/send/confirm)
-|   |   |-- tx_verifier.py           # Верификация TX после отправки
-|   |   |-- tx_callbacks.py          # Callbacks после подтверждения TX
-|   |-- utils/
-|       |-- batch_price_service.py   # Jupiter Price API polling
-|-- cleanup_dust.py                  # Очистка мусорных токенов
-|-- buy.py / sell.py                 # Ручная покупка/продажа
-|-- smart_money_wallets.json         # Список китов (ваш, не в git)
-|-- positions.json                   # Текущие позиции (auto)
-|-- .env                             # API ключи (ваш, не в git)
-|-- .env.example                     # Шаблон .env
-```
+    pumpfun-bonkfun-bot/
+    |-- bots/
+    |   |-- bot-whale-copy.yaml          # Конфиг (не в git)
+    |   |-- bot-whale-copy.example.yaml  # Пример конфига
+    |-- src/
+    |   |-- bot_runner.py                # Точка входа
+    |   |-- monitoring/
+    |   |   |-- whale_geyser.py          # Dual gRPC receiver + reactive SL/TP
+    |   |   |-- whale_webhook.py         # Webhook receiver (backup канал)
+    |   |   |-- local_tx_parser.py       # Локальный парсер TX из protobuf
+    |   |   |-- signal_dedup.py          # Дедупликация сигналов
+    |   |   |-- watchdog.py              # Мониторинг каналов
+    |   |-- trading/
+    |   |   |-- universal_trader.py      # Главный торговый модуль
+    |   |   |-- position.py             # Позиция (dataclass + persistence)
+    |   |   |-- fallback_seller.py       # Buy/Sell через Jupiter
+    |   |   |-- deployer_blacklist.py    # Блокировка scam-deployers
+    |   |-- core/
+    |   |   |-- client.py                # SolanaClient (TX build/send/confirm)
+    |   |   |-- tx_verifier.py           # Фоновая проверка TX
+    |   |   |-- tx_callbacks.py          # Callbacks после подтверждения TX
+    |   |-- utils/
+    |       |-- batch_price_service.py   # Jupiter Price API polling
+    |       |-- token_math.py            # Утилиты для работы с балансами
+    |-- blacklisted_deployers.json       # Blacklist scam-deployers
+    |-- smart_money_wallets.json         # Кошельки китов (не в git)
+    |-- positions.json                   # Активные позиции (auto)
+    |-- .env                             # API ключи (не в git)
+    |-- .env.example                     # Пример .env
 
 ---
 
 ## Troubleshooting
 
-**Бот не стартует:** `bot-status` покажет ошибку. Чаще всего — не заполнен `.env` или нет redis.
+**Бот не запускается:** Проверить `bot-status`. Проверить `.env` и наличие redis.
 
-**LOW BALANCE:** Пополните кошелёк. Бот не покупает если баланс < 0.1 SOL.
+**LOW BALANCE:** Пополнить кошелёк. При балансе < min_sol_balance бот не покупает.
 
-**Нет сигналов китов:** `bot-whales` покажет были ли сигналы. `bot-watchdog` покажет живы ли каналы. Если "gRPC silent" — проверьте `GEYSER_API_KEY`. Если "Webhook silent" — это нормально, webhook молчит когда киты не торгуют.
+**Нет сигналов от китов:** Проверить `bot-whales`. Если "gRPC silent" — проверить gRPC токены в `.env`. Если "Webhook silent" — проверить webhook URL в Helius.
 
-**Двойные строки в логах:** Запущено два процесса. Убедитесь что работает только `whale-bot`: `systemctl is-active whale-bot` (active), `systemctl is-active pumpfun-bot` (должен быть inactive).
+**Конфликт сервисов:** Убедиться что запущен только один инстанс бота.
 
 ---
 
 ## Disclaimer
 
-Торговля криптовалютой связана с высоким риском. Начинайте с небольших сумм. Автор не несёт ответственности за финансовые потери.
+Бот предназначен для образовательных целей. Торговля криптовалютами сопряжена с высоким риском. Используйте на свой страх и риск.
