@@ -1249,6 +1249,12 @@ class UniversalTrader:
                     prefetched_quote=prefetched_quote,
                     whale_wallet=whale_buy.whale_wallet,
                     whale_label=whale_buy.whale_label,
+                    virtual_sol_reserves=getattr(whale_buy, "virtual_sol_reserves", 0),
+                    virtual_token_reserves=getattr(whale_buy, "virtual_token_reserves", 0),
+                    whale_token_program=getattr(whale_buy, "whale_token_program", ""),
+                    whale_creator_vault=getattr(whale_buy, "whale_creator_vault", ""),
+                    whale_fee_recipient=getattr(whale_buy, "whale_fee_recipient", ""),
+                    whale_assoc_bonding_curve=getattr(whale_buy, "whale_assoc_bonding_curve", ""),
                 )
 
                 # Fatal errors — не ретраить, токен невалидный
@@ -1652,6 +1658,12 @@ class UniversalTrader:
         whale_wallet: str = None,
         whale_label: str = None,
         prefetched_quote: dict | None = None,
+        virtual_sol_reserves: int = 0,
+        virtual_token_reserves: int = 0,
+        whale_token_program: str = "",
+        whale_creator_vault: str = "",
+        whale_fee_recipient: str = "",
+        whale_assoc_bonding_curve: str = "",
     ) -> tuple[bool, str | None, str, float, float]:
         """Buy token on ANY available DEX - universal liquidity finder.
 
@@ -1954,6 +1966,61 @@ class UniversalTrader:
         # Jupiter handles all PumpSwap pools via aggregation
         # To re-enable: see git history or backup file
         # ============================================
+
+        # ============================================
+        # [2.5/4] TRY PUMP.FUN DIRECT BONDING CURVE BUY
+        # ~72ms vs Jupiter 2500ms for fresh bonding curve tokens
+        # Falls through to Jupiter if BC not found / complete / error
+        # ============================================
+        try:
+            fallback_direct = self._fallback_buyer
+            logger.info(f"[CHECK] [2.5/4] Trying pump.fun DIRECT bonding curve for {symbol}...")
+            
+            from platforms.pumpfun.address_provider import PumpFunAddresses as _PFA
+            _bc_direct, _ = Pubkey.find_program_address(
+                [b"bonding-curve", bytes(mint)], _PFA.PROGRAM,
+            )
+            
+            _direct_pos_config = {
+                "take_profit_pct": self.take_profit_percentage,
+                "stop_loss_pct": self.stop_loss_percentage,
+                "tsl_enabled": self.tsl_enabled,
+                "tsl_activation_pct": self.tsl_activation_pct,
+                "tsl_trail_pct": self.tsl_trail_pct,
+                "tsl_sell_pct": self.tsl_sell_pct,
+                "tp_sell_pct": self.tp_sell_pct,
+                "max_hold_time": self.max_hold_time,
+                "bot_name": "universal_trader",
+                "whale_wallet": whale_wallet,
+                "whale_label": whale_label,
+                "bonding_curve": str(_bc_direct),
+                "dca_enabled": self.dca_enabled,
+                "dca_pending": self.dca_enabled,
+                "dca_trigger_pct": 0.25,
+                "dca_first_buy_pct": 0.50,
+            }
+            
+            d_ok, d_sig, d_err, d_tokens, d_price = await fallback_direct.buy_via_pumpfun_direct(
+                mint=mint,
+                sol_amount=sol_amount,
+                symbol=symbol,
+                position_config=_direct_pos_config,
+                virtual_sol_reserves=virtual_sol_reserves,
+                virtual_token_reserves=virtual_token_reserves,
+                whale_token_program=whale_token_program,
+                whale_creator_vault=whale_creator_vault,
+                whale_fee_recipient=whale_fee_recipient,
+                whale_assoc_bonding_curve=whale_assoc_bonding_curve,
+            )
+            
+            if d_ok:
+                logger.warning(f"[OK] PUMPFUN DIRECT BUY: {symbol} - {d_tokens:,.2f} tokens @ {d_price:.10f} SOL")
+                logger.warning(f"[OK] PUMPFUN DIRECT TX: {d_sig}")
+                return True, d_sig, "pump_fun_direct", d_tokens, d_price
+            else:
+                logger.info(f"[PUMPFUN-DIRECT] Failed: {d_err} — falling through to Jupiter")
+        except Exception as e:
+            logger.info(f"[PUMPFUN-DIRECT] Error: {e} — falling through to Jupiter")
 
         # ============================================
         # [3/4] TRY JUPITER (universal fallback) - NOW [2/4]
@@ -4770,12 +4837,12 @@ class UniversalTrader:
         if not _tokens_ok or not _buy_ok:
             from datetime import datetime as _dt, timezone as _tz
             _pos_age = (_dt.now(_tz.utc) - position.entry_time.replace(tzinfo=_tz.utc)).total_seconds() if position.entry_time else 0
-            if _pos_age < 15.0:
+            if _pos_age < 3.0:  # S12: was 15s, Jito TX lands in <2s
                 _reason = "tokens_arrived=False" if not _tokens_ok else "buy_confirmed=False"
-                logger.warning(f"[FAST SELL] BLOCKED: {token_info.symbol} {_reason}, age={_pos_age:.1f}s < 15s — waiting")
+                logger.warning(f"[FAST SELL] BLOCKED: {token_info.symbol} {_reason}, age={_pos_age:.1f}s < 3s — waiting")
                 return False
             else:
-                logger.warning(f"[FAST SELL] tokens/buy not confirmed but age={_pos_age:.0f}s >= 15s — proceeding (fallback)")
+                logger.warning(f"[FAST SELL] tokens/buy not confirmed but age={_pos_age:.0f}s >= 3s — proceeding (fallback)")
 
         MIN_SELL_TOKENS = 1.0
         MIN_SELL_VALUE_SOL = 0.0001
@@ -4812,9 +4879,9 @@ class UniversalTrader:
                 if _confirmed:
                     # TX confirmed but RPC lags behind — skip RPC, sell with position qty
                     logger.warning(f"[FAST SELL] RPC no account but TX confirmed for {token_info.symbol} age={_pos_age2:.1f}s — selling with position qty {sell_quantity:.2f}")
-                elif _pos_age2 < 15.0:
+                elif _pos_age2 < 3.0:  # S12: was 15s
                     # NOT confirmed and young — wait for TX confirmation
-                    logger.warning(f"[FAST SELL] No token account for {token_info.symbol} age={_pos_age2:.1f}s < 15s, not confirmed — RETRY")
+                    logger.warning(f"[FAST SELL] No token account for {token_info.symbol} age={_pos_age2:.1f}s < 3s, not confirmed — RETRY")
                     return False  # Retry — don't delete position
                 else:
                     # NOT confirmed and old — buy likely failed

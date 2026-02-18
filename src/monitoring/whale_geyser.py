@@ -163,6 +163,12 @@ class WhaleBuy:
     token_symbol: str = ""
     age_seconds: float = 0
     block_time: int | None = None
+    virtual_sol_reserves: int = 0    # from TradeEvent (for ZERO-RPC direct buy)
+    virtual_token_reserves: int = 0  # from TradeEvent (for ZERO-RPC direct buy)
+    whale_token_program: str = ""       # S14: from whale TX for direct buy
+    whale_creator_vault: str = ""       # S14: from whale TX for direct buy
+    whale_fee_recipient: str = ""       # S14: from whale TX for direct buy
+    whale_assoc_bonding_curve: str = "" # S14: from whale TX for direct buy
 
 
 class WhaleGeyserReceiver:
@@ -849,6 +855,12 @@ class WhaleGeyserReceiver:
                 token_symbol=token_symbol,
                 age_seconds=0,
                 block_time=None,
+                virtual_sol_reserves=getattr(parsed, "virtual_sol_reserves", 0),
+                virtual_token_reserves=getattr(parsed, "virtual_token_reserves", 0),
+                whale_token_program=getattr(parsed, "whale_token_program", ""),
+                whale_creator_vault=getattr(parsed, "whale_creator_vault", ""),
+                whale_fee_recipient=getattr(parsed, "whale_fee_recipient", ""),
+                whale_assoc_bonding_curve=getattr(parsed, "whale_assoc_bonding_curve", ""),
             )
 
             self._stats["parse_ok"] += 1
@@ -1104,6 +1116,8 @@ class WhaleGeyserReceiver:
                 token_symbol=token_symbol,
                 age_seconds=0,
                 block_time=block_time,
+                virtual_sol_reserves=0,
+                virtual_token_reserves=0,
             )
 
             logger.warning("=" * 70)
@@ -1461,16 +1475,25 @@ class WhaleGeyserReceiver:
                 sell_qty = position.quantity
                 exit_reason = ExitReason.STOP_LOSS if reason == "stop_loss" else ExitReason.TAKE_PROFIT
                 skip_cleanup = False
-            # PATCH Phase 6: Don't sell until tokens actually arrived on wallet
+            # PATCH Phase 6 + S13: Don't sell until tokens arrived OR age >= 3s
             _tokens_ok = getattr(position, 'tokens_arrived', True)
             _buy_ok = getattr(position, 'buy_confirmed', True)
             if not _tokens_ok or not _buy_ok:
-                _reason = "tokens_arrived=False" if not _tokens_ok else "buy_confirmed=False"
-                logger.warning(f"[REACTIVE] BLOCKED: {symbol} {_reason} — waiting")
-                _trigger = self._sl_tp_triggers.get(mint)
-                if _trigger:
-                    _trigger["triggered"] = False  # Allow retry after confirmation
-                return
+                # S13: Age check — allow sell after 3s even without confirmation
+                from datetime import datetime, timezone
+                _entry = position.entry_time
+                if _entry.tzinfo is None:
+                    _entry = _entry.replace(tzinfo=timezone.utc)
+                _pos_age = (datetime.now(timezone.utc) - _entry).total_seconds()
+                if _pos_age < 3.0:
+                    _reason = "tokens_arrived=False" if not _tokens_ok else "buy_confirmed=False"
+                    logger.warning(f"[REACTIVE] BLOCKED: {symbol} {_reason}, age={_pos_age:.1f}s < 3s — waiting")
+                    _trigger = self._sl_tp_triggers.get(mint)
+                    if _trigger:
+                        _trigger["triggered"] = False  # Allow retry after confirmation
+                    return
+                else:
+                    logger.warning(f"[REACTIVE] tokens/buy not confirmed but age={_pos_age:.0f}s >= 3s — proceeding (fallback)")
             position.is_selling = True
             logger.warning(f"[REACTIVE] Launching FAST SELL for {symbol} ({reason}, PnL: {pnl_pct:.1f}%)")
             success = await trader._fast_sell_with_timeout(

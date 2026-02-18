@@ -332,6 +332,25 @@ async def on_buy_failure(tx: "PendingTransaction"):
                 await forget_position_forever(mint, reason="buy_tx_failed")
             except Exception as re:
                 logger.warning(f"[TX_CALLBACK] Redis cleanup failed: {re}")
+
+            # S13: Cleanup monitors to prevent error spam from dead positions
+            try:
+                from utils.batch_price_service import unwatch_token
+                unwatch_token(mint)
+                logger.info(f"[TX_CALLBACK] Unwatched batch price for {symbol}")
+            except Exception as bpe:
+                logger.debug(f"[TX_CALLBACK] Batch unwatch failed: {bpe}")
+
+            try:
+                from monitoring.whale_geyser import WhaleGeyser
+                # Get geyser instance from trader
+                from trading.trader_registry import get_trader
+                trader = get_trader()
+                if trader and hasattr(trader, '_geyser') and trader._geyser:
+                    await trader._geyser.unsubscribe_bonding_curve(mint)
+                    logger.info(f"[TX_CALLBACK] Unsubscribed curve for {symbol}")
+            except Exception as ge:
+                logger.debug(f"[TX_CALLBACK] Curve unsubscribe failed: {ge}")
         else:
             logger.info(f"[TX_CALLBACK] No phantom position found for {symbol} - nothing to clean")
     except Exception as e:

@@ -116,7 +116,7 @@ class TxVerifier:
             return
         
         if not self._rpc_endpoint:
-            self._rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
+            self._rpc_endpoint = os.getenv("CHAINSTACK_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT")  # S12: Chainstack first
         
         self._running = True
         self._worker_task = asyncio.create_task(self._worker_loop())

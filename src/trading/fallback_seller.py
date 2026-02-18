@@ -248,12 +248,13 @@ class FallbackSeller:
         if self._alt_client is not None:
             return self._alt_client
 
-        # Try fast RPCs in order (NO HELIUS!)
+        # S12: Chainstack PRIMARY (74ms avg), Alchemy fallback (45ms avg)
+        # dRPC has cold-start timeouts — moved to last resort
         rpc_url = (
-            os.getenv("DRPC_RPC_ENDPOINT") or
-            os.getenv("SOLANA_NODE_RPC_ENDPOINT") or
             os.getenv("CHAINSTACK_RPC_ENDPOINT") or
             os.getenv("ALCHEMY_RPC_ENDPOINT") or
+            os.getenv("DRPC_RPC_ENDPOINT") or
+            os.getenv("SOLANA_NODE_RPC_ENDPOINT") or
             "https://api.mainnet-beta.solana.com"
         )
         
@@ -694,6 +695,339 @@ class FallbackSeller:
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
             return False, None, str(e), 0.0, 0.0
+
+    async def buy_via_pumpfun_direct(
+        self,
+        mint: Pubkey,
+        sol_amount: float,
+        symbol: str = "TOKEN",
+        position_config: dict | None = None,
+        virtual_sol_reserves: int = 0,
+        virtual_token_reserves: int = 0,
+        whale_token_program: str = "",
+        whale_creator_vault: str = "",
+        whale_fee_recipient: str = "",
+        whale_assoc_bonding_curve: str = "",
+    ) -> tuple[bool, str | None, str | None, float, float]:
+        """Buy token directly via pump.fun bonding curve program.
+        
+        Bypasses Jupiter — builds TX from on-chain bonding curve state.
+        Only works for tokens still on bonding curve (not migrated).
+        ONE RPC call: getAccountInfo for bonding curve (~20ms).
+        All accounts derived via PDA (0ms).
+        
+        Returns:
+            Tuple of (success, tx_signature, error_message, token_amount, price)
+        """
+        import time as _time
+        t_start = _time.monotonic()
+        
+        try:
+            from platforms.pumpfun.address_provider import (
+                PumpFunAddresses, PumpFunAddressProvider,
+            )
+            from solders.compute_budget import (
+                set_compute_unit_limit, set_compute_unit_price,
+            )
+            from spl.token.instructions import (
+                create_idempotent_associated_token_account,
+            )
+            import base64 as b64mod
+            
+            logger.info(
+                f"[PUMPFUN-DIRECT] BUY {symbol} with {sol_amount} SOL"
+            )
+            
+            rpc_client = await self._get_rpc_client()
+            address_provider = PumpFunAddressProvider()
+            
+            # --- PDA derivation (0ms, no RPC) ---
+            bonding_curve = address_provider.derive_pool_address(mint)
+            
+            # --- Get bonding curve reserves ---
+            # ZERO-RPC path: use reserves from whale TX TradeEvent
+            # RPC fallback: getAccountInfo if reserves not available
+            vt_reserves = virtual_token_reserves
+            vs_reserves = virtual_sol_reserves
+            
+            if vt_reserves > 0 and vs_reserves > 0:
+                logger.info(
+                    f"[PUMPFUN-DIRECT] ZERO-RPC: using reserves from TX "
+                    f"(vsr={vs_reserves}, vtr={vt_reserves})"
+                )
+            else:
+                # Fallback: fetch from RPC (~20ms)
+                logger.info("[PUMPFUN-DIRECT] No TX reserves, fetching via RPC...")
+                try:
+                    bc_resp = await asyncio.wait_for(
+                        rpc_client.get_account_info(
+                            bonding_curve, encoding="base64"
+                        ),
+                        timeout=0.15,  # S12: was 0.5s
+                    )
+                except asyncio.TimeoutError:
+                    elapsed = (_time.monotonic() - t_start) * 1000
+                    logger.warning(
+                        f"[PUMPFUN-DIRECT] RPC timeout ({elapsed:.0f}ms)"
+                    )
+                    return False, None, "BC RPC timeout", 0.0, 0.0
+                except Exception as e:
+                    return False, None, f"BC RPC error: {e}", 0.0, 0.0
+                
+                if not bc_resp or not bc_resp.value:
+                    elapsed = (_time.monotonic() - t_start) * 1000
+                    logger.info(
+                        f"[PUMPFUN-DIRECT] No bonding curve ({elapsed:.0f}ms)"
+                    )
+                    return False, None, "BC not found", 0.0, 0.0
+                
+                bc_data = bc_resp.value.data
+                if isinstance(bc_data, (tuple, list)):
+                    bc_data = b64mod.b64decode(bc_data[0])
+                elif isinstance(bc_data, str):
+                    bc_data = b64mod.b64decode(bc_data)
+                
+                t_rpc = _time.monotonic()
+                logger.info(
+                    f"[PUMPFUN-DIRECT] BC fetched {(t_rpc-t_start)*1000:.0f}ms "
+                    f"({len(bc_data)} bytes)"
+                )
+                
+                if len(bc_data) < 49:
+                    return (
+                        False, None,
+                        f"BC data too short: {len(bc_data)}",
+                        0.0, 0.0,
+                    )
+                
+                vt_reserves = struct.unpack('<Q', bc_data[8:16])[0]
+                vs_reserves = struct.unpack('<Q', bc_data[16:24])[0]
+                complete = bc_data[48] != 0
+                
+                if complete:
+                    logger.info("[PUMPFUN-DIRECT] BC complete (migrated)")
+                    return False, None, "BC complete", 0.0, 0.0
+                
+                if vt_reserves <= 0 or vs_reserves <= 0:
+                    return (
+                        False, None,
+                        f"Bad reserves vt={vt_reserves} vs={vs_reserves}",
+                        0.0, 0.0,
+                    )
+            
+            # --- Calculate buy amounts ---
+            sol_lamports = int(sol_amount * LAMPORTS_PER_SOL)
+            
+            # xy=k formula: tokens_out = (sol_in * vt) / (vs + sol_in)
+            tokens_out_raw = (
+                (sol_lamports * vt_reserves) // (vs_reserves + sol_lamports)
+            )
+            if tokens_out_raw <= 0:
+                return False, None, "Zero tokens output", 0.0, 0.0
+            
+            # Slippage: max_sol_cost = sol_lamports * (1 + slippage)
+            max_sol_cost = int(sol_lamports * (1.0 + self.slippage))
+            # min tokens = tokens * (1 - slippage) — for the instruction
+            min_tokens = int(tokens_out_raw * (1.0 - self.slippage))
+            
+            tokens_decimal = tokens_out_raw / (10 ** TOKEN_DECIMALS)
+            price = sol_amount / tokens_decimal if tokens_decimal > 0 else 0
+            
+            logger.info(
+                f"[PUMPFUN-DIRECT] Expected: {tokens_decimal:,.2f} {symbol} "
+                f"@ {price:.10f} SOL (slippage {self.slippage*100:.0f}%)"
+            )
+            
+            mint_str = str(mint)
+
+            # --- S14: Detect token program from whale TX accounts ---
+            # Priority: whale TX account[8] > bc_data owner > default Token-2022
+            if whale_token_program:
+                # Best: use exact token program from whale TX
+                token_program_id = Pubkey.from_string(whale_token_program)
+                logger.info(f"[PUMPFUN-DIRECT] S14 token_program from whale TX: {whale_token_program[:16]}...")
+            else:
+                # Default: Token-2022 (all new pump.fun tokens since Nov 2025)
+                token_program_id = TOKEN_2022_PROGRAM
+                logger.info(f"[PUMPFUN-DIRECT] S14 token_program DEFAULT: Token-2022")
+            
+            # --- S14: Creator vault from whale TX, bc_data, or RPC fallback ---
+            if whale_creator_vault:
+                creator_vault = Pubkey.from_string(whale_creator_vault)
+                logger.info(f"[PUMPFUN-DIRECT] S14 creator_vault from whale TX: {whale_creator_vault[:16]}...")
+            else:
+                # Try bc_data first (available in RPC path)
+                creator_pubkey = None
+                _bc_data_local = locals().get("bc_data", b"")
+                if isinstance(_bc_data_local, bytes) and len(_bc_data_local) >= 81:
+                    try:
+                        creator_bytes = _bc_data_local[49:81]
+                        creator_pubkey = Pubkey.from_bytes(creator_bytes)
+                    except Exception:
+                        pass
+                # RPC fallback: fetch BC to get creator (adds ~45ms)
+                if not creator_pubkey:
+                    try:
+                        _bc_resp = await asyncio.wait_for(
+                            rpc_client.get_account_info(bonding_curve, encoding="base64"),
+                            timeout=0.2,
+                        )
+                        if _bc_resp and _bc_resp.value:
+                            _bc_raw = _bc_resp.value.data
+                            if isinstance(_bc_raw, (tuple, list)):
+                                _bc_raw = b64mod.b64decode(_bc_raw[0])
+                            elif isinstance(_bc_raw, str):
+                                _bc_raw = b64mod.b64decode(_bc_raw)
+                            if len(_bc_raw) >= 81:
+                                creator_pubkey = Pubkey.from_bytes(_bc_raw[49:81])
+                                logger.info(f"[PUMPFUN-DIRECT] S14 creator from RPC: {str(creator_pubkey)[:16]}...")
+                    except Exception as _e:
+                        logger.warning(f"[PUMPFUN-DIRECT] S14 creator RPC failed: {_e}")
+                if creator_pubkey:
+                    creator_vault = address_provider.derive_creator_vault(creator_pubkey)
+                    logger.info(f"[PUMPFUN-DIRECT] S14 creator_vault derived: {str(creator_vault)[:16]}...")
+                else:
+                    creator_vault = PumpFunAddresses.FEE
+                    logger.warning(f"[PUMPFUN-DIRECT] S14 creator_vault FALLBACK to FEE (will likely fail)")
+            # --- S14: Fee recipient from whale TX or default ---
+            if whale_fee_recipient:
+                fee_recipient = Pubkey.from_string(whale_fee_recipient)
+                logger.info(f"[PUMPFUN-DIRECT] S14 fee_recipient from whale TX: {whale_fee_recipient[:16]}...")
+            else:
+                fee_recipient = PumpFunAddresses.FEE
+            
+            # --- S14: Associated bonding curve from whale TX or derive ---
+            if whale_assoc_bonding_curve:
+                assoc_bc = Pubkey.from_string(whale_assoc_bonding_curve)
+                logger.info(f"[PUMPFUN-DIRECT] S14 assoc_bc from whale TX: {whale_assoc_bonding_curve[:16]}...")
+            else:
+                assoc_bc = address_provider.derive_associated_bonding_curve(
+                    mint, bonding_curve, token_program_id
+                )
+            
+            # --- Derive user ATA with correct token program ---
+            user_ata = address_provider.derive_user_token_account(
+                self.wallet.pubkey, mint, token_program_id
+            )
+            
+            # Volume accumulators + fee config
+            global_vol_acc = PumpFunAddresses.find_global_volume_accumulator()
+            user_vol_acc = PumpFunAddresses.find_user_volume_accumulator(
+                self.wallet.pubkey
+            )
+            fee_config = PumpFunAddresses.find_fee_config()
+            
+            # --- Build instruction ---
+            # Buy discriminator from IDL: sha256("global:buy")[:8]
+            buy_discriminator = bytes([102, 6, 61, 18, 1, 218, 235, 234])
+            
+            # Data: discriminator + amount(tokens) + max_sol_cost
+            # + track_volume OptionBool [1,1] = Some(true)
+            ix_data = (
+                buy_discriminator
+                + struct.pack("<Q", tokens_out_raw)
+                + struct.pack("<Q", max_sol_cost)
+                + bytes([1, 1])  # track_volume = Some(true)
+            )
+            
+            buy_accounts = [
+                AccountMeta(PumpFunAddresses.GLOBAL, False, False),
+                AccountMeta(fee_recipient, False, True),
+                AccountMeta(mint, False, False),
+                AccountMeta(bonding_curve, False, True),
+                AccountMeta(assoc_bc, False, True),
+                AccountMeta(user_ata, False, True),
+                AccountMeta(self.wallet.pubkey, True, True),
+                AccountMeta(SYSTEM_PROGRAM, False, False),
+                AccountMeta(token_program_id, False, False),
+                AccountMeta(creator_vault, False, True),
+                AccountMeta(PumpFunAddresses.EVENT_AUTHORITY, False, False),
+                AccountMeta(PumpFunAddresses.PROGRAM, False, False),
+                AccountMeta(global_vol_acc, False, False),
+                AccountMeta(user_vol_acc, False, True),
+                AccountMeta(fee_config, False, False),
+                AccountMeta(PumpFunAddresses.FEE_PROGRAM, False, False),
+            ]
+            
+            buy_ix = Instruction(
+                PumpFunAddresses.PROGRAM, ix_data, buy_accounts
+            )
+            
+            # ATA creation (idempotent — safe if already exists)
+            create_ata_ix = create_idempotent_associated_token_account(
+                self.wallet.pubkey,
+                self.wallet.pubkey,
+                mint,
+                token_program_id,
+            )
+            
+            # Compute budget
+            cu_limit_ix = set_compute_unit_limit(150_000)
+            cu_price_ix = set_compute_unit_price(self.priority_fee)
+            
+            instructions = [
+                cu_limit_ix, cu_price_ix, create_ata_ix, buy_ix
+            ]
+            
+            # --- Build and sign TX ---
+            from solders.message import Message
+            
+            try:
+                blockhash = await self.client.get_cached_blockhash()
+            except (RuntimeError, AttributeError):
+                bh_resp = await rpc_client.get_latest_blockhash()
+                blockhash = bh_resp.value.blockhash
+            
+            msg = Message.new_with_blockhash(
+                instructions, self.wallet.pubkey, blockhash
+            )
+            tx = VersionedTransaction(msg, [self.wallet.keypair])
+            
+            t_build = _time.monotonic()
+            logger.info(
+                f"[PUMPFUN-DIRECT] TX built {(t_build-t_start)*1000:.0f}ms"
+            )
+            
+            # --- Send TX ---
+            sig = await self._send_tx_parallel(tx, rpc_client)
+            
+            t_send = _time.monotonic()
+            total_ms = (t_send - t_start) * 1000
+            logger.warning(
+                f"[PUMPFUN-DIRECT] TX SENT in {total_ms:.0f}ms: {sig}"
+            )
+            logger.warning(f"[PUMPFUN-DIRECT] https://solscan.io/tx/{sig}")
+            
+            # --- Schedule verification (fire & forget) ---
+            from core.tx_verifier import get_tx_verifier
+            from core.tx_callbacks import on_buy_success, on_buy_failure
+            
+            verifier = await get_tx_verifier()
+            await verifier.schedule_verification(
+                signature=sig,
+                mint=mint_str,
+                symbol=symbol,
+                action="buy",
+                token_amount=tokens_decimal,
+                price=price,
+                on_success=on_buy_success,
+                on_failure=on_buy_failure,
+                context={
+                    "platform": "pump_fun_direct",
+                    "bot_name": "fallback_seller",
+                    "buy_amount": sol_amount,
+                    "wallet_pubkey": str(self.wallet.pubkey),
+                    "bonding_curve": str(bonding_curve),
+                    **(position_config or {}),
+                },
+            )
+            
+            return True, sig, None, tokens_decimal, price
+        
+        except Exception as e:
+            logger.warning(f"[PUMPFUN-DIRECT] Error: {e}")
+            return False, None, str(e), 0.0, 0.0
+
 
     async def buy_via_jupiter(
         self,

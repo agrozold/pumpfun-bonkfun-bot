@@ -198,6 +198,12 @@ class ParsedSwap:
     token_amount: float        # token quantity (UI amount)
     platform: str              # pump_fun, pumpswap, jupiter, raydium, unknown
     token_symbol: str = ""     # filled later via DexScreener
+    virtual_sol_reserves: int = 0    # from TradeEvent (lamports)
+    virtual_token_reserves: int = 0  # from TradeEvent (raw units)
+    whale_token_program: str = ""       # S14: from whale TX account[8]
+    whale_creator_vault: str = ""       # S14: from whale TX account[9]
+    whale_fee_recipient: str = ""       # S14: from whale TX account[1]
+    whale_assoc_bonding_curve: str = "" # S14: from whale TX account[4]
 
 
 @dataclass
@@ -378,6 +384,122 @@ class LocalTxParser:
                         if result:
                             return result
 
+            # S12: Check inner instructions for Anchor CPI TradeEvent
+            # pump.fun emits TradeEvent via emit_cpi! which wraps in Anchor event envelope
+            # Layout: [8B anchor:event tag][8B event discriminator][event data...]
+            ANCHOR_EVENT_TAG = bytes.fromhex("e445a52e51cb9a1d")
+            TRADE_EVENT_DISC = bytes.fromhex("bddb7fd34ee661ee")
+            if meta.inner_instructions:
+                for inner_group in meta.inner_instructions:
+                    for ix in inner_group.instructions:
+                        _ixdata = bytes(ix.data)
+                        if len(_ixdata) >= 137 and _ixdata[:8] == ANCHOR_EVENT_TAG:
+                            # S13: Check event discriminator — ONLY parse TradeEvent
+                            _evt_disc = _ixdata[8:16]
+                            if _evt_disc != TRADE_EVENT_DISC:
+                                logger.debug(
+                                    f"[LOCAL_PARSER] CPI event skip: disc={_evt_disc.hex()} "
+                                    f"len={len(_ixdata)} (not TradeEvent)"
+                                )
+                                continue
+                            # Skip 16 bytes (8 anchor tag + 8 event discriminator)
+                            _off = 16
+                            _mint_bytes = _ixdata[_off:_off+32]
+                            _mint = base58.b58encode(_mint_bytes).decode()
+                            _off += 32
+                            _sol_raw = struct.unpack("<Q", _ixdata[_off:_off+8])[0]
+                            _sol_amount = _sol_raw / 1e9
+                            _off += 8
+                            _tok_raw = struct.unpack("<Q", _ixdata[_off:_off+8])[0]
+                            _tok_amount = _tok_raw / 1e6
+                            _off += 8
+                            _is_buy = _ixdata[_off] != 0
+                            _off += 1
+                            _off += 32  # skip user pubkey
+                            _off += 8   # skip timestamp
+                            _vsr = struct.unpack("<Q", _ixdata[_off:_off+8])[0]
+                            _off += 8
+                            _vtr = struct.unpack("<Q", _ixdata[_off:_off+8])[0]
+
+                            if _mint in self.blacklist:
+                                self.stats.blacklisted_skipped += 1
+                                return None
+
+                            # S12: Validate reserves — pump.fun BC max is ~85 SOL (~85B lamports)
+                            # and max tokens ~1.07T (1073000000000000)
+                            _reserves_valid = (
+                                0 < _vsr < 200_000_000_000 and  # < 200 SOL
+                                0 < _vtr < 2_000_000_000_000_000  # < 2 quadrillion
+                            )
+
+                            if _reserves_valid:
+                                logger.warning(
+                                    f"[LOCAL_PARSER] S12 CPI TradeEvent: "
+                                    f"mint={_mint[:16]}... sol={_sol_amount:.4f} "
+                                    f"tok={_tok_amount:.0f} buy={_is_buy} "
+                                    f"vsr={_vsr} vtr={_vtr}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"[LOCAL_PARSER] S12 CPI BAD RESERVES: "
+                                    f"mint={_mint[:16]}... vsr={_vsr} vtr={_vtr} "
+                                    f"— setting to 0 (will use RPC fallback)"
+                                )
+                                _vsr = 0
+                                _vtr = 0
+
+                            # S14: Extract whale accounts from outer instruction
+                            # Whale may use direct pump.fun OR router (term9, etc.)
+                            # Both pass same 16 accounts in same order
+                            # Detect by: 16+ accounts with GLOBAL at [0] and PUMP at [11]
+                            _w_token_program = ""
+                            _w_creator_vault = ""
+                            _w_fee_recipient = ""
+                            _w_assoc_bc = ""
+                            _PUMP_PROG = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+                            _GLOBAL = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
+                            try:
+                                for _oix in msg.instructions:
+                                    _oix_accs = list(_oix.accounts)
+                                    if len(_oix_accs) >= 16:
+                                        # Check signature: GLOBAL at [0], PUMP at [11]
+                                        _a0 = account_keys[_oix_accs[0]] if _oix_accs[0] < len(account_keys) else ""
+                                        _a11 = account_keys[_oix_accs[11]] if _oix_accs[11] < len(account_keys) else ""
+                                        if _a0 == _GLOBAL and _a11 == _PUMP_PROG:
+                                            if _oix_accs[1] < len(account_keys):
+                                                _w_fee_recipient = account_keys[_oix_accs[1]]
+                                            if _oix_accs[4] < len(account_keys):
+                                                _w_assoc_bc = account_keys[_oix_accs[4]]
+                                            if _oix_accs[8] < len(account_keys):
+                                                _w_token_program = account_keys[_oix_accs[8]]
+                                            if _oix_accs[9] < len(account_keys):
+                                                _w_creator_vault = account_keys[_oix_accs[9]]
+                                            logger.info(
+                                                f"[LOCAL_PARSER] S14 whale accounts: "
+                                                f"tp={_w_token_program[:8]}... "
+                                                f"cv={_w_creator_vault[:8]}... "
+                                                f"fee={_w_fee_recipient[:8]}..."
+                                            )
+                                            break
+                            except Exception as _e:
+                                logger.debug(f"[LOCAL_PARSER] S14 whale account extract: {_e}")
+
+                            return ParsedSwap(
+                                signature=signature,
+                                fee_payer=fee_payer,
+                                is_buy=_is_buy,
+                                token_mint=_mint,
+                                sol_amount=_sol_amount,
+                                token_amount=_tok_amount,
+                                platform="pump_fun",
+                                virtual_sol_reserves=_vsr,
+                                virtual_token_reserves=_vtr,
+                                whale_token_program=_w_token_program,
+                                whale_creator_vault=_w_creator_vault,
+                                whale_fee_recipient=_w_fee_recipient,
+                                whale_assoc_bonding_curve=_w_assoc_bc,
+                            )
+
         except Exception as e:
             logger.debug(f"[LOCAL_PARSER] Pump discriminator failed: {e}")
 
@@ -392,6 +514,8 @@ class LocalTxParser:
 
         if len(data) < 8:
             return None
+        
+        # S13: DIAG removed (was S12, caused confusing logs)
 
         # Verify program is pump.fun
         if program_id_index < len(account_keys):
@@ -428,6 +552,18 @@ class LocalTxParser:
         offset += 8
 
         is_buy_flag = data[offset] != 0
+        offset += 1
+
+        # Extract reserves from TradeEvent (ZERO-RPC optimization)
+        # Layout: user(32) + timestamp(8) + virtualSolReserves(8) + virtualTokenReserves(8)
+        _vsr = 0
+        _vtr = 0
+        if len(data) >= 113:  # Full TradeEvent: 8+32+8+8+1+32+8+8+8=113
+            offset += 32  # skip user pubkey
+            offset += 8   # skip timestamp
+            _vsr = struct.unpack("<Q", data[offset:offset + 8])[0]
+            offset += 8
+            _vtr = struct.unpack("<Q", data[offset:offset + 8])[0]
 
         # Blacklist check
         if mint in self.blacklist:
@@ -443,6 +579,8 @@ class LocalTxParser:
             sol_amount=sol_amount,
             token_amount=token_amount,
             platform="pump_fun",
+            virtual_sol_reserves=_vsr,
+            virtual_token_reserves=_vtr,
         )
 
     def _parse_from_balances(
