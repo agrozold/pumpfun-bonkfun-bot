@@ -43,10 +43,10 @@ class Position:
     max_hold_time: int | None = None
 
     tsl_enabled: bool = False
-    tsl_activation_pct: float = 0.40
-    tsl_trail_pct: float = 0.30
-    tsl_sell_pct: float = 0.70
-    tp_sell_pct: float = 0.50
+    tsl_activation_pct: float = 0.15
+    tsl_trail_pct: float = 0.10
+    tsl_sell_pct: float = 1.0
+    tp_sell_pct: float = 0.80
     tsl_active: bool = False
     high_water_mark: float = 0.0
     tsl_trigger_price: float = 0.0
@@ -54,7 +54,11 @@ class Position:
 
     is_active: bool = True
     is_moonbag: bool = False
+    buy_confirmed: bool = True  # False until BUY TX confirmed on-chain (race condition guard)
+    tokens_arrived: bool = True   # False until tokens actually appear on wallet (gRPC ATA subscribe)
+    is_selling: bool = False  # Guard against double-sell race condition
     tp_partial_done: bool = False  # True after partial TP sell — prevents re-assign on restore
+    restore_time: datetime | None = None  # Set on restore — grace period for TSL
     
     # DCA (Dollar Cost Averaging) fields
     dca_enabled: bool = False
@@ -106,6 +110,8 @@ class Position:
         "tp_sell_pct": self.tp_sell_pct,
             "is_active": self.is_active,
             "is_moonbag": self.is_moonbag,
+            "buy_confirmed": self.buy_confirmed,
+            "tokens_arrived": self.tokens_arrived,
             "tp_partial_done": self.tp_partial_done,
             "dca_enabled": self.dca_enabled,
             "dca_pending": self.dca_pending,
@@ -135,16 +141,18 @@ class Position:
             stop_loss_price=data.get("stop_loss_price"),
             max_hold_time=data.get("max_hold_time"),
             tsl_enabled=data.get("tsl_enabled", False),
-            tsl_activation_pct=data.get("tsl_activation_pct", 0.40),
-            tsl_trail_pct=data.get("tsl_trail_pct", 0.30),
+            tsl_activation_pct=data.get("tsl_activation_pct", 0.15),
+            tsl_trail_pct=data.get("tsl_trail_pct", 0.10),
             tsl_active=data.get("tsl_active", False),
             high_water_mark=data.get("high_water_mark", data["entry_price"]),
             tsl_trigger_price=data.get("tsl_trigger_price", 0.0),
             tsl_triggered=data.get("tsl_triggered", False),
-            tsl_sell_pct=data.get("tsl_sell_pct", 0.70),
-        tp_sell_pct=data.get("tp_sell_pct", 0.50),
+            tsl_sell_pct=data.get("tsl_sell_pct", 1.0),
+        tp_sell_pct=data.get("tp_sell_pct", 0.80),
             is_active=data.get("is_active", True),
             is_moonbag=data.get("is_moonbag", False),
+            buy_confirmed=data.get("buy_confirmed", True),
+            tokens_arrived=data.get("tokens_arrived", True),
             tp_partial_done=data.get("tp_partial_done", False),
             dca_enabled=data.get("dca_enabled", False),
             dca_pending=data.get("dca_pending", False),
@@ -174,9 +182,9 @@ class Position:
         platform: str = "pump_fun",
         bonding_curve: str | None = None,
         tsl_enabled: bool = False,
-        tsl_activation_pct: float = 0.40,
-        tsl_trail_pct: float = 0.30,
-        tsl_sell_pct: float = 0.70,
+        tsl_activation_pct: float = 0.15,
+        tsl_trail_pct: float = 0.10,
+        tsl_sell_pct: float = 1.0,
     ) -> "Position":
         if entry_price <= 0:
             logger.error(f"[POSITION] Invalid entry_price={entry_price}, using 0.0000001")
@@ -218,11 +226,13 @@ class Position:
         profit_pct = (current_price - self.entry_price) / self.entry_price
         state_changed = False
 
-        # Activate TSL when profit threshold reached
-        if not self.tsl_active and profit_pct >= self.tsl_activation_pct:
+        # Activate TSL when profit threshold reached (with cooldown)
+        _tsl_cooldown = 30  # seconds after buy before TSL can activate
+        _age = (datetime.utcnow() - self.entry_time).total_seconds()
+        if not self.tsl_active and profit_pct >= self.tsl_activation_pct and _age >= _tsl_cooldown:
             self.tsl_active = True
             self.high_water_mark = current_price
-            self.tsl_trigger_price = max(current_price * (1 - self.tsl_trail_pct), self.entry_price)
+            self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
             logger.warning(f"[TSL] {self.symbol} ACTIVATED at {current_price:.10f}, trigger at {self.tsl_trigger_price:.10f}")
             state_changed = True
 
@@ -230,7 +240,7 @@ class Position:
         if self.tsl_active and current_price > self.high_water_mark:
             old_hwm = self.high_water_mark
             self.high_water_mark = current_price
-            self.tsl_trigger_price = max(current_price * (1 - self.tsl_trail_pct), self.entry_price)
+            self.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
             logger.info(f"[TSL] {self.symbol} HWM: {old_hwm:.10f} -> {current_price:.10f}, new trigger: {self.tsl_trigger_price:.10f}")
             state_changed = True
         
@@ -240,10 +250,39 @@ class Position:
         if not self.is_active:
             return False, None
 
-        if self.stop_loss_price and current_price <= self.stop_loss_price and not self.is_moonbag:
-            return True, ExitReason.STOP_LOSS
+        if getattr(self, "is_selling", False):
+            return False, None
+
+        # DYNAMIC SL: wider SL in first 30s to survive impact dip from whale buy
+        if self.stop_loss_price and not self.is_moonbag:
+            _pos_age = (datetime.utcnow() - self.entry_time).total_seconds() if self.entry_time else 999
+            if _pos_age < 10.0:
+                # First 10s: only trigger at -35% (impact dip zone)
+                _dynamic_sl = self.entry_price * (1 - 0.35)
+                if current_price <= _dynamic_sl:
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 10s, price hit -35% SL")
+                    return True, ExitReason.STOP_LOSS
+            elif _pos_age < 30.0:
+                # 10-30s: intermediate SL at -25%
+                _dynamic_sl = self.entry_price * (1 - 0.25)
+                if current_price <= _dynamic_sl:
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 30s, price hit -25% SL")
+                    return True, ExitReason.STOP_LOSS
+            else:
+                # After 30s: normal config SL
+                if current_price <= self.stop_loss_price:
+                    return True, ExitReason.STOP_LOSS
 
         if self.tsl_active and (current_price <= self.tsl_trigger_price or self.tsl_triggered):
+            # Grace period after restore: update HWM but don't trigger TSL for 15s
+            _restore_t = getattr(self, 'restore_time', None)
+            if _restore_t and not self.tsl_triggered:
+                _since_restore = (datetime.utcnow() - _restore_t).total_seconds()
+                if _since_restore < 15.0:
+                    logger.info(f"[TSL] {self.symbol} GRACE PERIOD: {_since_restore:.1f}s < 15s after restore — skipping trigger")
+                    return False, None
+                else:
+                    self.restore_time = None  # Grace period expired, clear it
             if not self.tsl_triggered:
                 logger.warning(f"[TSL] {self.symbol} TRIGGERED at {current_price:.10f}")
                 self.tsl_triggered = True

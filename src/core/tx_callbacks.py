@@ -74,13 +74,13 @@ async def on_buy_success(tx: "PendingTransaction"):
         logger.warning(f"[TX_CALLBACK] Post-buy verify failed: {verify_err}")
     
     # TSL and position parameters from context
-    take_profit_pct = tx.context.get("take_profit_pct", 1.0)  # 10000% default
-    stop_loss_pct = tx.context.get("stop_loss_pct", 0.2)  # 20% default
+    take_profit_pct = tx.context.get("take_profit_pct") or 0.1  # 10% default
+    stop_loss_pct = tx.context.get("stop_loss_pct") or 0.20  # 20% default
     tsl_enabled = tx.context.get("tsl_enabled", True)
-    tsl_activation_pct = tx.context.get("tsl_activation_pct", 0.4)
-    tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.3)
-    tsl_sell_pct = tx.context.get("tsl_sell_pct", 0.7)
-    tp_sell_pct = tx.context.get("tp_sell_pct", 0.50)  # 50% partial TP
+    tsl_activation_pct = tx.context.get("tsl_activation_pct", 0.15)
+    tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.10)
+    tsl_sell_pct = tx.context.get("tsl_sell_pct", 1.0)
+    tp_sell_pct = tx.context.get("tp_sell_pct", 0.80)  # 50% partial TP
     bonding_curve = tx.context.get("bonding_curve", None)
     whale_wallet = tx.context.get("whale_wallet", None)
     whale_label = tx.context.get("whale_label", None)
@@ -122,6 +122,23 @@ async def on_buy_success(tx: "PendingTransaction"):
             # We only update quantity here. DO NOT recalculate entry_price!
             # buy.py sets entry = latest buy price (not weighted average)
             logger.warning(f"[TX_CALLBACK] Position already exists for {symbol}, skipping (buy.py handles update)")
+            # PATCH: Mark buy as confirmed — race condition guard (file + memory)
+            for _ep in existing:
+                _ep.buy_confirmed = True
+                _ep.tokens_arrived = True
+            # Also update in-memory position in trader.active_positions
+            try:
+                from trading.trader_registry import get_trader
+                _trader = get_trader()
+                if _trader:
+                    for _mp in _trader.active_positions:
+                        if str(_mp.mint) == mint:
+                            _mp.buy_confirmed = True
+                            _mp.tokens_arrived = True
+                            logger.warning(f"[TX_CALLBACK] buy_confirmed=True, tokens_arrived=True for {symbol} (in-memory)")
+                            break
+            except Exception as _bc_err:
+                logger.warning(f"[TX_CALLBACK] buy_confirmed in-memory update failed: {_bc_err}")
             save_positions(positions)
         else:
             # Create new position with full parameters
@@ -271,20 +288,54 @@ async def on_buy_success(tx: "PendingTransaction"):
 async def on_buy_failure(tx: "PendingTransaction"):
     """
     Called when BUY transaction FAILED or timed out.
-    
+
     Actions:
     1. Log error
-    2. Do NOT add to positions
+    2. REMOVE position if it was created by instant-start (before TX confirmation)
     3. Do NOT add to purchase_history (allow retry)
     """
+    mint = tx.mint
+    symbol = tx.symbol
+
     logger.error(
-        f"[TX_CALLBACK] ❌ BUY FAILED: {tx.symbol} - {tx.error_message}\n"
+        f"[TX_CALLBACK] \u274c BUY FAILED: {symbol} - {tx.error_message}\n"
         f"  Signature: {tx.signature}\n"
         f"  Check: https://solscan.io/tx/{tx.signature}"
     )
-    
-    # Nothing to cleanup - we never added anything
-    # Token can be bought again on next signal
+
+    # CLEANUP: Remove phantom position created by instant-start
+    # (Position is now created BEFORE TX confirmation for fast monitoring)
+    try:
+        from trading.position import load_positions, save_positions, unregister_monitor
+        positions = load_positions()
+        original_count = len(positions)
+        positions = [p for p in positions if str(p.mint) != mint]
+        if len(positions) < original_count:
+            save_positions(positions)
+            unregister_monitor(mint)
+            logger.warning(f"[TX_CALLBACK] \U0001f9f9 Removed phantom position for {symbol} (TX failed)")
+
+            # Also remove from trader's active_positions
+            try:
+                from trading.trader_registry import get_trader
+                trader = get_trader()
+                if trader:
+                    trader.active_positions = [p for p in trader.active_positions if str(p.mint) != mint]
+                    trader._bought_tokens.discard(mint)
+                    logger.info(f"[TX_CALLBACK] Cleaned up trader state for {symbol}")
+            except Exception as te:
+                logger.warning(f"[TX_CALLBACK] Trader cleanup failed: {te}")
+
+            # Clean Redis
+            try:
+                from trading.redis_state import forget_position_forever
+                await forget_position_forever(mint, reason="buy_tx_failed")
+            except Exception as re:
+                logger.warning(f"[TX_CALLBACK] Redis cleanup failed: {re}")
+        else:
+            logger.info(f"[TX_CALLBACK] No phantom position found for {symbol} - nothing to clean")
+    except Exception as e:
+        logger.error(f"[TX_CALLBACK] Phantom position cleanup error: {e}")
 
 
 async def on_sell_success(tx: "PendingTransaction"):

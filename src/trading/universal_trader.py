@@ -152,10 +152,10 @@ class UniversalTrader:
         max_hold_time: int | None = None,
         # Trailing Stop-Loss parameters
         tsl_enabled: bool = True,
-        tsl_activation_pct: float = 0.20,  # MUST match yaml
-        tsl_trail_pct: float = 0.30,  # MUST match yaml
-        tsl_sell_pct: float = 0.70,  # MUST match yaml
-        tp_sell_pct: float = 0.50,  # MUST match yaml
+        tsl_activation_pct: float = 0.15,  # MUST match yaml
+        tsl_trail_pct: float = 0.10,  # MUST match yaml
+        tsl_sell_pct: float = 1.0,  # MUST match yaml
+        tp_sell_pct: float = 0.80,  # MUST match yaml
         dca_enabled: bool = True,  # MUST match yaml
         # Token Vetting (security)
         token_vetting_enabled: bool = False,
@@ -421,6 +421,9 @@ class UniversalTrader:
                     self.whale_tracker_secondary = webhook_receiver
                     self.whale_tracker.set_callback(self._deduped_whale_buy)
                     self.whale_tracker_secondary.set_callback(self._deduped_whale_buy)
+                    # Phase 6: Pass wallet pubkey for ATA derivation
+                    if hasattr(self.whale_tracker, 'set_wallet_pubkey'):
+                        self.whale_tracker.set_wallet_pubkey(str(self.wallet.pubkey))
                     logger.warning("=" * 70)
                     logger.warning("[WHALE] DUAL MODE: gRPC (primary) + Webhook (secondary)")
                     logger.warning("[WHALE] Signal dedup: ENABLED (TTL=300s)")
@@ -765,37 +768,82 @@ class UniversalTrader:
                 logger.warning(f"[DEDUP] Failed to release: {e}")
     # === END DEDUP HELPER METHODS ===
 
+    # Sentinel: returned when all RPCs fail (distinct from None = "no token account")
+    BALANCE_RPC_ERROR = -1.0
+
     async def _get_token_balance(self, mint: str) -> float | None:
-        """Get real token balance from on-chain (handles both Token and Token2022)."""
+        """Get real token balance from on-chain with RPC fallback.
+
+        Returns:
+            float >= 0  -- real balance (token account exists)
+            None        -- token account not found (accounts list empty)
+            -1.0        -- all RPCs failed (BALANCE_RPC_ERROR)
+        """
         import aiohttp
-        try:
-            rpc_url = os.getenv("DRPC_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT") or self.rpc_endpoint
-            wallet = str(self.wallet.pubkey)
-            
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTokenAccountsByOwner",
-                    "params": [
-                        wallet,
-                        {"mint": mint},
-                        {"encoding": "jsonParsed", "commitment": "confirmed"}
-                    ]
-                }
-                async with session.post(rpc_url, json=payload, timeout=5) as resp:
-                    if resp.status == 200:
+        wallet = str(self.wallet.pubkey)
+        payload = {
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                wallet, {"mint": mint},
+                {"encoding": "jsonParsed", "commitment": "confirmed"}
+            ]
+        }
+
+        rpc_endpoints = []
+        # Chainstack first (fastest, paid plan)
+        chainstack_url = os.getenv("CHAINSTACK_RPC_ENDPOINT")
+        if chainstack_url:
+            rpc_endpoints.append(("Chainstack", chainstack_url))
+        for env_key in ("DRPC_RPC_ENDPOINT", "ALCHEMY_RPC_ENDPOINT"):
+            url = os.getenv(env_key)
+            if url:
+                rpc_endpoints.append((env_key.split("_")[0], url))
+        helius_key = os.getenv("HELIUS_API_KEY")
+        if helius_key:
+            rpc_endpoints.append(("Helius", f"https://mainnet.helius-rpc.com/?api-key={helius_key}"))
+        pub = os.getenv("SOLANA_PUBLIC_RPC_ENDPOINT")
+        if pub:
+            rpc_endpoints.append(("Public", pub))
+        if not rpc_endpoints:
+            rpc_endpoints.append(("default", self.rpc_endpoint))
+
+        got_empty_accounts = False
+
+        for rpc_name, rpc_url in rpc_endpoints:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        rpc_url, json=payload,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status != 200:
+                            logger.warning(f"[BALANCE] {rpc_name} HTTP {resp.status} for {mint[:8]}...")
+                            continue
                         data = await resp.json()
+                        rpc_err = data.get("error")
+                        if rpc_err:
+                            logger.warning(f"[BALANCE] {rpc_name} RPC error for {mint[:8]}...: {rpc_err}")
+                            continue
                         accounts = data.get("result", {}).get("value", [])
                         if accounts:
                             info = accounts[0]["account"]["data"]["parsed"]["info"]
                             ui_amount = info["tokenAmount"].get("uiAmount")
                             if ui_amount is not None:
                                 return float(ui_amount)
+                            return 0.0
+                        else:
+                            got_empty_accounts = True
+                            return None  # token account genuinely not found
+            except Exception as e:
+                logger.warning(f"[BALANCE] {rpc_name} failed for {mint[:8]}...: {type(e).__name__}: {e}")
+                continue
+
+        if got_empty_accounts:
             return None
-        except Exception as e:
-            logger.warning(f"[BALANCE] Error getting balance for {mint[:8]}...: {e}")
-            return None
+        logger.error(f"[BALANCE] ALL RPCs failed for {mint[:8]}... -- returning BALANCE_RPC_ERROR")
+        return self.BALANCE_RPC_ERROR
+
 
     # [edit:s12] reliable decimals from on-chain parsed data
     async def _get_token_balance_with_decimals(self, mint: str) -> tuple[float, int, int] | None:
@@ -1154,6 +1202,12 @@ class UniversalTrader:
             if not balance_ok:
                 return
 
+            # === PATCH 11D-ASYNC: Deployer check moved to BACKGROUND (saves ~265ms) ===
+            # Original PATCH 11D did blocking RPC call here. Now we fire-and-forget:
+            # if deployer is blacklisted, _abort_blacklisted_buy() cancels position.
+            asyncio.create_task(self._async_deployer_check(mint_str, whale_buy))
+            # === END PATCH 11D-ASYNC ===
+
             # RETRY LOGIC: Для свежих токенов RPC может не успеть проиндексировать
             # bonding curve. Делаем до 3 попыток с задержкой.
             max_retries = 3
@@ -1210,7 +1264,7 @@ class UniversalTrader:
 
             if success:
                 # MOVED TO TX_CALLBACK - position/history added after TX verification
-                # self._bought_tokens.add(mint_str)
+                self._bought_tokens.add(mint_str)  # PATCH 8: prevent double buy
                 # add_to_purchase_history(
                 #     mint=mint_str,
                 #     symbol=whale_buy.token_symbol,
@@ -1266,32 +1320,78 @@ class UniversalTrader:
                 )
                 logger.info(f"[WHALE] Derived bonding_curve: {bonding_curve_derived}")
 
-                # MOVED TO TX_CALLBACK - position created after TX verification
-                # position = Position.create_from_buy_result(
-                #     mint=mint,
-                #     symbol=whale_buy.token_symbol,
-                #     entry_price=entry_price,
-                #     quantity=token_amount,
-                #     take_profit_percentage=self.take_profit_percentage,
-                #     stop_loss_percentage=self.stop_loss_percentage,
-                #     max_hold_time=self.max_hold_time,
-                #     platform=dex_used,
-                #     bonding_curve=str(bonding_curve_derived),
-                #     tsl_enabled=self.tsl_enabled,
-                #     tsl_activation_pct=self.tsl_activation_pct,
-                #     tsl_trail_pct=self.tsl_trail_pct,
-                #     tsl_sell_pct=self.tsl_sell_pct,
-                # )
-                # self.active_positions.append(position)
-                # save_positions(self.active_positions)
-                # watch_token(str(position.mint))
-                logger.info(f"[WHALE] Position will be created by TX callback after verification")
+                # === PATCH 12: INSTANT gRPC subscribe — NO WAITING for TX callback ===
+                if self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_bonding_curve'):
+                    asyncio.create_task(self.whale_tracker.subscribe_bonding_curve(
+                        mint=mint_str,
+                        curve_address=str(bonding_curve_derived),
+                        symbol=whale_buy.token_symbol,
+                        decimals=6,
+                    ))
+                    logger.warning(f"[PATCH12] \u26a1 INSTANT gRPC subscribe for {whale_buy.token_symbol} (curve={str(bonding_curve_derived)[:16]}...)")
+                # === END PATCH 12 ===
 
-                # Log TP/SL targets - DISABLED (position created by callback)
-                # if position.take_profit_price:
-                #     logger.warning(f"[WHALE] Take profit target: {position.take_profit_price:.10f} SOL")
-                # if position.stop_loss_price:
-                #     logger.warning(f"[WHALE] Stop loss target: {position.stop_loss_price:.10f} SOL")
+                # === Phase 6: Subscribe to ATA for instant token arrival detection ===
+                if self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_ata'):
+                    try:
+                        from solders.pubkey import Pubkey as _Pk
+                        _TOKEN_PROG = _Pk.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+                        _ATA_PROG = _Pk.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+                        _wallet_pk = self.wallet.pubkey
+                        _ata_addr, _ = _Pk.find_program_address(
+                            [bytes(_wallet_pk), bytes(_TOKEN_PROG), bytes(mint)],
+                            _ATA_PROG
+                        )
+                        asyncio.create_task(self.whale_tracker.subscribe_ata(
+                            mint=mint_str,
+                            ata_address=str(_ata_addr),
+                            symbol=whale_buy.token_symbol,
+                        ))
+                        logger.warning(f"[Phase6] ATA subscribe for {whale_buy.token_symbol} (ata={str(_ata_addr)[:16]}...)")
+                    except Exception as _ata_err:
+                        logger.warning(f"[Phase6] ATA subscribe failed: {_ata_err}")
+                # === END Phase 6 ===
+
+                # INSTANT Position creation — monitor starts NOW, not after TX callback (12s delay)
+                from trading.position import Position as PositionCls, save_positions as _save_pos, register_monitor as _reg_mon
+                from utils.batch_price_service import watch_token as _watch
+                position = PositionCls.create_from_buy_result(
+                    mint=mint,
+                    symbol=whale_buy.token_symbol,
+                    entry_price=entry_price,
+                    quantity=token_amount,
+                    take_profit_percentage=self.take_profit_percentage,
+                    stop_loss_percentage=self.stop_loss_percentage,
+                    max_hold_time=self.max_hold_time,
+                    platform=dex_used,
+                    bonding_curve=str(bonding_curve_derived),
+                    tsl_enabled=self.tsl_enabled,
+                    tsl_activation_pct=self.tsl_activation_pct,
+                    tsl_trail_pct=self.tsl_trail_pct,
+                    tsl_sell_pct=self.tsl_sell_pct,
+                )
+                position.tp_sell_pct = self.tp_sell_pct  # from yaml (0.8)
+                position.buy_confirmed = False  # PATCH: race condition guard — wait for TX confirmation
+                position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
+                self.active_positions.append(position)
+                _save_pos(self.active_positions)
+                _watch(str(position.mint))
+                logger.warning(f"[WHALE] ⚡ INSTANT Position created for {whale_buy.token_symbol}")
+                # Register reactive SL/TP for instant gRPC-driven sells
+                try:
+                    if self.whale_tracker and hasattr(self.whale_tracker, 'register_sl_tp'):
+                        self.whale_tracker.register_sl_tp(
+                            mint=mint_str, symbol=whale_buy.token_symbol,
+                            entry_price=entry_price,
+                            sl_price=position.stop_loss_price or 0,
+                            tp_price=position.take_profit_price or 0,
+                        )
+                except Exception as _rsl_err:
+                    logger.warning(f"[WHALE] register_sl_tp failed: {_rsl_err}")
+                if position.take_profit_price:
+                    logger.warning(f"[WHALE] Take profit target: {position.take_profit_price:.10f} SOL (+{(self.take_profit_percentage or 0)*100:.0f}%)")
+                if position.stop_loss_price:
+                    logger.warning(f"[WHALE] Stop loss target: {position.stop_loss_price:.10f} SOL (-{(self.stop_loss_percentage or 0)*100:.0f}%)")
 
                 self._log_trade(
                     "buy",
@@ -1339,11 +1439,13 @@ class UniversalTrader:
                         creation_timestamp=0,
                     )
 
-                    # REMOVED: Position monitoring now handled by:
-                    # 1. TX callback creates position after verification
-                    # 2. _position_monitor_loop monitors all positions
-                    # asyncio.create_task(self._monitor_whale_position(...))
-                    logger.info(f"[WHALE] TX sent, position will be created by callback after verification")
+                    # INSTANT MONITOR START — no waiting for TX callback!
+                    _mint_str = str(mint)
+                    if _reg_mon(_mint_str):
+                        asyncio.create_task(self._monitor_position_until_exit(token_info, position))
+                        logger.warning(f"[WHALE] ⚡ MONITOR STARTED INSTANTLY for {whale_buy.token_symbol}")
+                    else:
+                        logger.warning(f"[WHALE] Monitor already running for {whale_buy.token_symbol}")
             else:
                 # Clean readable failure log
                 logger.error("=" * 70)
@@ -1463,6 +1565,77 @@ class UniversalTrader:
             logger.info(f"[PREFETCH] Quote error: {e}")
         return None
 
+
+    async def _async_deployer_check(self, mint_str: str, whale_buy):
+        """Background deployer blacklist check (PATCH 11D-ASYNC).
+        
+        Runs in parallel with Jupiter buy. If deployer is blacklisted,
+        cancels the position and sells tokens immediately.
+        Cost: ~265ms RPC call, but NO LONGER on critical path.
+        """
+        try:
+            from platforms.pumpfun.address_provider import PumpFunAddresses
+            _bc, _ = Pubkey.find_program_address(
+                [b"bonding-curve", bytes(Pubkey.from_string(mint_str))],
+                PumpFunAddresses.PROGRAM
+            )
+            _pool = await self.platform_implementations.curve_manager.get_pool_state(_bc)
+            if _pool:
+                _creator = _pool.get("creator", "")
+                if _creator:
+                    _cstr = str(_creator)[:44]
+                    from trading.deployer_blacklist import is_deployer_blacklisted, get_deployer_label
+                    if is_deployer_blacklisted(_cstr):
+                        _label = get_deployer_label(_cstr)
+                        logger.warning(
+                            f"[BLACKLIST] \u26d4 ASYNC deployer block: {whale_buy.token_symbol} "
+                            f"deployer={_label} ({_cstr[:12]}...) — ABORTING POSITION"
+                        )
+                        # Cancel position and sell if tokens arrived
+                        await self._abort_blacklisted_buy(mint_str, whale_buy.token_symbol)
+                        return
+            logger.debug(f"[BLACKLIST] Async deployer check OK for {mint_str[:12]}")
+        except Exception as e:
+            logger.debug(f"[BLACKLIST] Async deployer check skipped: {e}")
+
+    async def _abort_blacklisted_buy(self, mint_str: str, symbol: str):
+        """Abort a position after async deployer blacklist detection."""
+        try:
+            # Find and remove position
+            position = None
+            for p in self.active_positions:
+                if str(p.mint) == mint_str:
+                    position = p
+                    break
+            if not position:
+                logger.info(f"[BLACKLIST] No position found for {symbol} — buy may have failed")
+                return
+            # If tokens arrived, sell them
+            _tokens_ok = getattr(position, 'tokens_arrived', True)
+            _buy_ok = getattr(position, 'buy_confirmed', True)
+            if _tokens_ok and _buy_ok:
+                logger.warning(f"[BLACKLIST] Selling blacklisted {symbol} — tokens on wallet")
+                from interfaces.core import TokenInfo
+                from solders.pubkey import Pubkey
+                bc = Pubkey.from_string(position.bonding_curve) if position.bonding_curve else None
+                token_info = TokenInfo(
+                    name=symbol, symbol=symbol, uri="",
+                    mint=Pubkey.from_string(mint_str),
+                    platform=self.platform, bonding_curve=bc,
+                    creator=None, creator_vault=None,
+                )
+                from trading.position import ExitReason
+                await self._fast_sell_with_timeout(
+                    token_info, position, position.entry_price,
+                    position.quantity, exit_reason=ExitReason.STOP_LOSS
+                )
+            else:
+                # Tokens not yet arrived — just remove position, TX will fail anyway
+                logger.warning(f"[BLACKLIST] Removing unconfirmed blacklisted position {symbol}")
+                self._remove_position(mint_str)
+        except Exception as e:
+            logger.error(f"[BLACKLIST] Abort failed for {symbol}: {e}")
+
     async def _buy_any_dex(
         self,
         mint_str: str,
@@ -1527,6 +1700,20 @@ class UniversalTrader:
                 if pool_state and not pool_state.get("complete", False):
                     # Bonding curve available! Use normal pump.fun buy
                     logger.info(f"[OK] Pump.Fun bonding curve available for {symbol}")
+
+                    # === PATCH 11: Pre-buy deployer blacklist check (0ms — data already in pool_state) ===
+                    _creator_addr = pool_state.get("creator", "")
+                    if _creator_addr:
+                        _creator_str = str(_creator_addr)[:44]
+                        from trading.deployer_blacklist import is_deployer_blacklisted, get_deployer_label
+                        if is_deployer_blacklisted(_creator_str):
+                            _bl_label = get_deployer_label(_creator_str)
+                            logger.warning(
+                                f"[BLACKLIST] \u26d4 PRE-BUY BLOCK: {symbol} deployer={_bl_label} "
+                                f"({_creator_str[:12]}...) — SKIPPING BUY"
+                            )
+                            return False, None, "blacklisted", 0.0, 0.0
+                    # === END PATCH 11 ===
 
                     # Create TokenInfo for pump.fun buy
                     token_info = await self._create_pumpfun_token_info_from_mint(
@@ -1609,6 +1796,20 @@ class UniversalTrader:
                     # Bonding curve available! Use normal letsbonk buy
                     logger.info(f"[OK] LetsBonk bonding curve available for {symbol}")
 
+                    # === PATCH 11B: Pre-buy deployer blacklist check (LetsBonk) ===
+                    _creator_addr = pool_state.get("creator", "")
+                    if _creator_addr:
+                        _creator_str = str(_creator_addr)[:44]
+                        from trading.deployer_blacklist import is_deployer_blacklisted, get_deployer_label
+                        if is_deployer_blacklisted(_creator_str):
+                            _bl_label = get_deployer_label(_creator_str)
+                            logger.warning(
+                                f"[BLACKLIST] \u26d4 PRE-BUY BLOCK: {symbol} deployer={_bl_label} "
+                                f"({_creator_str[:12]}...) — SKIPPING BUY"
+                            )
+                            return False, None, "blacklisted", 0.0, 0.0
+                    # === END PATCH 11B ===
+
                     # Create TokenInfo for letsbonk buy
                     token_info = await self._create_letsbonk_token_info_from_mint(
                         mint_str, symbol, pool_address, pool_state
@@ -1677,6 +1878,20 @@ class UniversalTrader:
                 if pool_state and pool_state.get("status") != "migrated":
                     # BAGS pool available! Use normal bags buy
                     logger.info(f"[OK] BAGS pool available for {symbol}")
+
+                    # === PATCH 11C: Pre-buy deployer blacklist check (BAGS) ===
+                    _creator_addr = pool_state.get("creator", "")
+                    if _creator_addr:
+                        _creator_str = str(_creator_addr)[:44]
+                        from trading.deployer_blacklist import is_deployer_blacklisted, get_deployer_label
+                        if is_deployer_blacklisted(_creator_str):
+                            _bl_label = get_deployer_label(_creator_str)
+                            logger.warning(
+                                f"[BLACKLIST] \u26d4 PRE-BUY BLOCK: {symbol} deployer={_bl_label} "
+                                f"({_creator_str[:12]}...) — SKIPPING BUY"
+                            )
+                            return False, None, "blacklisted", 0.0, 0.0
+                    # === END PATCH 11C ===
 
                     # Create TokenInfo for bags buy
                     token_info = await self._create_bags_token_info_from_mint(
@@ -3270,6 +3485,73 @@ class UniversalTrader:
         # Save position to file for recovery after restart
         self._save_position(position)
 
+        # === POST-BUY PRICE VALIDATION ===
+        # Check if entry price is stale (common with whale copy on fast-moving tokens)
+        try:
+            await asyncio.sleep(0.5)  # Brief pause for price to propagate
+            from utils.batch_price_service import get_cached_price
+            _fresh = get_cached_price(str(token_info.mint))
+            if not _fresh or _fresh <= 0:
+                # Try Jupiter as fallback
+                try:
+                    _fresh = await self._fallback_seller.get_jupiter_price(token_info.mint)
+                except Exception:
+                    pass
+            if _fresh and _fresh > 0 and position.entry_price > 0:
+                _dev = (_fresh - position.entry_price) / position.entry_price
+                logger.info(
+                    f"[POST-BUY] {token_info.symbol}: entry={position.entry_price:.10f}, "
+                    f"fresh={_fresh:.10f}, deviation={_dev*100:+.1f}%"
+                )
+                if _dev < -0.15:
+                    # Price dropped >15% from entry — entry was stale
+                    logger.warning(
+                        f"[POST-BUY] {token_info.symbol}: STALE PRICE detected! "
+                        f"entry={position.entry_price:.10f} vs fresh={_fresh:.10f} ({_dev*100:+.1f}%)"
+                    )
+                    # Adjust entry to fresh price (more realistic PnL tracking)
+                    old_entry = position.entry_price
+                    position.entry_price = _fresh
+                    # Recalculate TP/SL from corrected entry
+                    if self.take_profit_percentage and position.take_profit_price:
+                        position.take_profit_price = _fresh * (1 + self.take_profit_percentage)
+                    if self.stop_loss_percentage and position.stop_loss_price:
+                        position.stop_loss_price = _fresh * (1 - self.stop_loss_percentage)
+                    position.high_water_mark = _fresh
+                    self._save_position(position)
+                    logger.warning(
+                        f"[POST-BUY] {token_info.symbol}: Entry corrected {old_entry:.10f} -> {_fresh:.10f}, "
+                        f"new TP={position.take_profit_price}, new SL={position.stop_loss_price}"
+                    )
+                if _dev < -0.30:
+                    # Price dropped >30% — emergency sell immediately
+                    logger.error(
+                        f"[POST-BUY] {token_info.symbol}: CATASTROPHIC LOSS {_dev*100:.1f}%! "
+                        f"Emergency sell before monitor starts."
+                    )
+                    try:
+                        mint_str = str(token_info.mint)
+                        success, sig, error = await self._fallback_seller._sell_via_jupiter(
+                            token_info.mint, position.quantity, token_info.symbol
+                        )
+                        if success:
+                            logger.warning(f"[POST-BUY] {token_info.symbol}: Emergency sell sent: {sig}")
+                            position.close_position(_fresh, ExitReason.STOP_LOSS)
+                            self._remove_position(mint_str)
+                            try:
+                                from trading.redis_state import forget_position_forever
+                                await forget_position_forever(mint_str, reason="postbuy_emergency")
+                            except Exception:
+                                pass
+                            return  # Don't start monitor
+                        else:
+                            logger.error(f"[POST-BUY] {token_info.symbol}: Emergency sell FAILED: {error}")
+                    except Exception as e:
+                        logger.error(f"[POST-BUY] {token_info.symbol}: Emergency sell exception: {e}")
+        except Exception as e:
+            logger.debug(f"[POST-BUY] {token_info.symbol}: Price validation failed: {e}")
+        # === END POST-BUY PRICE VALIDATION ===
+
         # Monitor position in parallel (don't block)
         logger.warning(f"[MONITOR] Starting async monitor for {token_info.symbol}")
         asyncio.create_task(self._monitor_position_wrapper(token_info, position))
@@ -3388,12 +3670,14 @@ class UniversalTrader:
         consecutive_price_errors = 0
         last_known_price = position.entry_price  # Use entry price as fallback
         _anomaly_count = 0  # consecutive price anomaly counter
+        _stale_count = 0  # PATCH 9A: consecutive ticks with same price
+        _prev_price = 0.0
         check_count = 0
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
-        HARD_STOP_LOSS_PCT = 35.0  # 35% убыток = НЕМЕДЛЕННАЯ продажа (backup если Config SL не сработал)
-        EMERGENCY_STOP_LOSS_PCT = 45.0  # 45% убыток = ЭКСТРЕННАЯ продажа (последний рубеж)
+        HARD_STOP_LOSS_PCT = 30.0  # 30% убыток = НЕМЕДЛЕННАЯ продажа (backup если Config SL не сработал)
+        EMERGENCY_STOP_LOSS_PCT = 35.0  # 35% убыток = ЭКСТРЕННАЯ продажа (последний рубеж)
 
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
@@ -3409,7 +3693,7 @@ class UniversalTrader:
             check_count += 1
 
             # Safety check: prevent infinite loops
-            await asyncio.sleep(0.1)  # 100ms sleep между итерациями
+            # PATCH 13: removed redundant 0.1s sleep (main sleep is at end of loop)
             if total_iterations > max_iterations:
                 skip_sl_iter = str(token_info.mint) in NO_SL_MINTS
                 if skip_sl_iter:
@@ -3434,11 +3718,28 @@ class UniversalTrader:
                     if grpc_price and grpc_price > 0:
                         current_price = grpc_price
                         price_source = "grpc_stream"
-
                 # Fallback: Get price from batch cache (instant, no API call!)
                 if not current_price or current_price <= 0:
                     current_price = get_cached_price(mint_str)
-                
+
+                # === PATCH 13B: Fast gRPC retry for first ticks (avoid 3s Jupiter timeout) ===
+                if (not current_price or current_price <= 0) and check_count <= 10:
+                    # gRPC may not have delivered first update yet — wait briefly and retry
+                    for _grpc_retry in range(3):
+                        await asyncio.sleep(0.2)
+                        if self.whale_tracker and hasattr(self.whale_tracker, 'get_vault_price'):
+                            grpc_price = self.whale_tracker.get_vault_price(mint_str)
+                            if grpc_price and grpc_price > 0:
+                                current_price = grpc_price
+                                price_source = "grpc_retry"
+                                break
+                        _batch = get_cached_price(mint_str)
+                        if _batch and _batch > 0:
+                            current_price = _batch
+                            price_source = "batch_retry"
+                            break
+                # === END PATCH 13B ===
+
                 if not current_price or current_price <= 0:
                     # Cache miss - fallback to direct Jupiter (rare)
                     price_source = "jupiter_fallback"
@@ -3511,6 +3812,32 @@ class UniversalTrader:
                 # Reset error counter on successful price fetch
                 consecutive_price_errors = 0
                 last_known_price = current_price
+
+                # === PATCH 9A: STALE PRICE DETECTION ===
+                # If price unchanged for 5+ ticks, force Jupiter refresh
+                if current_price == _prev_price and current_price > 0:
+                    _stale_count += 1
+                    if _stale_count >= 5:
+                        try:
+                            from utils.jupiter_price import get_token_price
+                            fresh_price, _ = await asyncio.wait_for(
+                                get_token_price(mint_str), timeout=3.0
+                            )
+                            if fresh_price and fresh_price > 0:
+                                if abs(fresh_price - current_price) / current_price > 0.05:
+                                    logger.warning(
+                                        f"[STALE] {token_info.symbol}: Cache stuck at {current_price:.10f}, "
+                                        f"Jupiter says {fresh_price:.10f} ({((fresh_price-current_price)/current_price)*100:+.1f}%)"
+                                    )
+                                    current_price = fresh_price
+                                    last_known_price = fresh_price
+                                _stale_count = 0
+                        except Exception as e:
+                            logger.debug(f"[STALE] Jupiter refresh failed: {e}")
+                else:
+                    _stale_count = 0
+                _prev_price = current_price
+                # === END PATCH 9A ===
 
                 # Calculate current PnL FIRST (needed for all checks)
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
@@ -3867,6 +4194,8 @@ class UniversalTrader:
                     # ============================================
                     # FAST SELL с параллельными методами (5s timeout, 10s max)
                     # ============================================
+                    # --- PATCH 6: Double-sell race condition guard ---
+                    position.is_selling = True
                     logger.error(f"[SELL] {token_info.symbol}: PnL {pnl_pct:.1f}% - FAST SELL MODE")
                     
                     # skip_cleanup for partial sells (TP partial, TSL moonbag)
@@ -3875,7 +4204,7 @@ class UniversalTrader:
                         or (exit_reason == ExitReason.TRAILING_STOP and position.tsl_sell_pct < 1.0)
                     )
                     sell_success = await self._fast_sell_with_timeout(
-                        token_info, position, current_price, sell_quantity, skip_cleanup=_is_partial
+                        token_info, position, current_price, sell_quantity, skip_cleanup=_is_partial, exit_reason=exit_reason
                     )
                     
                     if sell_success:
@@ -3938,7 +4267,7 @@ class UniversalTrader:
                                 if not position.tsl_active and self.tsl_enabled:
                                     position.tsl_active = True
                                     position.high_water_mark = current_price
-                                    position.tsl_trigger_price = max(current_price * (1 - self.tsl_trail_pct), position.entry_price)
+                                    position.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
                                     logger.warning(f"[TSL] {token_info.symbol}: FORCE-ACTIVATED after partial TP. HWM={current_price:.10f}, trigger={position.tsl_trigger_price:.10f}")
                                 self._save_position(position)
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
@@ -3966,17 +4295,19 @@ class UniversalTrader:
                         unregister_monitor(str(token_info.mint))
                         logger.info(f"[CLEANUP] Position {token_info.symbol} removed from tracking")
                         
+                        position.is_selling = False  # PATCH 6: reset guard
                         break  # Exit monitoring loop after successful sell
                     else:
                         # Не удалось продать - retry с лимитом
+                        position.is_selling = False  # PATCH 6: reset guard on failure
                         MAX_SELL_RETRIES = 5
                         sell_retry_count += 1
                         
                         if sell_retry_count >= MAX_SELL_RETRIES:
                             logger.error(f"[GIVE UP] {token_info.symbol}: {MAX_SELL_RETRIES} sell attempts failed!")
                             logger.error(f"[MANUAL] Position requires MANUAL intervention: {token_info.mint}")
-                            # Mark as failed but dont spam anymore
-                            pending_stop_loss = False
+                            sell_retry_count = 0  # Reset counter, keep trying
+                            pending_stop_loss = True  # Keep selling
                             await asyncio.sleep(300)  # Wait 5 min before any retry
                             sell_retry_count = 0  # Reset for rare retry
                             continue
@@ -4288,7 +4619,7 @@ class UniversalTrader:
                             )
                             sold = await self._fast_sell_with_timeout(
                                 token_info, temp_pos, price,
-                                sell_quantity=ui_amount, skip_cleanup=True
+                                sell_quantity=ui_amount, skip_cleanup=True, exit_reason=ExitReason.STOP_LOSS
                             )
                             if sold:
                                 logger.warning(f"[MOONBAG SL] {symbol}: SOLD {ui_amount:,.2f} tokens at {price:.10f}")
@@ -4308,18 +4639,41 @@ class UniversalTrader:
             logger.error(f"[MOONBAG SL] {symbol}: Watcher crashed: {e}")
 
 
+    def _get_sell_lock(self, mint_str: str) -> asyncio.Lock:
+        """Get or create a per-mint sell lock to prevent duplicate sells."""
+        if not hasattr(self, '_sell_locks'):
+            self._sell_locks = {}
+        if mint_str not in self._sell_locks:
+            self._sell_locks[mint_str] = asyncio.Lock()
+        return self._sell_locks[mint_str]
+
     async def _fast_sell_with_timeout(
-        self, token_info: TokenInfo, position: Position, current_price: float, sell_quantity: float = None, skip_cleanup: bool = False
+        self, token_info: TokenInfo, position: Position, current_price: float, sell_quantity: float = None, skip_cleanup: bool = False, exit_reason=None
     ) -> bool:
         """
-        Fast sell via Jupiter. No PumpSwap. No wrapper timeouts.
-        Uses cached FallbackSeller with warm TCP connection.
+        Fast sell via Jupiter with balance check.
+        Checks wallet balance, then sells via Jupiter. PumpPortal removed.
         """
         from trading.position import ExitReason
+        import time as _time
 
+        _t0 = _time.monotonic()
         mint_str = str(token_info.mint)
         if sell_quantity is None:
             sell_quantity = position.quantity
+
+        # PATCH Phase 6: Don't sell until tokens actually arrived on wallet
+        _tokens_ok = getattr(position, 'tokens_arrived', True)
+        _buy_ok = getattr(position, 'buy_confirmed', True)
+        if not _tokens_ok or not _buy_ok:
+            from datetime import datetime as _dt, timezone as _tz
+            _pos_age = (_dt.now(_tz.utc) - position.entry_time.replace(tzinfo=_tz.utc)).total_seconds() if position.entry_time else 0
+            if _pos_age < 15.0:
+                _reason = "tokens_arrived=False" if not _tokens_ok else "buy_confirmed=False"
+                logger.warning(f"[FAST SELL] BLOCKED: {token_info.symbol} {_reason}, age={_pos_age:.1f}s < 15s — waiting")
+                return False
+            else:
+                logger.warning(f"[FAST SELL] tokens/buy not confirmed but age={_pos_age:.0f}s >= 15s — proceeding (fallback)")
 
         MIN_SELL_TOKENS = 1.0
         MIN_SELL_VALUE_SOL = 0.0001
@@ -4336,43 +4690,77 @@ class UniversalTrader:
             return True
 
         # Check actual wallet balance — never try to sell more than we have
-        actual_balance = await self._get_token_balance(str(token_info.mint))
-        if actual_balance is not None:
-            if actual_balance < sell_quantity * 0.9:
-                logger.warning(f"[FAST SELL] Quantity mismatch: position={sell_quantity:.2f} wallet={actual_balance:.2f}, using wallet balance")
-                sell_quantity = actual_balance
-            if actual_balance < MIN_SELL_TOKENS:
-                logger.warning(f"[FAST SELL] SKIP DUST: {token_info.symbol} wallet has {actual_balance:.4f} tokens")
-                if not skip_cleanup:
-                    self._remove_position(str(token_info.mint))
-                return True
-
-        logger.warning(f"[FAST SELL] {token_info.symbol} ({sell_quantity:.2f} tokens) via Jupiter")
-
         try:
-            success, sig, error = await self._fallback_seller._sell_via_jupiter(
-                token_info.mint, sell_quantity, token_info.symbol
-            )
-        except Exception as e:
-            logger.error(f"[FAST SELL] Jupiter exception: {e}")
+            actual_balance = await self._get_token_balance(str(token_info.mint))
+            if actual_balance is not None and actual_balance >= 0:
+                # Normal balance — use it
+                if actual_balance < MIN_SELL_TOKENS:
+                    logger.warning(f"[FAST SELL] SKIP DUST: {token_info.symbol} wallet has {actual_balance:.4f} tokens — nothing to sell")
+                    if not skip_cleanup:
+                        self._remove_position(str(token_info.mint))
+                    return True
+                if actual_balance < sell_quantity * 0.9:
+                    logger.warning(f"[FAST SELL] Quantity mismatch: position={sell_quantity:.2f} wallet={actual_balance:.2f}, using wallet balance")
+                    sell_quantity = actual_balance
+            elif actual_balance is None:
+                # Token account not found via RPC
+                from datetime import datetime as _dt2, timezone as _tz2
+                _pos_age2 = (_dt2.now(_tz2.utc) - position.entry_time.replace(tzinfo=_tz2.utc)).total_seconds() if position.entry_time else 999
+                _confirmed = getattr(position, 'tokens_arrived', False) or getattr(position, 'buy_confirmed', False)
+                if _confirmed:
+                    # TX confirmed but RPC lags behind — skip RPC, sell with position qty
+                    logger.warning(f"[FAST SELL] RPC no account but TX confirmed for {token_info.symbol} age={_pos_age2:.1f}s — selling with position qty {sell_quantity:.2f}")
+                elif _pos_age2 < 15.0:
+                    # NOT confirmed and young — wait for TX confirmation
+                    logger.warning(f"[FAST SELL] No token account for {token_info.symbol} age={_pos_age2:.1f}s < 15s, not confirmed — RETRY")
+                    return False  # Retry — don't delete position
+                else:
+                    # NOT confirmed and old — buy likely failed
+                    logger.warning(f"[FAST SELL] No token account for {token_info.symbol} (age={_pos_age2:.0f}s, not confirmed) — buy likely failed")
+                    if not skip_cleanup:
+                        self._remove_position(mint_str)
+                    return True
+            else:
+                # BALANCE_RPC_ERROR (-1.0) — all RPCs failed, but tokens may exist
+                logger.warning(f"[FAST SELL] Balance check RPC error for {token_info.symbol} — selling with position qty {sell_quantity:.2f} as fallback")
+        except Exception as bal_err:
+            logger.warning(f"[FAST SELL] Balance check exception: {type(bal_err).__name__}: {bal_err}, using position quantity")
+
+        # Per-mint lock — only check, never wait
+        sell_lock = self._get_sell_lock(mint_str)
+        if sell_lock.locked():
+            logger.warning(f"[FAST SELL] SKIP: sell already in progress for {token_info.symbol}")
             return False
 
-        if success:
-            logger.warning(f"[FAST SELL] Jupiter SUCCESS: {sig}")
-            original_qty = getattr(position, "quantity", sell_quantity)
-            asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity))
-            if not skip_cleanup:
-                position.close_position(current_price, ExitReason.STOP_LOSS)
-                self._remove_position(mint_str)
-                try:
-                    from trading.redis_state import forget_position_forever
-                    await forget_position_forever(mint_str, reason="sl_sell")
-                except Exception as e:
-                    logger.warning(f"[FAST SELL] Redis cleanup failed: {e}")
-            return True
+        logger.warning(f"[FAST SELL] {token_info.symbol} ({sell_quantity:.2f} tokens) via Jupiter [t+{(_time.monotonic()-_t0)*1000:.0f}ms]")
 
-        logger.error(f"[FAST SELL] Jupiter FAILED: {error}")
-        return False
+        async with sell_lock:
+            try:
+                success, sig, error = await self._fallback_seller._sell_via_jupiter(
+                    token_info.mint, sell_quantity, token_info.symbol
+                )
+            except Exception as e:
+                logger.error(f"[FAST SELL] Jupiter exception: {e}")
+                return False
+
+            _elapsed = (_time.monotonic() - _t0) * 1000
+            if success:
+                logger.warning(f"[FAST SELL] Jupiter SUCCESS (confirmed): {sig} [{_elapsed:.0f}ms]")
+                original_qty = getattr(position, "quantity", sell_quantity)
+                _exit_reason_str = exit_reason.value if isinstance(exit_reason, ExitReason) else (str(exit_reason) if exit_reason else "")
+                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity, exit_reason=_exit_reason_str))
+                if not skip_cleanup:
+                    position.close_position(current_price, ExitReason.STOP_LOSS)
+                    self._remove_position(mint_str)
+                    try:
+                        from trading.redis_state import forget_position_forever
+                        await forget_position_forever(mint_str, reason="sl_sell")
+                    except Exception as e:
+                        logger.warning(f"[FAST SELL] Redis cleanup failed: {e}")
+                return True
+
+            logger.error(f"[FAST SELL] Jupiter FAILED: {error} [{_elapsed:.0f}ms]")
+            return False
 
     async def _save_token_info(self, token_info: TokenInfo) -> None:
         """Save token information to a file."""
@@ -4496,7 +4884,7 @@ class UniversalTrader:
                 decimals=6,
             ))
 
-    async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None):
+    async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None, exit_reason: str = ""):
         """Background task to verify sell. Smarter logic for partial fills and DCA races."""
         try:
             await asyncio.sleep(5)  # Wait for TX to confirm
@@ -4504,15 +4892,22 @@ class UniversalTrader:
             # Try to get balance (with retries)
             remaining = None
             for balance_attempt in range(3):
-                remaining = await self._get_token_balance(mint_str)
-                if remaining is not None:
+                bal = await self._get_token_balance(mint_str)
+                if bal is not None and bal >= 0:
+                    remaining = bal
                     break
-                logger.warning(f"[VERIFY] {symbol}: Balance check attempt {balance_attempt+1}/3 failed")
-                await asyncio.sleep(2)
+                if bal is None:
+                    # Token account not found = fully sold or never existed
+                    remaining = 0.0
+                    logger.info(f"[VERIFY] {symbol}: Token account not found — treating as fully sold")
+                    break
+                # bal == BALANCE_RPC_ERROR (-1.0) — RPC failed, retry
+                logger.warning(f"[VERIFY] {symbol}: Balance check attempt {balance_attempt+1}/3 failed (RPC error)")
+                await asyncio.sleep(3)
 
             if remaining is None:
-                logger.error(f"[VERIFY] {symbol}: Could not get balance - removing from sold_mints")
-                await self._remove_from_sold_mints(mint_str, symbol)
+                # All 3 attempts returned RPC error — don't remove from sold_mints (safer)
+                logger.error(f"[VERIFY] {symbol}: All RPCs failed — keeping in sold_mints (safe default)")
                 return False
 
             expected_sell = sell_quantity if sell_quantity is not None else original_qty
@@ -4532,15 +4927,26 @@ class UniversalTrader:
                     sell_ratio = actual_sold / sell_quantity if sell_quantity > 0 else 0
                     if sell_ratio >= 0.5:
                         logger.info(f"[VERIFY] {symbol}: Partial sell CONFIRMED! Sold {actual_sold:.2f} tokens, keeping {remaining:.2f}")
+                        # Deferred forget (moved from _fast_sell)
+                        if remaining < 1.0:
+                            try:
+                                from trading.redis_state import forget_position_forever
+                                await forget_position_forever(mint_str, reason="verified_sell_complete")
+                            except Exception:
+                                pass
                         return True
 
                 # How much of expected did we actually sell?
                 sell_pct = actual_sold / expected_sell if expected_sell > 0 else 0
 
-                if sell_pct >= 0.5:
-                    # Sold 50%+ — acceptable
+                _is_sl_exit = exit_reason in ("stop_loss", "trailing_stop", "hard_stop_loss", "emergency_stop_loss")
+                if sell_pct >= 0.5 and not _is_sl_exit:
+                    # Non-SL: Sold 50%+ — acceptable (TP partial etc.)
                     logger.warning(f"[VERIFY] {symbol}: PARTIAL FILL {sell_pct*100:.0f}% — sold {actual_sold:.2f}/{expected_sell:.2f}. Remaining {remaining:.2f}")
                     return True
+                if _is_sl_exit and sell_pct >= 0.5:
+                    # SL exit but partial — log and fall through to retry
+                    logger.warning(f"[VERIFY] {symbol}: SL PARTIAL FILL {sell_pct*100:.0f}% — MUST retry remaining {remaining:.2f}!")
 
                 # Sold < 50% — low liquidity, RETRY what's still needed
                 still_need_to_sell = expected_sell - actual_sold
@@ -4655,6 +5061,8 @@ class UniversalTrader:
             asyncio.create_task(self.whale_tracker.unsubscribe_vault_accounts(mint))
         if self.whale_tracker and hasattr(self.whale_tracker, 'unsubscribe_bonding_curve'):
             asyncio.create_task(self.whale_tracker.unsubscribe_bonding_curve(mint))
+        if self.whale_tracker and hasattr(self.whale_tracker, 'unsubscribe_ata'):
+            asyncio.create_task(self.whale_tracker.unsubscribe_ata(mint))
         # FORGET FOREVER - add to sold_mints so never restored
         asyncio.create_task(self._forget_position_async(mint))
     
@@ -4726,7 +5134,68 @@ class UniversalTrader:
                     position.stop_loss_price = position.entry_price * (1 - self.stop_loss_percentage)
                     logger.info(f"[RESTORE] {position.symbol}: Calculated SL = {position.stop_loss_price:.10f}")
             # === END TP/SL FIX ===
+
+            # === FORCE TSL_ENABLED FROM CONFIG ===
+            # If bot config has TSL enabled but position doesn't (e.g. manual buy, old position),
+            # force-enable it. This ensures ALL non-moonbag positions get TSL protection.
+            if not position.is_moonbag and self.tsl_enabled and not position.tsl_enabled:
+                position.tsl_enabled = True
+                position.tsl_activation_pct = self.tsl_activation_pct
+                position.tsl_trail_pct = self.tsl_trail_pct
+                position.tsl_sell_pct = getattr(self, 'tsl_sell_pct', 1.0)
+                logger.warning(
+                    f"[RESTORE] {position.symbol}: TSL FORCE-ENABLED from config "
+                    f"(activation={self.tsl_activation_pct*100:.0f}%, trail={self.tsl_trail_pct*100:.0f}%)"
+                )
+            # === END FORCE TSL_ENABLED ===
+
+            # === ALWAYS SYNC TSL PARAMS FROM CONFIG ===
+            # Even if tsl_enabled=True, params may be stale (old defaults)
+            if not position.is_moonbag and self.tsl_enabled:
+                if position.tsl_activation_pct != self.tsl_activation_pct:
+                    logger.warning(
+                        f"[RESTORE] {position.symbol}: tsl_activation_pct {position.tsl_activation_pct} -> {self.tsl_activation_pct} (from config)"
+                    )
+                position.tsl_activation_pct = self.tsl_activation_pct
+                position.tsl_trail_pct = self.tsl_trail_pct
+                position.tsl_sell_pct = getattr(self, 'tsl_sell_pct', 1.0)
+                position.tp_sell_pct = getattr(self, 'tp_sell_pct', 0.8)
+            # === END SYNC TSL PARAMS ===
+
             
+
+            # === BALANCE CHECK: Skip ghost positions ===
+            try:
+                _bal = await self._get_token_balance(mint_str)
+                if _bal is not None and _bal == 0.0:
+                    logger.warning(f"[RESTORE] {position.symbol}: ZERO BALANCE on wallet — removing ghost position")
+                    self._remove_position(mint_str)
+                    try:
+                        from trading.redis_state import forget_position_forever
+                        await forget_position_forever(mint_str, reason="ghost_zero_balance")
+                    except Exception:
+                        pass
+                    continue
+                elif _bal is None:
+                    # Token account not found — also a ghost
+                    logger.warning(f"[RESTORE] {position.symbol}: Token account not found — removing ghost position")
+                    self._remove_position(mint_str)
+                    try:
+                        from trading.redis_state import forget_position_forever
+                        await forget_position_forever(mint_str, reason="ghost_no_account")
+                    except Exception:
+                        pass
+                    continue
+                elif _bal == self.BALANCE_RPC_ERROR:
+                    # All RPCs failed — keep position as-is (don't delete, don't update)
+                    logger.warning(f"[RESTORE] {position.symbol}: Balance check RPC error — keeping position unchanged")
+                elif _bal > 0:
+                    # Update quantity to actual on-chain balance
+                    if abs(_bal - position.quantity) / max(position.quantity, 1) > 0.1:
+                        logger.warning(f"[RESTORE] {position.symbol}: quantity {position.quantity:.2f} -> {_bal:.2f} (on-chain)")
+                        position.quantity = _bal
+            except Exception as _be:
+                logger.warning(f"[RESTORE] Balance check failed for {position.symbol}: {type(_be).__name__}: {_be}")
 
             # === SMART RESTORE: Check current price vs TP/DCA ===
             # Prevent instant TP trigger or DCA buy when price already moved
@@ -4734,14 +5203,24 @@ class UniversalTrader:
                 from utils.batch_price_service import get_cached_price
                 restore_price = get_cached_price(mint_str)
                 if restore_price and restore_price > 0 and not position.is_moonbag:
-                    # TP CHECK: If price already above TP, disable TP (let TSL handle)
+                    # TP CHECK: If price already above TP, force-activate TSL (keep TP as safety)
                     if position.take_profit_price and restore_price >= position.take_profit_price:
                         old_tp = position.take_profit_price
-                        position.take_profit_price = None
-                        logger.warning(
-                            f"[RESTORE] {position.symbol}: Price {restore_price:.10f} >= TP {old_tp:.10f} — "
-                            f"TP DISABLED, TSL will manage exit"
-                        )
+                        # DON'T kill TP — keep as safety net
+                        if not position.tsl_active and getattr(position, 'tsl_enabled', False):
+                            position.tsl_active = True
+                            position.high_water_mark = max(restore_price, position.high_water_mark or 0)
+                            position.tsl_trigger_price = position.high_water_mark * (1 - position.tsl_trail_pct)
+                            logger.warning(
+                                f"[RESTORE] {position.symbol}: Price {restore_price:.10f} >= TP {old_tp:.10f} — "
+                                f"TSL FORCE-ACTIVATED: HWM={position.high_water_mark:.10f}, "
+                                f"trigger={position.tsl_trigger_price:.10f}. TP kept as safety."
+                            )
+                        else:
+                            logger.info(
+                                f"[RESTORE] {position.symbol}: Price {restore_price:.10f} >= TP {old_tp:.10f} — "
+                                f"TSL already active={position.tsl_active}. TP kept."
+                            )
                     # DCA CHECK: If DCA pending but price already moved, skip DCA
                     if getattr(position, "dca_pending", False) and not getattr(position, "dca_bought", False):
                         orig_entry = getattr(position, "original_entry_price", position.entry_price)
@@ -4757,6 +5236,36 @@ class UniversalTrader:
             except Exception as e:
                 logger.debug(f"[RESTORE] {position.symbol}: Smart restore price check failed: {e}")
             # === END SMART RESTORE ===
+
+            # === TSL RECOVERY: Force-activate if conditions met but TSL inactive ===
+            if (not getattr(position, 'is_moonbag', False)
+                    and getattr(position, 'tsl_enabled', False)
+                    and not position.tsl_active):
+                _recovery_price = None
+                try:
+                    from utils.batch_price_service import get_cached_price
+                    _recovery_price = get_cached_price(mint_str)
+                except Exception:
+                    pass
+                _best = max(position.high_water_mark or 0, _recovery_price or 0)
+                if _best > 0 and position.entry_price > 0:
+                    _prof = (_best - position.entry_price) / position.entry_price
+                    if _prof >= position.tsl_activation_pct:
+                        position.tsl_active = True
+                        position.high_water_mark = _best
+                        position.tsl_trigger_price = _best * (1 - position.tsl_trail_pct)
+                        logger.warning(
+                            f"[RESTORE] {position.symbol}: TSL FORCE-ACTIVATED! "
+                            f"best={_best:.10f} >= +{position.tsl_activation_pct*100:.0f}% threshold, "
+                            f"HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}"
+                        )
+            # === END TSL RECOVERY ===
+
+            # Set restore_time for TSL grace period (15s warmup after restart)
+            from datetime import datetime as _dt_restore
+            if getattr(position, 'tsl_active', False):
+                position.restore_time = _dt_restore.utcnow()
+                logger.info(f"[RESTORE] {position.symbol}: TSL grace period started (15s)")
 
             self.active_positions.append(position)
 
@@ -4802,6 +5311,18 @@ class UniversalTrader:
                         address_provider = self.platform_implementations.address_provider
                         creator_vault = address_provider.derive_creator_vault(creator)
                         logger.info(f"Got creator {str(creator)[:8]}... from pool state")
+                        # === PATCH 9B: Deployer blacklist check post-buy ===
+                        from trading.deployer_blacklist import is_deployer_blacklisted, _deployer_wallets
+                        _creator_str = str(creator)[:44] if creator else ""
+                        if _creator_str and is_deployer_blacklisted(_creator_str):
+                            _label = _deployer_wallets.get(_creator_str, "unknown")
+                            logger.warning(f"[BLACKLIST] ⛔ SCAMMER DETECTED post-buy: {_label} ({_creator_str[:12]}...) — EMERGENCY SELL")
+                            try:
+                                await self._fast_sell_with_timeout(token_info, position, current_price, exit_reason=ExitReason.STOP_LOSS)
+                            except Exception as _e:
+                                logger.error(f"[BLACKLIST] Emergency sell failed: {_e}")
+                            break
+                        # === END PATCH 9B ===
                 except Exception as e:
                     logger.warning(f"Failed to get creator from pool: {e} - will try fallback sell")
                     # Don't mark as migrated - try to sell anyway via fallback

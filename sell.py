@@ -117,7 +117,7 @@ class BondingCurveState:
 
 
 def sync_position_after_sell(mint_str: str, percent: float):
-    """Sync position with REAL wallet balance after sell."""
+    """Sync position with REAL wallet balance after sell + restart bot."""
     import time
     import subprocess
     import json
@@ -125,79 +125,149 @@ def sync_position_after_sell(mint_str: str, percent: float):
     import base58
     import os
     from solders.keypair import Keypair
-    
+
     if percent >= 100:
-        # Полная продажа
+        # === Полная продажа ===
         try:
             subprocess.run(["redis-cli", "HDEL", "whale:positions", mint_str], capture_output=True)
             subprocess.run(["redis-cli", "SADD", "sold_mints", mint_str], capture_output=True)
-            if POSITIONS_AVAILABLE:
-                remove_position(mint_str)
-            print(f"📝 Позиция удалена полностью")
+
+            # positions.json — удалить все записи с этим mint
+            try:
+                with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
+                    positions = json.load(f)
+                positions = [p for p in positions if p.get("mint") != mint_str]
+                with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
+                    json.dump(positions, f, indent=2)
+            except Exception:
+                if POSITIONS_AVAILABLE:
+                    remove_position(mint_str)
+
+            print(f"\U0001f4dd Позиция удалена полностью")
         except Exception as e:
-            print(f"⚠️ Ошибка: {e}")
+            print(f"\u26a0\ufe0f Ошибка: {e}")
+
+        # Перезапуск бота
+        _restart_bot()
         return
-    
-    # Частичная продажа - ждём и берём реальный баланс
-    print(f"🔄 Синхронизация...")
-    time.sleep(15)  # Ждём обновления RPC
-    
+
+    # === Частичная продажа — retry-цикл ===
+    print(f"\U0001f504 Синхронизация...")
+
+    pk = os.environ.get("SOLANA_PRIVATE_KEY")
+    rpcs = [r for r in [
+        os.environ.get("DRPC_RPC_ENDPOINT"),
+        os.environ.get("ALCHEMY_RPC_ENDPOINT"),
+        os.environ.get("SOLANA_NODE_RPC_ENDPOINT"),
+    ] if r]
+    wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
+
+    # Сначала берём старый баланс из Redis
+    old_qty = 0
     try:
-        pk = os.environ.get("SOLANA_PRIVATE_KEY")
-        rpcs = [r for r in [
-            os.environ.get("DRPC_RPC_ENDPOINT"),
-            os.environ.get("ALCHEMY_RPC_ENDPOINT"),
-            os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-        ] if r]
-        wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
-        
-        real_balance = 0
+        result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
+        if result.stdout.strip():
+            pos_data = json.loads(result.stdout.strip())
+            old_qty = pos_data.get("quantity", 0)
+    except Exception:
+        pass
+
+    # Retry-цикл: 1-2-3-4-5 сек (макс ~15 сек)
+    real_balance = 0
+    _sync_start = time.time()
+    for attempt in range(5):
+        wait = attempt + 1
+        print(f"   Ожидание {wait} сек... (попытка {attempt+1}/5)")
+        time.sleep(wait)
+
         for rpc_url in rpcs:
             try:
-                resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-                    "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]}, timeout=30)
+                resp = requests.post(rpc_url, json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [wallet, {"mint": mint_str}, {"encoding": "jsonParsed"}]
+                }, timeout=15)
                 accounts = resp.json().get("result", {}).get("value", [])
                 if accounts:
-                    real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
-                    if real_balance > 0:
+                    bal = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"] or 0)
+                    if bal > 0 and (old_qty == 0 or abs(bal - old_qty) / max(old_qty, 1) > 0.001):
+                        real_balance = bal
                         break
-            except:
+            except Exception:
                 continue
-        
         if real_balance > 0:
-            # Redis
-            result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
-            if result.stdout.strip():
-                pos = json.loads(result.stdout.strip())
-                old_qty = pos.get("quantity", 0)
-                pos["quantity"] = real_balance
-                subprocess.run(["redis-cli", "HSET", "whale:positions", mint_str, json.dumps(pos)], capture_output=True)
-                
-                # positions.json
-                if POSITIONS_AVAILABLE:
-                    positions = load_positions()
-                    for p in positions:
-                        if str(p.mint) == mint_str:
-                            p.quantity = real_balance
-                            break
-                    save_positions(positions)
-                
-                # history
-                try:
-                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
-                        history = json.load(f)
-                    if mint_str in history.get("purchased_tokens", {}):
-                        history["purchased_tokens"][mint_str]["amount"] = real_balance
-                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
-                            json.dump(history, f, indent=2)
-                except:
-                    pass
-                
-                print(f"✅ Баланс: {old_qty:,.2f} -> {real_balance:,.2f}")
+            break
+
+    if real_balance <= 0:
+        print(f"\u26a0\ufe0f Не удалось получить новый баланс, оставляю старый")
+        _restart_bot()
+        return
+
+    # Обновить Redis
+    try:
+        result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_str], capture_output=True, text=True)
+        if result.stdout.strip():
+            pos = json.loads(result.stdout.strip())
+            pos["quantity"] = real_balance
+            subprocess.run(["redis-cli", "HSET", "whale:positions", mint_str, json.dumps(pos)], capture_output=True)
+    except Exception:
+        pass
+
+    # Обновить positions.json (с дедупликацией)
+    try:
+        with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
+            positions = json.load(f)
+
+        updated = False
+        seen = set()
+        clean = []
+        for p in positions:
+            m = p.get("mint")
+            if m == mint_str:
+                if m not in seen:
+                    p["quantity"] = real_balance
+                    clean.append(p)
+                    seen.add(m)
+                    updated = True
+                # дубликаты пропускаем
+            else:
+                clean.append(p)
+
+        with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
+            json.dump(clean, f, indent=2)
+    except Exception:
+        pass
+
+    # History
+    try:
+        hist_path = "/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json"
+        with open(hist_path, "r") as f:
+            history = json.load(f)
+        if mint_str in history.get("purchased_tokens", {}):
+            history["purchased_tokens"][mint_str]["amount"] = real_balance
+            with open(hist_path, "w") as f:
+                json.dump(history, f, indent=2)
+    except Exception:
+        pass
+
+    print(f"\U0001f4ca Баланс: {old_qty:,.2f} -> {real_balance:,.2f} (sync: {time.time()-_sync_start:.1f}s)")
+    _restart_bot()
+
+
+def _restart_bot():
+    """Restart whale-bot service."""
+    import subprocess
+    try:
+        print(f"\U0001f504 Перезапуск бота...")
+        subprocess.run(["systemctl", "restart", "whale-bot"], capture_output=True, timeout=10)
+        result = subprocess.run(["systemctl", "is-active", "whale-bot"], capture_output=True, text=True, timeout=5)
+        if result.stdout.strip() == "active":
+            print(f"\u2705 Бот перезапущен, монитор активен")
         else:
-            print(f"⚠️ Не удалось получить баланс")
+            print(f"\u26a0\ufe0f whale-bot status: {result.stdout.strip()}")
     except Exception as e:
-        print(f"⚠️ Sync error: {e}")
+        print(f"\u26a0\ufe0f Restart error: {e}")
+
 
 
 def get_bonding_curve_address(mint: Pubkey) -> tuple[Pubkey, int]:

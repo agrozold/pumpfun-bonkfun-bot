@@ -979,255 +979,252 @@ def main():
     # После успешной покупки - синхронизируем через wsync (берёт реальный баланс с кошелька)
     if success:
         print("")
-        print("🔄 Синхронизация позиции...")
+        print("\U0001f504 \u0421\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u044f \u043f\u043e\u0437\u0438\u0446\u0438\u0438...")
         import time
         import subprocess, json, requests, base58, os
         from solders.keypair import Keypair
-        
+
         try:
             pk = os.environ.get("SOLANA_PRIVATE_KEY")
-            # Используем DRPC как основной - он быстрее обновляется
-            rpc = os.environ.get("DRPC_RPC_ENDPOINT") or os.environ.get("ALCHEMY_RPC_ENDPOINT") or os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
             wallet = str(Keypair.from_bytes(base58.b58decode(pk)).pubkey())
             mint_addr = str(mint)
-            
-            # Получаем ТЕКУЩИЙ баланс с RPC (до покупки он уже записан)
-            old_balance = 0
-            old_entry = 0
-            rpc_balance_before = 0
-            result = subprocess.run(["redis-cli", "HGET", "whale:positions", mint_addr], capture_output=True, text=True)
-            if result.stdout.strip():
-                pos = json.loads(result.stdout.strip())
-                old_balance = pos.get("quantity", 0)
-                old_entry = pos.get("entry_price", 0)
 
-            # Ждём и делаем 3 попытки с разными RPC
-            rpcs = [
+            # == 1. Current state from Redis + positions.json ==
+            existing_redis = None
+            redis_result = subprocess.run(
+                ["redis-cli", "HGET", "whale:positions", mint_addr],
+                capture_output=True, text=True, timeout=5
+            )
+            if redis_result.stdout.strip():
+                try:
+                    existing_redis = json.loads(redis_result.stdout.strip())
+                except json.JSONDecodeError:
+                    existing_redis = None
+
+            existing_json = None
+            positions_from_file = []
+            try:
+                with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
+                    positions_from_file = json.load(f)
+                for p in positions_from_file:
+                    if p.get("mint") == mint_addr:
+                        existing_json = p
+                        break
+            except (FileNotFoundError, json.JSONDecodeError):
+                positions_from_file = []
+
+            existing_pos = existing_redis or existing_json
+            old_qty = 0
+            old_entry = 0
+            if existing_pos:
+                old_qty = existing_pos.get("quantity", 0)
+                old_entry = existing_pos.get("entry_price", 0)
+
+            # == 2. Wait for RPC balance update ==
+            rpcs = [r for r in [
+                "https://mainnet.helius-rpc.com/?api-key=" + os.environ.get("HELIUS_API_KEY", ""),
                 os.environ.get("DRPC_RPC_ENDPOINT"),
                 os.environ.get("ALCHEMY_RPC_ENDPOINT"),
-                os.environ.get("SOLANA_NODE_RPC_ENDPOINT")
-            ]
-            rpcs = [r for r in rpcs if r]
+                os.environ.get("SOLANA_NODE_RPC_ENDPOINT"),
+            ] if r]
 
-            real_balance = old_balance
-            last_rpc_balance = 0  # Баланс с предыдущего запроса RPC
-            
-            # Сначала получаем текущий баланс с RPC (до обновления)
+            rpc_balance_before = 0
             for rpc_url in rpcs:
-                if not rpc_url:
-                    continue
                 try:
-                    resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-                        "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]}, timeout=10)
+                    resp = requests.post(rpc_url, json={
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "getTokenAccountsByOwner",
+                        "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]
+                    }, timeout=10)
                     accounts = resp.json().get("result", {}).get("value", [])
                     if accounts:
-                        last_rpc_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
+                        rpc_balance_before = float(
+                            accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"]
+                        )
                         break
-                except:
+                except Exception:
                     pass
-            
-            if last_rpc_balance > 0:
-                rpc_balance_before = last_rpc_balance  # Баланс с RPC до обновления
-            
-            # Retry до 5 раз - ждём пока RPC обновится
-            for sync_attempt in range(5):
-                delay = 2 + sync_attempt  # 2, 3, 4, 5, 6 сек
-                print(f"   Ожидание {delay} сек... (попытка {sync_attempt+1}/5)")
-                time.sleep(delay)
 
-                # Проверяем RPC
+            real_balance = rpc_balance_before
+            _sync_start = time.time()
+            for attempt in range(5):
+                delay = 1 + attempt
+                print(f"   Ожидание {delay} сек... (попытка {attempt + 1}/5)")
+                time.sleep(delay)
                 for rpc_url in rpcs:
-                    if not rpc_url:
-                        continue
                     try:
-                        resp = requests.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-                            "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]}, timeout=10)
+                        resp = requests.post(rpc_url, json={
+                            "jsonrpc": "2.0", "id": 1,
+                            "method": "getTokenAccountsByOwner",
+                            "params": [wallet, {"mint": mint_addr}, {"encoding": "jsonParsed"}]
+                        }, timeout=10)
                         accounts = resp.json().get("result", {}).get("value", [])
                         if accounts:
-                            real_balance = float(accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"])
-                            # Проверяем что баланс УВЕЛИЧИЛСЯ (новые токены появились)
-                            if real_balance > rpc_balance_before + 1:
-                                print(f"📊 Баланс: {old_balance:.2f} -> {real_balance:.2f}")
+                            bal = float(
+                                accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"]
+                            )
+                            if bal > rpc_balance_before + 1:
+                                real_balance = bal
                                 break
-                    except:
+                    except Exception:
                         pass
-
-                # Если баланс обновился - выходим
                 if real_balance > rpc_balance_before + 1:
                     break
 
-            
-            # Обновляем Redis, positions.json и history
-            if real_balance > rpc_balance_before + 1:
-                # Проверяем позицию в positions.json (приоритет над Redis)
-                pos_from_json = None
-                try:
-                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
-                        positions_list = json.load(f)
-                    for p in positions_list:
-                        if p.get("mint") == mint_addr:
-                            pos_from_json = p
-                            break
-                except:
-                    pass
-                
-                # Если позиция существует - обновляем (pos уже загружен в начале)
-                if old_balance > 0 or pos_from_json:
-                    # Используем pos из начала, или из positions.json если нет в Redis
-                    if old_balance > 0:  # pos уже загружен
-                        pass  # pos уже загружен в начале
-                    else:
-                        pos = pos_from_json
-                        print("📋 Позиция найдена в positions.json (не в Redis)")
-                    # Вычисляем цену из реальных данных: SOL потрачено / токены получено
-                    tokens_received = real_balance - old_balance
-                    if tokens_received > 0:
-                        current_price = args.amount / tokens_received
-                    else:
-                        current_price = pos.get("entry_price", 0)  # Fallback на старую цену
+            # == 3. Update position ==
+            if real_balance <= rpc_balance_before + 1:
+                print(f"\u26a0\ufe0f RPC не обновился. Баланс: {real_balance:,.2f}")
+                print("   Запусти: wsync && bot-restart")
+            else:
+                print(f"\U0001f4ca Баланс: {old_qty:.2f} -> {real_balance:.2f}")
 
-                    pos["quantity"] = real_balance
-
-                    # Обновляем entry_price, SL, TSL
-                    if current_price > 0:
-                        old_entry = pos.get("entry_price", 0)
-                        pos["entry_price"] = current_price
-                        pos["stop_loss_price"] = current_price * 0.75
-                        pos["high_water_mark"] = current_price
-                        pos["tsl_active"] = False
-                        pos["tsl_trigger_price"] = 0
-                        print(f"📊 Entry: {old_entry:.10f} -> {current_price:.10f}")
-                        print(f"📊 SL: {current_price * 0.75:.10f} (-25%)")
-
-                    # Отключаем DCA для ручных покупок
-                    pos["dca_enabled"] = False
-                    pos["dca_pending"] = False
-                    print("📊 DCA: отключен (ручная покупка)")
-                    
-                    # УДАЛЯЕМ из sold_mints (если был продан и куплен снова)
-                    subprocess.run(["redis-cli", "SREM", "sold_mints", mint_addr], capture_output=True)
-                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(pos)], capture_output=True)
-
-                    # positions.json
-                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
-                        positions = json.load(f)
-                    for p in positions:
-                        if p.get("mint") == mint_addr:
-                            p["quantity"] = real_balance
-                            if current_price > 0:
-                                p["entry_price"] = pos["entry_price"]
-                                p["stop_loss_price"] = pos["stop_loss_price"]
-                                p["high_water_mark"] = pos["high_water_mark"]
-                                p["tsl_active"] = False
-                                p["tsl_trigger_price"] = 0
-                            break
-                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
-                        json.dump(positions, f, indent=2)
-
-                    # purchased_tokens_history.json
-                    try:
-                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
-                            history = json.load(f)
-                        if mint_addr in history.get("purchased_tokens", {}):
-                            history["purchased_tokens"][mint_addr]["amount"] = real_balance
-                            if current_price > 0:
-                                history["purchased_tokens"][mint_addr]["price"] = current_price
-                            with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
-                                json.dump(history, f, indent=2)
-                    except:
-                        pass
-
-                    print(f"✅ Синхронизировано: {real_balance:,.2f}")
+                tokens_received = real_balance - old_qty
+                if tokens_received > 1 and old_qty > 1 and old_entry > 0:
+                    buy_price = args.amount / tokens_received
+                    avg_entry = (old_qty * old_entry + tokens_received * buy_price) / real_balance
+                    print(f"\U0001f4ca Докупка: {old_qty:.2f} @ {old_entry:.10f} + {tokens_received:.2f} @ {buy_price:.10f}")
+                    print(f"\U0001f4ca Средняя entry: {avg_entry:.10f}")
+                    current_price = avg_entry
+                elif tokens_received > 1:
+                    current_price = args.amount / tokens_received
                 else:
-                    # НОВЫЙ ТОКЕН - создаём позицию!
-                    print("📝 Создаю новую позицию...")
-                    
-                    # Вычисляем цену из реальных данных TX
                     current_price = args.amount / max(real_balance, 1)
-                    
-                    # Получаем symbol из DexScreener (только symbol, не цену!)
-                    symbol = "UNKNOWN"
+
+                symbol = "UNKNOWN"
+                if existing_pos:
+                    symbol = existing_pos.get("symbol", "UNKNOWN")
+                if symbol == "UNKNOWN":
                     try:
-                        price_resp = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{mint_addr}", timeout=5)
-                        pairs = price_resp.json().get("pairs", [])
+                        ds_resp = requests.get(
+                            f"https://api.dexscreener.com/latest/dex/tokens/{mint_addr}",
+                            timeout=5
+                        )
+                        pairs = ds_resp.json().get("pairs", [])
                         if pairs:
                             symbol = pairs[0].get("baseToken", {}).get("symbol", "UNKNOWN")
-                    except:
+                    except Exception:
                         pass
 
-                    # Создаём новую позицию
-                    from datetime import datetime
-                    new_pos = {
-                        "mint": mint_addr,
+                from datetime import datetime
+
+                pos = existing_pos.copy() if existing_pos else {}
+
+                pos["mint"] = mint_addr
+                pos["symbol"] = symbol
+                pos["quantity"] = real_balance
+                pos["is_active"] = True
+                pos["state"] = "open"
+
+                if current_price > 0:
+                    old_entry_display = pos.get("entry_price", 0)
+                    pos["entry_price"] = current_price
+                    pos["original_entry_price"] = pos.get("original_entry_price") or current_price
+                    pos["stop_loss_price"] = current_price * 0.75
+                    pos["high_water_mark"] = current_price
+                    pos["tsl_active"] = False
+                    pos["tsl_trigger_price"] = 0
+                    pos["tsl_triggered"] = False
+                    pos["is_moonbag"] = False
+                    pos["tp_partial_done"] = False
+                    if existing_pos and old_entry_display > 0:
+                        print(f"\U0001f4ca Entry: {old_entry_display:.10f} -> {current_price:.10f}")
+                    print(f"\U0001f4ca SL: {current_price * 0.75:.10f} (-25%)")
+
+                pos.setdefault("entry_time", datetime.utcnow().isoformat())
+                pos.setdefault("platform", "jupiter")
+                pos.setdefault("max_hold_time", 0)
+                pos.setdefault("tsl_enabled", True)
+                pos.setdefault("tsl_activation_pct", 0.4)
+                pos.setdefault("tsl_trail_pct", 0.3)
+                pos.setdefault("tsl_sell_pct", 0.7)
+                pos.setdefault("tp_sell_pct", 0.5)
+                pos.setdefault("dca_trigger_pct", 0.25)
+                pos.setdefault("dca_first_buy_pct", 0.5)
+                pos.setdefault("dca_bought", False)
+                pos.setdefault("bonding_curve", None)
+                pos.setdefault("pool_base_vault", None)
+                pos.setdefault("pool_quote_vault", None)
+                pos.setdefault("pool_address", None)
+
+                if existing_pos and existing_pos.get("take_profit_price") and old_entry > 0:
+                    tp_multiplier = existing_pos["take_profit_price"] / old_entry
+                    pos["take_profit_price"] = current_price * tp_multiplier
+                else:
+                    pos["take_profit_price"] = current_price * 100
+
+                pos["dca_enabled"] = False
+                pos["dca_pending"] = False
+                print("\U0001f4ca DCA: отключен (ручная покупка)")
+
+                # == 4. Save: Redis + positions.json (NO duplicates) ==
+                subprocess.run(
+                    ["redis-cli", "SREM", "sold_mints", mint_addr],
+                    capture_output=True, timeout=5
+                )
+                subprocess.run(
+                    ["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(pos)],
+                    capture_output=True, timeout=5
+                )
+
+                with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
+                    all_positions = json.load(f)
+                all_positions = [p for p in all_positions if p.get("mint") != mint_addr]
+                all_positions.append(pos)
+                with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
+                    json.dump(all_positions, f, indent=2)
+
+                try:
+                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
+                        history = json.load(f)
+                    if "purchased_tokens" not in history:
+                        history["purchased_tokens"] = {}
+                    history["purchased_tokens"][mint_addr] = {
                         "symbol": symbol,
-                        "entry_price": current_price,
-                        "quantity": real_balance,
-                        "entry_time": datetime.utcnow().isoformat(),
-                        "platform": "jupiter",
-                        "take_profit_price": current_price * 100,
-                        "stop_loss_price": current_price * 0.75,
-                        "max_hold_time": 0,
-                        "tsl_enabled": True,
-                        "tsl_activation_pct": 0.4,
-                        "tsl_trail_pct": 0.3,
-                        "tsl_sell_pct": 0.7,
-                        "tp_sell_pct": 0.5,
-                        "tsl_active": False,
-                        "tsl_trigger_price": 0,
-                        "high_water_mark": current_price,
-                        "is_active": True,
-                        "dca_enabled": False,
-                        "dca_pending": False,
-                        "dca_bought": False,
-                        "dca_trigger_pct": 0.25,
-                        "dca_first_buy_pct": 0.5,
-                        "original_entry_price": current_price,
+                        "bot_name": "manual_buy",
+                        "platform": pos.get("platform", "jupiter"),
+                        "price": current_price,
+                        "amount": real_balance,
+                        "timestamp": datetime.utcnow().isoformat(),
                     }
-                    
-                    # Сохраняем в Redis
-                    # УДАЛЯЕМ из sold_mints (если там был)
-                    subprocess.run(["redis-cli", "SREM", "sold_mints", mint_addr], capture_output=True)
-                    subprocess.run(["redis-cli", "HSET", "whale:positions", mint_addr, json.dumps(new_pos)], capture_output=True)
-                    
-                    # Сохраняем в positions.json
-                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "r") as f:
-                        positions = json.load(f)
-                    positions.append(new_pos)
-                    with open("/opt/pumpfun-bonkfun-bot/positions.json", "w") as f:
-                        json.dump(positions, f, indent=2)
-                    
-                    # Сохраняем в history
-                    try:
-                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "r") as f:
-                            history = json.load(f)
-                        if "purchased_tokens" not in history:
-                            history["purchased_tokens"] = {}
-                        history["purchased_tokens"][mint_addr] = {
-                            "symbol": symbol,
-                            "bot_name": "manual_buy",
-                            "platform": "jupiter",
-                            "price": current_price,
-                            "amount": real_balance,
-                            "timestamp": datetime.utcnow().isoformat(),
-                        }
-                        with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
-                            json.dump(history, f, indent=2)
-                    except:
-                        pass
-                    
-                    print(f"✅ Новая позиция создана:")
+                    with open("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json", "w") as f:
+                        json.dump(history, f, indent=2)
+                except Exception:
+                    pass
+
+                if existing_pos:
+                    print(f"\u2705 Синхронизировано: {real_balance:,.2f} (sync: {time.time()-_sync_start:.1f}s)")
+                else:
+                    print(f"\u2705 Новая позиция создана:")
                     print(f"   Symbol: {symbol}")
                     print(f"   Qty: {real_balance:,.2f}")
                     print(f"   Entry: {current_price:.10f}")
                     print(f"   SL: {current_price * 0.75:.10f} (-25%)")
-            else:
-                print(f"⚠️ RPC не обновился. Текущий баланс: {real_balance:,.2f}")
-                print(f"   Запусти: wsync && bot-restart")
-        except Exception as e:
-            print(f"⚠️ Sync error: {e}")
 
-        print("")
-        print("💡 Перезапусти бота: bot-restart")
+                # == 5. Auto-restart bot ==
+                print("")
+                print("\U0001f504 Перезапуск бота...")
+                restart_result = subprocess.run(
+                    ["systemctl", "restart", "whale-bot"],
+                    capture_output=True, text=True, timeout=15
+                )
+                if restart_result.returncode == 0:
+                    time.sleep(2)
+                    status_result = subprocess.run(
+                        ["systemctl", "is-active", "whale-bot"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if status_result.stdout.strip() == "active":
+                        print("\u2705 Бот перезапущен, монитор активен")
+                    else:
+                        print(f"\u26a0\ufe0f Бот: {status_result.stdout.strip()}")
+                        print("   Проверь: bot-status")
+                else:
+                    print(f"\u26a0\ufe0f Ошибка: {restart_result.stderr.strip()}")
+                    print("   Запусти: bot-restart")
+
+        except Exception as e:
+            print(f"\u26a0\ufe0f Sync error: {e}")
+            print("\U0001f4a1 Перезапусти бота: bot-restart")
 
     sys.exit(0 if success else 1)
 

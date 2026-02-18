@@ -1310,16 +1310,16 @@ class FallbackSeller:
                     error_str = str(e).lower()
                     if "429" in error_str or "rate" in error_str or "too many" in error_str:
                         logger.warning(f"RPC rate limited - check tx on solscan: {sig}")
-                        return True, sig, None
+                        return False, sig, "Rate limited, TX unconfirmed"
 
                     error_msg = str(e) if str(e) else f"{type(e).__name__}"
                     logger.warning(f"Status check failed: {error_msg}")
                     if attempt == 2:
                         logger.warning(f"Could not verify - check solscan: {sig}")
-                        return True, sig, None
+                        return False, sig, "Could not verify TX"
 
             logger.warning(f"Status unknown - check solscan: {sig}")
-            return True, sig, None
+            return False, sig, "Status unknown"
 
         except Exception as e:
             return False, None, str(e)
@@ -1373,32 +1373,44 @@ class FallbackSeller:
             # Try to get ACTUAL raw balance from on-chain (most reliable)
             try:
                 import aiohttp as _aiohttp
-                _rpc_url = os.getenv("DRPC_RPC_ENDPOINT") or os.getenv("SOLANA_NODE_RPC_ENDPOINT") or "https://api.mainnet-beta.solana.com"
+                _helius_key = os.getenv("HELIUS_API_KEY", "")
+                _rpc_chain = [
+                    os.getenv("DRPC_RPC_ENDPOINT", ""),
+                    os.getenv("ALCHEMY_RPC_ENDPOINT", ""),
+                    f"https://mainnet.helius-rpc.com/?api-key={_helius_key}" if _helius_key else "",
+                    os.getenv("SOLANA_PUBLIC_RPC_ENDPOINT", "https://api.mainnet-beta.solana.com"),
+                ]
+                _rpc_chain = [u for u in _rpc_chain if u]
+                _payload = {
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [str(self.wallet.pubkey), {"mint": str(mint)},
+                              {"encoding": "jsonParsed", "commitment": "confirmed"}]
+                }
                 async with _aiohttp.ClientSession() as _sess:
-                    _payload = {
-                        "jsonrpc": "2.0", "id": 1,
-                        "method": "getTokenAccountsByOwner",
-                        "params": [str(self.wallet.pubkey), {"mint": str(mint)},
-                                  {"encoding": "jsonParsed", "commitment": "confirmed"}]
-                    }
-                    async with _sess.post(_rpc_url, json=_payload, timeout=_aiohttp.ClientTimeout(total=10)) as _resp:
-                        if _resp.status == 200:
-                            _data = await _resp.json()
-                            _accounts = _data.get("result", {}).get("value", [])
-                            if _accounts:
-                                _ti = _accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]
-                                _ui = float(_ti.get("uiAmount") or 0)
-                                token_decimals = int(_ti.get("decimals", 6))
-                                _raw = int(_ti.get("amount", "0"))
-                                # Update cache
-                                _decimals_cache[str(mint)] = token_decimals
-                                # Calculate raw sell amount from proportion
-                                if _ui > 0 and token_amount > 0:
-                                    sell_pct = min(token_amount / _ui, 1.0)
-                                    sell_amount = int(_raw * sell_pct)
-                                    logger.info(f"[SELL] On-chain: {_ui:,.2f} tokens (decimals={token_decimals}, raw={_raw}), selling {sell_pct*100:.1f}% = {sell_amount} raw")
-                                else:
-                                    sell_amount = _raw  # sell everything
+                    for _rpc_url in _rpc_chain:
+                        try:
+                            async with _sess.post(_rpc_url, json=_payload, timeout=_aiohttp.ClientTimeout(total=3)) as _resp:
+                                if _resp.status == 200:
+                                    _data = await _resp.json()
+                                    if "error" in _data:
+                                        continue
+                                    _accounts = _data.get("result", {}).get("value", [])
+                                    if _accounts:
+                                        _ti = _accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]
+                                        _ui = float(_ti.get("uiAmount") or 0)
+                                        token_decimals = int(_ti.get("decimals", 6))
+                                        _raw = int(_ti.get("amount", "0"))
+                                        _decimals_cache[str(mint)] = token_decimals
+                                        if _ui > 0 and token_amount > 0:
+                                            sell_pct = min(token_amount / _ui, 1.0)
+                                            sell_amount = int(_raw * sell_pct)
+                                            logger.info(f"[SELL] On-chain: {_ui:,.2f} tokens (decimals={token_decimals}, raw={_raw}), selling {sell_pct*100:.1f}% = {sell_amount} raw")
+                                        else:
+                                            sell_amount = _raw
+                                    break  # Success — stop trying RPCs
+                        except Exception:
+                            continue  # Try next RPC
             except Exception as _e:
                 logger.warning(f"[SELL] On-chain balance check failed: {_e}, falling back to get_token_decimals")
 
@@ -1490,6 +1502,36 @@ class FallbackSeller:
 
         return False, None, "All Jupiter Ultra attempts failed"
 
+
+    async def _confirm_transaction(self, sig: str, rpc_client, timeout: int = 15) -> bool:
+        """Poll getSignatureStatuses until confirmed or timeout."""
+        from solders.signature import Signature
+        import time
+        
+        start = time.time()
+        signature = Signature.from_string(sig)
+        
+        while time.time() - start < timeout:
+            try:
+                resp = await rpc_client.get_signature_statuses([signature])
+                if resp.value and resp.value[0]:
+                    status = resp.value[0]
+                    if status.err:
+                        logger.warning(f"[TX CONFIRM] TX {sig[:16]}... failed on-chain: {status.err}")
+                        return False
+                    if status.confirmation_status is not None:
+                        conf_str = str(status.confirmation_status)
+                        if "confirmed" in conf_str.lower() or "finalized" in conf_str.lower():
+                            logger.info(f"[TX CONFIRM] TX {sig[:16]}... confirmed on-chain")
+                            return True
+            except Exception as e:
+                logger.warning(f"[TX CONFIRM] Status check error: {e}")
+            
+            await asyncio.sleep(1)
+        
+        logger.warning(f"[TX CONFIRM] TX {sig[:16]}... not confirmed after {timeout}s")
+        return False
+
     async def _jupiter_lite_sell(
         self, session, rpc_client, mint, sell_amount, slippage_bps, symbol
     ) -> tuple[bool, str | None, str | None]:
@@ -1549,8 +1591,22 @@ class FallbackSeller:
                 signed_tx = VersionedTransaction(tx.message, [self.wallet.keypair])
 
                 sig = await self._send_tx_parallel(signed_tx, rpc_client)
-                logger.info(f"[OK] Jupiter Lite SELL sent: {sig}")
-                return True, sig, None
+                if not sig:
+                    logger.warning(f"Jupiter Lite attempt {attempt + 1}: _send_tx_parallel returned no signature")
+                    if attempt == self.max_retries - 1:
+                        return False, None, "No signature from send"
+                    continue
+                
+                logger.info(f"[OK] Jupiter Lite SELL sent: {sig} — confirming on-chain...")
+                confirmed = await self._confirm_transaction(sig, rpc_client, timeout=15)
+                if confirmed:
+                    logger.info(f"[OK] Jupiter Lite SELL CONFIRMED: {sig}")
+                    return True, sig, None
+                else:
+                    logger.warning(f"Jupiter Lite attempt {attempt + 1}: TX {sig[:16]}... NOT confirmed")
+                    if attempt == self.max_retries - 1:
+                        return False, sig, "TX sent but not confirmed on-chain"
+                    continue
 
             except Exception as e:
                 error_msg = str(e) if str(e) else f"{type(e).__name__}"
@@ -1618,8 +1674,27 @@ class FallbackSeller:
 
             if "result" in result:
                 sig = result["result"]
-                logger.info(f"[PUMPPORTAL] Sell TX: {sig}")
-                return True, sig, None
+                logger.info(f"[PUMPPORTAL] Sell TX: {sig} — confirming on-chain...")
+
+                # Confirm on-chain before reporting success
+                try:
+                    from solana.rpc.async_api import AsyncClient
+                    rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT") or os.getenv("DRPC_RPC_ENDPOINT")
+                    async_client = AsyncClient(rpc_endpoint)
+                    try:
+                        confirmed = await self._confirm_transaction(sig, async_client, timeout=15)
+                    finally:
+                        await async_client.close()
+
+                    if confirmed:
+                        logger.info(f"[PUMPPORTAL] SELL CONFIRMED on-chain: {sig}")
+                        return True, sig, None
+                    else:
+                        logger.warning(f"[PUMPPORTAL] SELL NOT CONFIRMED on-chain: {sig}")
+                        return False, sig, "TX sent but not confirmed on-chain"
+                except Exception as confirm_err:
+                    logger.warning(f"[PUMPPORTAL] Confirm error: {confirm_err}, treating as unconfirmed")
+                    return False, sig, f"Confirm failed: {confirm_err}"
             elif "error" in result:
                 return False, None, str(result["error"])
             else:

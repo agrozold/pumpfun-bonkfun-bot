@@ -87,6 +87,35 @@ class CurveSubscription:
     last_update: float = 0.0
 
 
+
+
+@dataclass
+class GrpcInstance:
+    """State for a single gRPC stream instance."""
+    name: str           # "chainstack" or "publicnode"
+    endpoint: str
+    api_key: str
+    channel: object = None
+    stream_task: object = None
+    ping_task: object = None
+    ping_queue: object = None
+    ping_counter: int = 0
+    last_pong_time: float = 0.0
+    healthy: bool = False
+    reconnect_event: object = None
+    stats: dict = None
+
+    def __post_init__(self):
+        if self.stats is None:
+            self.stats = {
+                "grpc_messages": 0,
+                "tx_detected": 0,
+                "reconnects": 0,
+                "ping_sent": 0,
+                "pong_received": 0,
+                "ping_responded": 0,
+            }
+
 async def _fetch_symbol_dexscreener(mint: str) -> str:
     """Fetch token symbol: DexScreener -> Jupiter Token API -> short mint fallback."""
     # 1. Try DexScreener (fastest for established tokens)
@@ -155,13 +184,35 @@ class WhaleGeyserReceiver:
         host: str = "0.0.0.0",
         port: int = 8000,
     ):
-        # gRPC config
+        # gRPC config — primary endpoint (PublicNode, always available)
         self.geyser_endpoint = geyser_endpoint or os.getenv(
             "GEYSER_ENDPOINT", "solana-yellowstone-grpc.publicnode.com:443"
         )
         self.geyser_api_key = geyser_api_key or os.getenv(
             "GEYSER_API_KEY", ""
         )
+
+        # Chainstack gRPC — secondary/premium endpoint (if configured)
+        self._chainstack_endpoint = os.getenv("CHAINSTACK_GEYSER_ENDPOINT", "")
+        self._chainstack_token = os.getenv("CHAINSTACK_GEYSER_TOKEN", "")
+        if self._chainstack_endpoint and ":" not in self._chainstack_endpoint:
+            self._chainstack_endpoint = self._chainstack_endpoint + ":443"
+
+        # Build list of gRPC instances (Chainstack first = PRIMARY if available)
+        self._grpc_instances: list[GrpcInstance] = []
+        if self._chainstack_endpoint and self._chainstack_token:
+            self._grpc_instances.append(GrpcInstance(
+                name="chainstack",
+                endpoint=self._chainstack_endpoint,
+                api_key=self._chainstack_token,
+            ))
+        # PublicNode always added (free, no auth needed but key accepted)
+        if self.geyser_endpoint:
+            self._grpc_instances.append(GrpcInstance(
+                name="publicnode",
+                endpoint=self.geyser_endpoint,
+                api_key=self.geyser_api_key,
+            ))
         # Separate key for parsing (don't burn gRPC key credits)
         self.helius_parse_api_key = helius_parse_api_key or os.getenv(
             "GEYSER_PARSE_API_KEY", self.geyser_api_key
@@ -199,13 +250,13 @@ class WhaleGeyserReceiver:
         self._emitted_tokens: set[str] = set()
 
         # State
-        self._channel = None
-        self._stream_task: Optional[asyncio.Task] = None
+        self._channel = None  # Legacy — kept for compatibility, points to first instance channel
+        self._stream_task: Optional[asyncio.Task] = None  # Legacy — not used in dual mode
         self.running = False
 
-        # Keepalive ping state (Phase 5.1)
+        # Keepalive ping state (Phase 5.1) — legacy single-stream fields kept for stats
         self._ping_counter: int = 0
-        self._ping_queue: Optional[asyncio.Queue] = None
+        self._ping_queue: Optional[asyncio.Queue] = None  # Legacy — see _grpc_instances
         self._ping_task: Optional[asyncio.Task] = None
         self._last_pong_time: float = 0.0
 
@@ -237,14 +288,23 @@ class WhaleGeyserReceiver:
         self._vault_subscriptions: dict[str, VaultSubscription] = {}  # mint -> VaultSubscription
         self._vault_address_map: dict[str, str] = {}  # vault_address -> mint
         self._vault_prices: dict[str, tuple[float, float]] = {}  # mint -> (price, timestamp)
+        # Reactive SL/TP: mint -> {sl_price, tp_price, entry_price, symbol, triggered}
+        self._sl_tp_triggers: dict[str, dict] = {}
 
         # Bonding curve tracking for price monitoring (Phase 4c)
         self._curve_subscriptions: dict[str, CurveSubscription] = {}  # mint -> CurveSubscription
         self._curve_address_map: dict[str, str] = {}  # curve_address -> mint
 
+        # ATA tracking — detect when tokens arrive on our wallet (Phase 6: instant confirmation)
+        self._ata_address_map: dict[str, str] = {}   # ata_address -> mint
+        self._ata_pending: dict[str, str] = {}        # mint -> ata_address (pending confirmation)
+        self._wallet_pubkey_str: str = ""              # Set by set_wallet_pubkey()
+
+        _instance_names = [g.name for g in self._grpc_instances]
         logger.warning(
             f"[GEYSER] Initialized: {len(self.whale_wallets)} whales, "
-            f"min_buy={min_buy_amount} SOL, endpoint={self.geyser_endpoint}"
+            f"min_buy={min_buy_amount} SOL, "
+            f"gRPC instances: {_instance_names}"
         )
 
     def _load_wallets(self, wallets_file: str):
@@ -267,6 +327,11 @@ class WhaleGeyserReceiver:
         except Exception as e:
             logger.exception(f"[GEYSER] Error loading wallets: {e}")
 
+    def set_wallet_pubkey(self, pubkey_str: str):
+        """Store our wallet pubkey for ATA derivation."""
+        self._wallet_pubkey_str = pubkey_str
+        logger.info(f"[GEYSER] Wallet pubkey set: {pubkey_str[:16]}...")
+
     def set_callback(self, callback: Callable):
         """Set callback for whale buy signals. Same interface as webhook."""
         self.on_whale_buy = callback
@@ -280,64 +345,100 @@ class WhaleGeyserReceiver:
         # Reset watchdog data timer so next reconnect waits full 300s
         if self._watchdog:
             self._watchdog.touch_grpc_data()
-        self._reconnect_event.set()
+        # Trigger reconnect on ALL instances
+        for inst in self._grpc_instances:
+            if inst.reconnect_event:
+                inst.reconnect_event.set()
 
     async def start(self):
-        """Start gRPC stream. Same interface as WhaleWebhookReceiver.start()."""
+        """Start gRPC streams. Same interface as WhaleWebhookReceiver.start()."""
         self.running = True
-        self._stream_task = asyncio.create_task(self._run_stream())
+
+        # Pre-create ping queues so subscribe pushes work BEFORE stream connects
+        for inst in self._grpc_instances:
+            inst.ping_queue = asyncio.Queue(maxsize=100)
+            inst.reconnect_event = asyncio.Event()
+
+        # Legacy: point _ping_queue to first instance for early subscribe pushes
+        if self._grpc_instances:
+            self._ping_queue = self._grpc_instances[0].ping_queue
+
+        # Start a stream task for each gRPC instance
+        for inst in self._grpc_instances:
+            inst.stream_task = asyncio.create_task(
+                self._run_stream_instance(inst)
+            )
+
+        # Legacy: point _stream_task to first instance for compatibility
+        if self._grpc_instances:
+            self._stream_task = self._grpc_instances[0].stream_task
 
         logger.warning("=" * 70)
         logger.warning("[GEYSER] WHALE GEYSER TRACKER STARTED")
-        logger.warning(f"[GEYSER] Endpoint: {self.geyser_endpoint}")
+        for inst in self._grpc_instances:
+            _label = "PRIMARY" if inst.name == "chainstack" else "SECONDARY" if len(self._grpc_instances) > 1 else "PRIMARY"
+            logger.warning(f"[GEYSER] {_label}: {inst.name} ({inst.endpoint})")
         logger.warning(f"[GEYSER] Tracking {len(self.whale_wallets)} whale wallets")
         logger.warning(f"[GEYSER] Min buy amount: {self.min_buy_amount} SOL")
-        logger.warning(f"[GEYSER] Keepalive: bidirectional ping every 10s")
+        logger.warning(f"[GEYSER] Keepalive: bidirectional ping every 10s per instance")
         if self.local_parser:
             logger.warning(f"[GEYSER] Mode: LOCAL PARSE (gRPC + local parser, Helius fallback)")
         else:
             logger.warning(f"[GEYSER] Mode: HYBRID (gRPC + Helius Enhanced API)")
+        if len(self._grpc_instances) > 1:
+            logger.warning(f"[GEYSER] DUAL gRPC: signal dedup via shared _processed_sigs — first wins!")
         logger.warning("=" * 70)
 
     async def stop(self):
-        """Stop gRPC stream."""
+        """Stop all gRPC streams."""
         self.running = False
-        # Stop ping loop
-        if self._ping_task:
-            self._ping_task.cancel()
-            try:
-                await self._ping_task
-            except asyncio.CancelledError:
-                pass
-        # Signal request iterator to stop
-        if self._ping_queue:
-            try:
-                self._ping_queue.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
-        # Stop stream
-        if self._stream_task:
-            self._stream_task.cancel()
-            try:
-                await self._stream_task
-            except asyncio.CancelledError:
-                pass
+        for inst in self._grpc_instances:
+            # Stop ping loop
+            if inst.ping_task:
+                inst.ping_task.cancel()
+                try:
+                    await inst.ping_task
+                except asyncio.CancelledError:
+                    pass
+            # Signal request iterator to stop
+            if inst.ping_queue:
+                try:
+                    inst.ping_queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    pass
+            # Stop stream
+            if inst.stream_task:
+                inst.stream_task.cancel()
+                try:
+                    await inst.stream_task
+                except asyncio.CancelledError:
+                    pass
+            if inst.channel:
+                try:
+                    await inst.channel.close()
+                except Exception:
+                    pass
+        # Legacy cleanup
         if self._channel:
-            await self._channel.close()
-        logger.info("[GEYSER] Stopped")
+            try:
+                await self._channel.close()
+            except Exception:
+                pass
+        logger.info("[GEYSER] All gRPC streams stopped")
 
-    async def _create_channel(self):
-        """Create authenticated gRPC channel."""
+    async def _create_channel_for(self, inst: GrpcInstance):
+        """Create authenticated gRPC channel for a specific instance."""
+        api_key = inst.api_key
         auth = grpc.metadata_call_credentials(
-            lambda _, callback: callback(
-                (("x-token", self.geyser_api_key),), None
+            lambda _, callback, _key=api_key: callback(
+                (("x-token", _key),), None
             )
         )
         creds = grpc.composite_channel_credentials(
             grpc.ssl_channel_credentials(), auth
         )
-        self._channel = grpc_aio.secure_channel(
-            self.geyser_endpoint,
+        inst.channel = grpc_aio.secure_channel(
+            inst.endpoint,
             creds,
             options=[
                 ("grpc.keepalive_time_ms", 10000),
@@ -346,7 +447,10 @@ class WhaleGeyserReceiver:
                 ("grpc.max_receive_message_length", 64 * 1024 * 1024),
             ],
         )
-        return geyser_pb2_grpc.GeyserStub(self._channel)
+        # Legacy: point self._channel to first instance
+        if self._grpc_instances and inst is self._grpc_instances[0]:
+            self._channel = inst.channel
+        return geyser_pb2_grpc.GeyserStub(inst.channel)
 
     def _create_subscribe_request(self):
         """Create gRPC subscribe request for whale wallets + vault accounts."""
@@ -376,136 +480,137 @@ class WhaleGeyserReceiver:
             for addr in curve_addresses:
                 curve_filter.account.append(addr)
 
+        # ATA account subscriptions for token arrival detection (Phase 6)
+        ata_addresses = list(self._ata_address_map.keys())
+        if ata_addresses:
+            ata_filter = request.accounts["ata_tracker"]
+            for addr in ata_addresses:
+                ata_filter.account.append(addr)
+
         # PROCESSED = fastest, see tx before full confirmation
         request.commitment = geyser_pb2.CommitmentLevel.PROCESSED
 
         logger.info(
             f"[GEYSER] Subscribe request: {len(whale_addresses)} wallets, "
             f"{len(vault_addresses)} vault accounts, "
-            f"{len(self._curve_address_map)} curve accounts, commitment=PROCESSED"
+            f"{len(self._curve_address_map)} curve accounts, "
+            f"{len(self._ata_address_map)} ATA accounts, commitment=PROCESSED"
         )
         return request
 
-    async def _request_iterator(self, initial_request):
+    async def _request_iterator(self, initial_request, inst: GrpcInstance = None):
         """Async generator for bidirectional gRPC stream.
 
         Yields the initial subscription request, then keeps the write-half
         open and yields ping requests from the queue as needed.
-        This enables the server to send SubscribeUpdatePing and the client
-        to respond with SubscribeRequestPing, keeping the connection alive.
         """
-        # First message: the actual subscription request
+        tag = f"GEYSER-{inst.name.upper()}" if inst else "GEYSER"
+        queue = inst.ping_queue if inst else self._ping_queue
         yield initial_request
-        logger.info("[GEYSER] Subscription request sent, write-half staying open for pings")
+        logger.info(f"[{tag}] Subscription request sent, write-half staying open for pings")
 
-        # Then: yield ping/pong requests from queue forever
         while True:
             try:
-                msg = await self._ping_queue.get()
+                msg = await queue.get()
                 if msg is None:
-                    # Poison pill — stop the iterator, closes write-half
-                    logger.info("[GEYSER] Request iterator stopping (poison pill)")
+                    logger.info(f"[{tag}] Request iterator stopping (poison pill)")
                     return
                 yield msg
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                logger.error(f"[GEYSER] Request iterator error: {e}")
+                logger.error(f"[{tag}] Request iterator error: {e}")
                 return
 
-    async def _ping_loop(self):
-        """Proactive keepalive: send ping every 10 seconds.
-
-        Some providers (PublicNode, Cloudflare proxies) close idle streams.
-        This ensures traffic flows on the write-half even when no whale
-        transactions are happening.
-        """
+    async def _ping_loop_for(self, inst: GrpcInstance):
+        """Proactive keepalive: send ping every 10 seconds for a specific instance."""
+        tag = f"GEYSER-{inst.name.upper()}"
         try:
-            # Wait a bit before first ping to let subscription establish
             await asyncio.sleep(5)
             while self.running:
-                self._ping_counter += 1
-                ping_id = self._ping_counter
+                inst.ping_counter += 1
+                ping_id = inst.ping_counter
                 ping_req = geyser_pb2.SubscribeRequest(
                     ping=geyser_pb2.SubscribeRequestPing(id=ping_id)
                 )
                 try:
-                    self._ping_queue.put_nowait(ping_req)
+                    inst.ping_queue.put_nowait(ping_req)
+                    inst.stats["ping_sent"] += 1
                     self._stats["ping_sent"] += 1
-                    logger.info(f"[GEYSER] Ping sent (proactive, id={ping_id})")
+                    logger.info(f"[{tag}] Ping sent (proactive, id={ping_id})")
                 except asyncio.QueueFull:
-                    logger.warning("[GEYSER] Ping queue full, skipping ping")
+                    logger.warning(f"[{tag}] Ping queue full, skipping ping")
                 await asyncio.sleep(10)
         except asyncio.CancelledError:
             pass
 
-    async def _run_stream(self):
-        """Main gRPC stream loop with auto-reconnect and bidirectional ping."""
+    async def _run_stream_instance(self, inst: GrpcInstance):
+        """Main gRPC stream loop for a specific instance with auto-reconnect."""
+        tag = f"GEYSER-{inst.name.upper()}"
         reconnect_delay = 1.0
 
         while self.running:
             try:
-                stub = await self._create_channel()
+                stub = await self._create_channel_for(inst)
                 request = self._create_subscribe_request()
 
                 # Create fresh ping queue and counter for this connection
-                self._ping_queue = asyncio.Queue(maxsize=100)
-                self._ping_counter = 0
+                inst.ping_queue = asyncio.Queue(maxsize=100)
+                inst.ping_counter = 0
 
-                logger.warning(f"[GEYSER] Connecting to {self.geyser_endpoint}...")
+                # Legacy: point self._ping_queue to first instance for subscribe pushes
+                if self._grpc_instances and inst is self._grpc_instances[0]:
+                    self._ping_queue = inst.ping_queue
+
+                logger.warning(f"[{tag}] Connecting to {inst.endpoint}...")
 
                 # Start proactive ping loop
-                self._ping_task = asyncio.create_task(self._ping_loop())
+                inst.ping_task = asyncio.create_task(self._ping_loop_for(inst))
 
                 try:
-                    # Bidirectional stream: _request_iterator yields subscription
-                    # request first, then keepalive pings from queue
                     async for update in stub.Subscribe(
-                        self._request_iterator(request)
+                        self._request_iterator(request, inst)
                     ):
                         if not self.running:
                             break
-                        if self._reconnect_event.is_set():
-                            self._reconnect_event.clear()
-                            logger.warning("[GEYSER] Reconnect triggered by watchdog")
+                        if inst.reconnect_event and inst.reconnect_event.is_set():
+                            inst.reconnect_event.clear()
+                            logger.warning(f"[{tag}] Reconnect triggered by watchdog")
                             break
 
                         self._stats["grpc_messages"] += 1
+                        inst.stats["grpc_messages"] += 1
+                        inst.healthy = True
 
-                        # Touch watchdog on ANY gRPC activity (Phase 5.3)
+                        # Touch watchdog on ANY gRPC activity
                         if self._watchdog:
                             self._watchdog.touch_grpc()
 
-                        # --- Phase 5.1: Handle ping/pong ---
+                        # --- Ping/Pong ---
                         if update.HasField("pong"):
                             self._stats["pong_received"] += 1
-                            self._last_pong_time = time.monotonic()
-                            logger.info(
-                                f"[GEYSER] Pong received (id={update.pong.id})"
-                            )
+                            inst.stats["pong_received"] += 1
+                            inst.last_pong_time = time.monotonic()
+                            self._last_pong_time = max(self._last_pong_time, inst.last_pong_time)
+                            logger.info(f"[{tag}] Pong received (id={update.pong.id})")
                             continue
 
                         if update.HasField("ping"):
-                            # Server-initiated ping — respond immediately
-                            self._ping_counter += 1
-                            ping_id = self._ping_counter
+                            inst.ping_counter += 1
+                            ping_id = inst.ping_counter
                             ping_req = geyser_pb2.SubscribeRequest(
                                 ping=geyser_pb2.SubscribeRequestPing(id=ping_id)
                             )
                             try:
-                                self._ping_queue.put_nowait(ping_req)
+                                inst.ping_queue.put_nowait(ping_req)
                                 self._stats["ping_responded"] += 1
-                                logger.info(
-                                    f"[GEYSER] Server ping received, "
-                                    f"responded with id={ping_id}"
-                                )
+                                inst.stats["ping_responded"] += 1
+                                logger.info(f"[{tag}] Server ping received, responded with id={ping_id}")
                             except asyncio.QueueFull:
-                                logger.warning(
-                                    "[GEYSER] Ping queue full, could not respond to server ping"
-                                )
+                                logger.warning(f"[{tag}] Ping queue full, could not respond")
                             continue
 
-                        # --- Phase 4b/4c: Handle account updates (vaults + curves) ---
+                        # --- Account updates (vaults + curves + ATA) ---
                         if update.HasField("account"):
                             acct = update.account.account
                             if acct:
@@ -515,9 +620,11 @@ class WhaleGeyserReceiver:
                                     self._handle_vault_account_update(update.account)
                                 elif pk_str in self._curve_address_map:
                                     self._handle_curve_account_update(update.account)
+                                elif pk_str in self._ata_address_map:
+                                    self._handle_ata_account_update(update.account)
                             continue
 
-                        # --- We only care about transactions ---
+                        # --- Transactions ---
                         if not update.HasField("transaction"):
                             continue
 
@@ -527,12 +634,12 @@ class WhaleGeyserReceiver:
                             tx_wrapper = update.transaction
                             tx = tx_wrapper.transaction
 
-                            # Extract signature
                             sig_bytes = bytes(tx.signature)
                             signature = base58.b58encode(sig_bytes).decode()
 
-                            # Dedup by signature
+                            # DEDUP: shared across all instances — first wins!
                             if signature in self._processed_sigs:
+                                self._stats["duplicates"] += 1
                                 continue
                             self._processed_sigs.add(signature)
                             if len(self._processed_sigs) > 10000:
@@ -541,10 +648,10 @@ class WhaleGeyserReceiver:
                                 )
 
                             self._stats["tx_detected"] += 1
+                            inst.stats["tx_detected"] += 1
                             if self._watchdog:
                                 self._watchdog.touch_grpc_data()
 
-                            # Quick check: is the fee payer one of our whales?
                             msg = tx.transaction.message
                             if not msg or len(msg.account_keys) == 0:
                                 continue
@@ -553,30 +660,25 @@ class WhaleGeyserReceiver:
                             fee_payer = base58.b58encode(fee_payer_bytes).decode()
 
                             if fee_payer not in self.whale_wallets:
-                                # TX involves whale wallet but whale is not fee payer
-                                # For safety, only process if fee_payer is whale
-                                # (prevents false positives from transfers TO whale)
                                 continue
 
                             logger.warning(
-                                f"[GEYSER] TX from whale "
+                                f"[{tag}] TX from whale "
                                 f"{self.whale_wallets[fee_payer]['label']}: "
                                 f"{signature[:20]}..."
                             )
 
-                            # Try local parse first (~0-5ms), fallback to Helius (~650ms)
                             if self.local_parser:
                                 parsed = self.local_parser.parse(tx, fee_payer)
                                 if parsed:
                                     asyncio.create_task(
                                         self._emit_from_local_parse(
-                                            parsed, grpc_receive_time
+                                            parsed, grpc_receive_time, inst.name
                                         )
                                     )
                                 else:
-                                    # Local parser could not detect swap — fallback
                                     logger.info(
-                                        f"[GEYSER] Local parse missed "
+                                        f"[{tag}] Local parse missed "
                                         f"{signature[:16]}..., "
                                         f"falling back to Helius"
                                     )
@@ -586,7 +688,6 @@ class WhaleGeyserReceiver:
                                         )
                                     )
                             else:
-                                # No local parser — always use Helius
                                 asyncio.create_task(
                                     self._parse_and_emit(
                                         signature, fee_payer, grpc_receive_time
@@ -594,69 +695,75 @@ class WhaleGeyserReceiver:
                                 )
 
                         except Exception as e:
-                            logger.error(f"[GEYSER] Error processing update: {e}")
+                            logger.error(f"[{tag}] Error processing update: {e}")
 
                 finally:
-                    # Always clean up ping loop when stream ends
-                    if self._ping_task:
-                        self._ping_task.cancel()
+                    if inst.ping_task:
+                        inst.ping_task.cancel()
                         try:
-                            await self._ping_task
+                            await inst.ping_task
                         except asyncio.CancelledError:
                             pass
-                        self._ping_task = None
+                        inst.ping_task = None
+                    inst.healthy = False
 
-                # Stream ended normally
                 reconnect_delay = 1.0
 
             except grpc_aio.AioRpcError as e:
-                code = e.code()
+                inst.healthy = False
+                err_code = e.code()
                 details = e.details() or ""
-                logger.error(
-                    f"[GEYSER] gRPC error: {code} - {details}"
-                )
-                if code == grpc.StatusCode.UNAUTHENTICATED:
-                    logger.error("[GEYSER] Authentication failed! Check GEYSER_API_KEY")
+                logger.error(f"[{tag}] gRPC error: {err_code} - {details}")
+                if err_code == grpc.StatusCode.UNAUTHENTICATED:
+                    logger.error(f"[{tag}] Authentication failed! Check API key")
                     await asyncio.sleep(30)
-                elif code == grpc.StatusCode.UNAVAILABLE:
-                    logger.warning("[GEYSER] Service unavailable, reconnecting...")
-                elif code == grpc.StatusCode.INTERNAL and "RST_STREAM" in details:
-                    # RST_STREAM is expected from PublicNode — fast reconnect
-                    logger.warning(
-                        "[GEYSER] RST_STREAM received (expected from PublicNode), "
-                        "fast reconnect in 0.5s"
-                    )
+                elif err_code == grpc.StatusCode.UNAVAILABLE:
+                    logger.warning(f"[{tag}] Service unavailable, reconnecting...")
+                elif err_code == grpc.StatusCode.INTERNAL and "RST_STREAM" in details:
+                    logger.warning(f"[{tag}] RST_STREAM received, fast reconnect in 0.5s")
                     reconnect_delay = 0.5
                 else:
-                    logger.warning(f"[GEYSER] Reconnecting in {reconnect_delay}s...")
+                    logger.warning(f"[{tag}] Reconnecting in {reconnect_delay}s...")
 
             except asyncio.CancelledError:
-                logger.info("[GEYSER] Stream cancelled")
+                logger.info(f"[{tag}] Stream cancelled")
                 return
 
             except Exception as e:
-                logger.error(f"[GEYSER] Unexpected error: {e}")
+                inst.healthy = False
+                logger.error(f"[{tag}] Unexpected error: {e}")
 
-            # Reconnect with backoff
             if self.running:
                 self._stats["reconnects"] += 1
+                inst.stats["reconnects"] += 1
                 logger.warning(
-                    f"[GEYSER] Reconnecting in {reconnect_delay:.1f}s "
-                    f"(total reconnects: {self._stats['reconnects']})"
+                    f"[{tag}] Reconnecting in {reconnect_delay:.1f}s "
+                    f"(instance reconnects: {inst.stats['reconnects']})"
                 )
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, 30)
 
-            # Close old channel
-            if self._channel:
+            if inst.channel:
                 try:
-                    await self._channel.close()
+                    await inst.channel.close()
                 except Exception:
                     pass
-                self._channel = None
+                inst.channel = None
+
+    def _push_to_all_queues(self, message):
+        """Push a message (subscribe request or ping) to all active gRPC instance queues."""
+        pushed = 0
+        for inst in self._grpc_instances:
+            if inst.ping_queue:
+                try:
+                    inst.ping_queue.put_nowait(message)
+                    pushed += 1
+                except asyncio.QueueFull:
+                    logger.warning(f"[GEYSER-{inst.name.upper()}] Ping queue full, message dropped")
+        return pushed
 
     async def _emit_from_local_parse(
-        self, parsed, grpc_receive_time: float
+        self, parsed, grpc_receive_time: float, source_name: str = ""
     ):
         """Emit whale buy signal from locally parsed transaction data.
 
@@ -728,7 +835,8 @@ class WhaleGeyserReceiver:
             self._last_latency_ms = latency_ms
 
             # Get symbol (async, non-blocking for speed)
-            token_symbol = await _fetch_symbol_dexscreener(token_received)
+            # SPEED FIX: symbol fetch moved to background (saves ~200ms)
+            token_symbol = ""
 
             whale_buy = WhaleBuy(
                 whale_wallet=fee_payer,
@@ -746,8 +854,9 @@ class WhaleGeyserReceiver:
             self._stats["parse_ok"] += 1
 
             logger.warning("=" * 70)
+            _src = source_name.upper() if source_name else "?"
             logger.warning(
-                f"[GEYSER-LOCAL] WHALE BUY DETECTED (LOCAL PARSE) "
+                f"[GEYSER-LOCAL] WHALE BUY DETECTED (LOCAL PARSE via {_src}) "
                 f"[{latency_ms:.0f}ms latency]"
             )
             logger.warning(f"  WHALE:    {whale_buy.whale_label}")
@@ -768,11 +877,36 @@ class WhaleGeyserReceiver:
                     f"{whale_buy.token_symbol}"
                 )
                 asyncio.create_task(self.on_whale_buy(whale_buy))
+                # SPEED FIX: fetch symbol in background, update position later
+                asyncio.create_task(self._deferred_symbol_update(token_received, whale_buy))
             else:
                 logger.error("[GEYSER-LOCAL] NO CALLBACK SET!")
 
         except Exception as e:
             logger.error(f"[GEYSER-LOCAL] Emit error: {e}")
+
+
+    async def _deferred_symbol_update(self, mint: str, whale_buy_obj):
+        """Fetch symbol in background and update whale_buy + position."""
+        try:
+            symbol = await _fetch_symbol_dexscreener(mint)
+            if symbol:
+                whale_buy_obj.token_symbol = symbol
+                logger.info(f"[SYMBOL] Resolved: {mint[:12]}... -> {symbol}")
+                # Update position symbol if trader has it
+                try:
+                    from trading.trader_registry import get_trader
+                    trader = get_trader()
+                    if trader:
+                        for p in trader.active_positions:
+                            if str(p.mint) == mint and (not p.symbol or p.symbol == mint[:8]):
+                                p.symbol = symbol
+                                logger.info(f"[SYMBOL] Position updated: {mint[:12]}... -> {symbol}")
+                                break
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"[SYMBOL] Deferred fetch failed for {mint[:12]}: {e}")
 
     async def _parse_and_emit(
         self, signature: str, fee_payer: str, grpc_receive_time: float
@@ -956,7 +1090,8 @@ class WhaleGeyserReceiver:
                     )
 
             if not token_symbol:
-                token_symbol = await _fetch_symbol_dexscreener(token_received)
+                # SPEED FIX: symbol fetch moved to background
+                token_symbol = token_symbol or ""
 
             whale_buy = WhaleBuy(
                 whale_wallet=fee_payer,
@@ -992,6 +1127,9 @@ class WhaleGeyserReceiver:
                     f"[GEYSER] Calling callback for {whale_buy.token_symbol}"
                 )
                 asyncio.create_task(self.on_whale_buy(whale_buy))
+                # SPEED FIX: fetch symbol in background
+                if not whale_buy.token_symbol:
+                    asyncio.create_task(self._deferred_symbol_update(token_received, whale_buy))
             else:
                 logger.error("[GEYSER] NO CALLBACK SET!")
 
@@ -1046,20 +1184,16 @@ class WhaleGeyserReceiver:
                 f'(curve={curve_address[:16]}...)'
             )
 
-            # Push updated subscribe request with new curve account
+            # Push updated subscribe request to ALL gRPC instances
             new_request = self._create_subscribe_request()
-            if self._ping_queue:
-                try:
-                    self._ping_queue.put_nowait(new_request)
-                    logger.info(
-                        f'[GEYSER] Pushed resubscribe: '
-                        f'{len(self.whale_wallets)} whales '
-                        f'+ {len(self._vault_subscriptions)} vault pairs '
-                        f'+ {len(self._curve_subscriptions)} curves '
-                        f'({len(self._vault_address_map) + len(self._curve_address_map)} accounts)'
-                    )
-                except asyncio.QueueFull:
-                    logger.warning('[GEYSER] Ping queue full, curve sub will apply on reconnect')
+            _pushed = self._push_to_all_queues(new_request)
+            logger.info(
+                f'[GEYSER] Pushed resubscribe to {_pushed} instances: '
+                f'{len(self.whale_wallets)} whales '
+                f'+ {len(self._vault_subscriptions)} vault pairs '
+                f'+ {len(self._curve_subscriptions)} curves '
+                f'({len(self._vault_address_map) + len(self._curve_address_map)} accounts)'
+            )
 
         except Exception as e:
             logger.error(f'[GEYSER] Failed to subscribe curve for {symbol}: {e}')
@@ -1078,11 +1212,7 @@ class WhaleGeyserReceiver:
             logger.info(f'[GEYSER] -CURVE_UNSUBSCRIBE {sub.symbol} ({mint[:8]}...)')
 
             new_request = self._create_subscribe_request()
-            if self._ping_queue:
-                try:
-                    self._ping_queue.put_nowait(new_request)
-                except asyncio.QueueFull:
-                    pass
+            self._push_to_all_queues(new_request)
             return True
         except Exception as e:
             logger.error(f'[GEYSER] Failed to unsubscribe curve for {mint[:8]}: {e}')
@@ -1157,6 +1287,38 @@ class WhaleGeyserReceiver:
             # Store in shared vault_prices cache so get_vault_price() also returns it
             self._vault_prices[mint] = (sub.price, time.time())
 
+            # === REACTIVE SL/TP — check at every gRPC tick ===
+            _trigger = self._sl_tp_triggers.get(mint)
+            if _trigger and not _trigger["triggered"]:
+                _sl = _trigger.get("sl_price", 0)
+                _tp = _trigger.get("tp_price", 0)
+                if _sl and sub.price <= _sl:
+                    # DYNAMIC SL: check position age, wider SL in first 10-30s
+                    _entry_t = _trigger.get('entry_time')
+                    _p_age = (time.time() - _entry_t) if _entry_t else 999
+                    _pnl = (sub.price - _trigger['entry_price']) / max(_trigger['entry_price'], 1e-15) * 100
+                    _do_sl = True
+                    if _p_age < 10.0 and _pnl > -35.0:
+                        _do_sl = False  # First 10s: only -35%
+                        if sub.price <= _trigger['entry_price'] * 0.65:
+                            _do_sl = True
+                    elif _p_age < 30.0 and _pnl > -25.0:
+                        _do_sl = False  # 10-30s: only -25%
+                        if sub.price <= _trigger['entry_price'] * 0.75:
+                            _do_sl = True
+                    if _do_sl:
+                        _trigger['triggered'] = True
+                        logger.warning(f'[REACTIVE SL] {sub.symbol}: {sub.price:.10f} <= SL {_sl:.10f} (PnL: {_pnl:.1f}%, age: {_p_age:.0f}s) — INSTANT SELL!')
+                        asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, 'stop_loss', _pnl))
+                    else:
+                        if int(_p_age) % 5 == 0:  # Log every ~5s
+                            logger.info(f'[DYNAMIC SL] {sub.symbol}: PnL {_pnl:.1f}% at age {_p_age:.0f}s — SL widened, holding')
+                elif _tp and _tp > 0 and sub.price >= _tp:
+                    _trigger["triggered"] = True
+                    _pnl = (sub.price - _trigger["entry_price"]) / max(_trigger["entry_price"], 1e-15) * 100
+                    logger.warning(f'[REACTIVE TP] {sub.symbol}: {sub.price:.10f} >= TP {_tp:.10f} (PnL: {_pnl:.1f}%) — INSTANT SELL!')
+                    asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, "take_profit", _pnl))
+
             if old_price <= 0:
                 logger.warning(
                     f'[GEYSER] Curve FIRST price: {sub.symbol} '
@@ -1207,18 +1369,15 @@ class WhaleGeyserReceiver:
                 f'(base={base_vault[:16]}..., quote={quote_vault[:16]}...)'
             )
 
-            # Push updated subscription request through the queue
-            if self._ping_queue:
-                new_request = self._create_subscribe_request()
-                try:
-                    self._ping_queue.put_nowait(new_request)
-                    logger.warning(
-                        f'[GEYSER] Subscribe request: {len(self.whale_wallets)} wallets '
-                        f'+ {len(self._vault_subscriptions)} vault pairs '
-                        f'({len(self._vault_address_map)} vault accounts)'
-                    )
-                except asyncio.QueueFull:
-                    logger.warning('[GEYSER] Ping queue full, vault sub will apply on reconnect')
+            # Push updated subscription request to ALL gRPC instances
+            new_request = self._create_subscribe_request()
+            _pushed = self._push_to_all_queues(new_request)
+            logger.warning(
+                f'[GEYSER] Pushed vault subscribe to {_pushed} instances: '
+                f'{len(self.whale_wallets)} wallets '
+                f'+ {len(self._vault_subscriptions)} vault pairs '
+                f'({len(self._vault_address_map)} vault accounts)'
+            )
 
             return True
 
@@ -1239,18 +1398,118 @@ class WhaleGeyserReceiver:
 
             logger.info(f'[GEYSER] -VAULT_UNSUBSCRIBE {sub.symbol} ({mint[:8]}...)')
 
-            if self._ping_queue:
-                new_request = self._create_subscribe_request()
-                try:
-                    self._ping_queue.put_nowait(new_request)
-                except asyncio.QueueFull:
-                    pass
+            new_request = self._create_subscribe_request()
+            self._push_to_all_queues(new_request)
 
             return True
 
         except Exception as e:
             logger.error(f'[GEYSER] Failed to unsubscribe vaults for {mint[:8]}: {e}')
             return False
+
+    async def _reactive_sell(self, mint: str, symbol: str, price: float, reason: str, pnl_pct: float):
+
+        # === NEGATIVE-TOKEN GUARD ===
+        def _safe_remaining(total, sold, decimals=6):
+            total, sold = int(total), int(sold)
+            if total > 0 and sold > 0:
+                ratio = sold / total
+                if ratio > 100:
+                    total = total * (10 ** decimals)
+                elif ratio < 0.00001 and total > 10 ** (decimals + 2):
+                    sold = sold * (10 ** decimals)
+            result = total - sold
+            if result < 0:
+                logger.warning(f'[NEG_GUARD] Clamped {result} to 0 (total={total}, sold={sold})')
+                return 0
+            return result
+        # === END GUARD ===
+        """Instant sell triggered by gRPC price tick. Bypasses monitor 1s delay."""
+        try:
+            from trading.trader_registry import get_trader
+            trader = get_trader()
+            if not trader:
+                logger.error(f"[REACTIVE] No trader for {symbol} sell!")
+                return
+            # Find position and token_info
+            position = None
+            for p in trader.active_positions:
+                if str(p.mint) == mint:
+                    position = p
+                    break
+            if not position or not position.is_active:
+                logger.warning(f"[REACTIVE] No active position for {symbol}")
+                return
+            if getattr(position, 'is_selling', False):
+                logger.warning(f"[REACTIVE] {symbol} already selling, skip")
+                return
+            # Build TokenInfo
+            from interfaces.core import TokenInfo
+            from solders.pubkey import Pubkey
+            bc = Pubkey.from_string(position.bonding_curve) if position.bonding_curve else None
+            token_info = TokenInfo(
+                name=symbol, symbol=symbol, uri="", mint=Pubkey.from_string(mint),
+                platform=trader.platform, bonding_curve=bc, creator=None, creator_vault=None,
+            )
+            # Determine sell quantity
+            from trading.position import ExitReason
+            if reason == "take_profit" and position.tp_sell_pct < 1.0:
+                sell_qty = min(position.quantity * position.tp_sell_pct, position.quantity)
+                exit_reason = ExitReason.TAKE_PROFIT
+                skip_cleanup = True
+            else:
+                sell_qty = position.quantity
+                exit_reason = ExitReason.STOP_LOSS if reason == "stop_loss" else ExitReason.TAKE_PROFIT
+                skip_cleanup = False
+            # PATCH Phase 6: Don't sell until tokens actually arrived on wallet
+            _tokens_ok = getattr(position, 'tokens_arrived', True)
+            _buy_ok = getattr(position, 'buy_confirmed', True)
+            if not _tokens_ok or not _buy_ok:
+                _reason = "tokens_arrived=False" if not _tokens_ok else "buy_confirmed=False"
+                logger.warning(f"[REACTIVE] BLOCKED: {symbol} {_reason} — waiting")
+                _trigger = self._sl_tp_triggers.get(mint)
+                if _trigger:
+                    _trigger["triggered"] = False  # Allow retry after confirmation
+                return
+            position.is_selling = True
+            logger.warning(f"[REACTIVE] Launching FAST SELL for {symbol} ({reason}, PnL: {pnl_pct:.1f}%)")
+            success = await trader._fast_sell_with_timeout(
+                token_info, position, price, sell_qty, skip_cleanup=skip_cleanup, exit_reason=exit_reason
+            )
+            if success and reason == "take_profit" and position.tp_sell_pct < 1.0:
+                remaining = max(0, position.quantity * (1 - position.tp_sell_pct))
+                if remaining > 1.0:
+                    position.quantity = remaining
+                    position.take_profit_price = None
+                    position.tp_partial_done = True
+                    if not position.tsl_active and trader.tsl_enabled:
+                        position.tsl_active = True
+                        position.high_water_mark = price
+                        position.tsl_trigger_price = price * (1 - trader.tsl_trail_pct)
+                    trader._save_position(position)
+                    logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens on TSL")
+            if not success:
+                position.is_selling = False
+                _trigger = self._sl_tp_triggers.get(mint)
+                if _trigger:
+                    _trigger["triggered"] = False  # Allow retry
+                logger.error(f"[REACTIVE] Sell FAILED for {symbol}, will retry via monitor")
+        except Exception as e:
+            logger.error(f"[REACTIVE] Sell error for {symbol}: {e}")
+
+    def register_sl_tp(self, mint: str, symbol: str, entry_price: float, sl_price: float, tp_price: float = None):
+        """Register SL/TP levels for reactive checking on every gRPC tick."""
+        self._sl_tp_triggers[mint] = {
+            "symbol": symbol, "entry_price": entry_price,
+            "sl_price": sl_price, "tp_price": tp_price, "triggered": False,
+            "entry_time": time.time(),  # DYNAMIC SL: track position age for wider SL window
+        }
+        _tp_str = f"{tp_price:.10f}" if tp_price else "0"
+        logger.info(f"[REACTIVE] Registered SL/TP for {symbol}: SL={sl_price:.10f}, TP={_tp_str}")
+
+    def unregister_sl_tp(self, mint: str):
+        """Remove SL/TP trigger for mint."""
+        self._sl_tp_triggers.pop(mint, None)
 
     def get_vault_price(self, mint: str, max_age: float = 120.0) -> float | None:
         """Get current vault-derived price. Returns None if no data or stale."""
@@ -1318,6 +1577,115 @@ class WhaleGeyserReceiver:
             logger.error(f'[GEYSER] Vault account update error: {e}')
 
 
+    # ================================================================
+    # ATA Tracking — detect token arrival on wallet (Phase 6)
+    # ================================================================
+
+    async def subscribe_ata(self, mint: str, ata_address: str, symbol: str = ""):
+        """Subscribe to our wallet's ATA for this token.
+        When tokens arrive (balance > 0), sets tokens_arrived=True on the position."""
+        try:
+            if mint in self._ata_pending:
+                logger.info(f"[GEYSER] ATA already subscribed for {symbol} ({mint[:8]}...)")
+                return
+
+            self._ata_pending[mint] = ata_address
+            self._ata_address_map[ata_address] = mint
+
+            logger.warning(
+                f"[GEYSER] +ATA_SUBSCRIBE {symbol} "
+                f"(ata={ata_address[:16]}...)"
+            )
+
+            # Push updated subscribe request to ALL gRPC instances
+            new_request = self._create_subscribe_request()
+            _pushed = self._push_to_all_queues(new_request)
+            logger.info(
+                f"[GEYSER] Pushed ATA resubscribe to {_pushed} instances: "
+                f"{len(self._ata_address_map)} ATA accounts"
+            )
+
+        except Exception as e:
+            logger.error(f"[GEYSER] Failed to subscribe ATA for {symbol}: {e}")
+
+    async def unsubscribe_ata(self, mint: str) -> bool:
+        """Remove ATA subscription for a token (after sell or cleanup)."""
+        try:
+            ata_addr = self._ata_pending.pop(mint, None)
+            if ata_addr:
+                self._ata_address_map.pop(ata_addr, None)
+                logger.info(f"[GEYSER] -ATA_UNSUBSCRIBE {mint[:8]}...")
+
+                new_request = self._create_subscribe_request()
+                self._push_to_all_queues(new_request)
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"[GEYSER] Failed to unsubscribe ATA for {mint[:8]}: {e}")
+            return False
+
+    def _handle_ata_account_update(self, account_update) -> None:
+        """Process ATA account update from gRPC stream.
+        When balance > 0, tokens have arrived — mark position as ready to sell."""
+        try:
+            acct = account_update.account
+            if not acct:
+                return
+
+            pubkey_bytes = bytes(acct.pubkey)
+            pubkey_str = base58.b58encode(pubkey_bytes).decode()
+
+            mint = self._ata_address_map.get(pubkey_str)
+            if not mint:
+                return
+
+            data = bytes(acct.data)
+            # SPL Token Account layout: offset 64:72 = amount (u64 little-endian)
+            if len(data) < 72:
+                return
+
+            raw_amount = struct.unpack('<Q', data[64:72])[0]
+
+            if raw_amount > 0:
+                logger.warning(
+                    f"[GEYSER] ATA TOKENS ARRIVED! mint={mint[:8]}... "
+                    f"amount={raw_amount} (raw)"
+                )
+
+                # Mark position as tokens_arrived + buy_confirmed in trader
+                try:
+                    from trading.trader_registry import get_trader
+                    trader = get_trader()
+                    if trader:
+                        for pos in trader.active_positions:
+                            if str(pos.mint) == mint:
+                                pos.tokens_arrived = True
+                                pos.buy_confirmed = True
+                                # Update actual quantity from on-chain data
+                                # Token decimals = 6 for pump.fun
+                                actual_qty = raw_amount / (10 ** 6)
+                                if actual_qty > 0 and abs(actual_qty - pos.quantity) / max(pos.quantity, 1) > 0.01:
+                                    logger.warning(
+                                        f"[GEYSER] ATA quantity update: {pos.quantity:.2f} -> {actual_qty:.2f}"
+                                    )
+                                    pos.quantity = actual_qty
+                                logger.warning(
+                                    f"[GEYSER] tokens_arrived=True, buy_confirmed=True for {pos.symbol}"
+                                )
+                                # Save to disk
+                                from trading.position import save_positions
+                                save_positions(trader.active_positions)
+                                break
+                except Exception as e:
+                    logger.error(f"[GEYSER] ATA trader update error: {e}")
+
+                # Cleanup — no longer need to watch this ATA
+                self._ata_pending.pop(mint, None)
+                self._ata_address_map.pop(pubkey_str, None)
+
+        except Exception as e:
+            logger.error(f"[GEYSER] ATA account update error: {e}")
+
     def get_stats(self) -> dict:
         stats = {**self._stats, "latency_ms": self._last_latency_ms}
         if self._last_pong_time > 0:
@@ -1326,6 +1694,13 @@ class WhaleGeyserReceiver:
             )
         stats["curve_subscriptions"] = len(self._curve_subscriptions)
         stats["curve_accounts"] = len(self._curve_address_map)
+        # Per-instance stats
+        stats["grpc_instances"] = {}
+        for inst in self._grpc_instances:
+            inst_stats = {**inst.stats, "healthy": inst.healthy, "endpoint": inst.endpoint}
+            if inst.last_pong_time > 0:
+                inst_stats["last_pong_ago_s"] = round(time.monotonic() - inst.last_pong_time, 1)
+            stats["grpc_instances"][inst.name] = inst_stats
         if self.local_parser:
             stats["local_parser"] = self.local_parser.get_stats()
         return stats

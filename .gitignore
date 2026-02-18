@@ -159,3 +159,18 @@ Thumbs.db
 cleanup_bad_wallets.py
 scripts/dune_check_wallets.py
 scripts/dune_find_whales.py
+
+# ===========================
+# МУСОРНЫЕ / ВРЕМЕННЫЕ ФАЙЛЫ
+# ===========================
+bot_detector.py
+buttfish_forensics.py
+token_scanner.py
+drtf_analysis.txt
+full_report_output.txt
+holders_resolved.txt
+early_buys_*.json
+report_*.json
+
+# Fix: .bakN файлы (bak7, bak5, etc)
+*.bak[0-9]*
