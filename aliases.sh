@@ -15,15 +15,40 @@ alias blacklist='cd $BOT_DIR && ./venv/bin/python3 scripts/blacklist_cli.py'
 # ─────────────────────────────────────────────────────────────
 # 🤖 BOT CONTROL
 # ─────────────────────────────────────────────────────────────
-alias bot-start='sudo systemctl start whale-bot && sleep 2 && echo "✅ Bot started" && systemctl is-active whale-bot'
+bot-start() {
+    sudo systemctl start whale-bot
+    echo -n "⏳ Starting"
+    for i in {1..20}; do
+        sleep 1; echo -n "."
+        status=$(systemctl is-active whale-bot)
+        [ "$status" = "active" ]  && echo " ✅ Bot started"  && return 0
+        [ "$status" = "failed" ]  && echo " ❌ Bot failed! Check: journalctl -fu whale-bot" && return 1
+    done
+    echo " ⚠️  Timeout — still activating. Check: bot-status"
+}
+
+bot-restart() {
+    sudo systemctl stop whale-bot 2>/dev/null
+    pkill -f "bot_runner.py" 2>/dev/null
+    sleep 1
+    sudo systemctl start whale-bot
+    echo -n "⏳ Restarting"
+    for i in {1..20}; do
+        sleep 1; echo -n "."
+        status=$(systemctl is-active whale-bot)
+        [ "$status" = "active" ]  && echo " ✅ Bot restarted" && return 0
+        [ "$status" = "failed" ]  && echo " ❌ Bot failed! Check: journalctl -fu whale-bot" && return 1
+    done
+    echo " ⚠️  Timeout — still activating. Check: bot-status"
+}
+
 alias bot-stop='sudo systemctl stop whale-bot && echo "⛔ Bot stopped"'
-alias bot-restart='sudo systemctl stop whale-bot 2>/dev/null; pkill -f "bot_runner.py" 2>/dev/null; sleep 1; sudo systemctl start whale-bot; sleep 3; systemctl is-active whale-bot && echo "✅ Bot restarted" || echo "❌ Bot failed!"'
 alias bot-status='sudo systemctl status whale-bot --no-pager | head -20; echo ""; curl -s http://localhost:8000/health 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "(webhook offline)"'
 alias bot-health='curl -s http://localhost:8000/health 2>/dev/null | python3 -m json.tool || echo "Webhook server not running"'
 alias bot-mode='if grep -q "^GEYSER_API_KEY=" $BOT_DIR/.env; then echo "🟢 gRPC + Webhook"; else echo "🟡 Webhook only"; fi'
-alias bot-webhook='sed -i "s/^GEYSER_API_KEY=/#GEYSER_API_KEY=/" $BOT_DIR/.env && sudo systemctl restart whale-bot && echo "🟡 Webhook-only mode"'
+alias bot-webhook='sed -i "s/^GEYSER_API_KEY=/#GEYSER_API_KEY=/" $BOT_DIR/.env && bot-restart && echo "🟡 Webhook-only mode"'
 alias bot-ungeyser='sed -i "s/^#GEYSER_API_KEY=/GEYSER_API_KEY=/" $BOT_DIR/.env && echo "🔓 GEYSER_API_KEY uncommented"'
-alias bot-geyser='grep -q "^GEYSER_API_KEY=" $BOT_DIR/.env && sudo systemctl restart whale-bot && echo "🟢 gRPC mode" || echo "❌ Run bot-ungeyser first"'
+alias bot-geyser='grep -q "^GEYSER_API_KEY=" $BOT_DIR/.env && bot-restart && echo "🟢 gRPC mode" || echo "❌ Run bot-ungeyser first"'
 
 # ─────────────────────────────────────────────────────────────
 # 📜 LOGS
