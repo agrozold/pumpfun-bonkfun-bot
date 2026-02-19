@@ -174,3 +174,10 @@ report_*.json
 
 # Fix: .bakN файлы (bak7, bak5, etc)
 *.bak[0-9]*
+positions.json
+positions.backup.*.json
+src/positions.json
+data/
+whale_activity_helius.json
+htmlcov/
+logs/
