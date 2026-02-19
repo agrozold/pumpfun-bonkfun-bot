@@ -203,6 +203,7 @@ async def _post_buy_verify_balance(wallet_pubkey: str, mint_str: str, expected_t
                                 return actual_ui, corrected_price, actual_decimals
                             else:
                                 logger.info(f"[POST-BUY VERIFY] OK: expected={expected_tokens:,.2f}, actual={actual_ui:,.2f}, ratio={ratio:.2f}")
+                                return actual_ui, sol_spent / actual_ui if actual_ui > 0 else 0, actual_decimals
                         
                         return expected_tokens, sol_spent / expected_tokens if expected_tokens > 0 else 0, actual_decimals
     except Exception as e:
@@ -944,7 +945,7 @@ class FallbackSeller:
             # + track_volume OptionBool [1,1] = Some(true)
             ix_data = (
                 buy_discriminator
-                + struct.pack("<Q", tokens_out_raw)
+                + struct.pack("<Q", min_tokens)
                 + struct.pack("<Q", max_sol_cost)
                 + bytes([1, 1])  # track_volume = Some(true)
             )

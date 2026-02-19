@@ -3852,8 +3852,8 @@ class UniversalTrader:
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
-        HARD_STOP_LOSS_PCT = 30.0  # 30% убыток = НЕМЕДЛЕННАЯ продажа (backup если Config SL не сработал)
-        EMERGENCY_STOP_LOSS_PCT = 35.0  # 35% убыток = ЭКСТРЕННАЯ продажа (последний рубеж)
+        HARD_STOP_LOSS_PCT = 50.0  # 50% убыток = НЕМЕДЛЕННАЯ продажа (backup если Config SL не сработал)
+        EMERGENCY_STOP_LOSS_PCT = 60.0  # 60% убыток = ЭКСТРЕННАЯ продажа (последний рубеж)
 
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
@@ -4893,7 +4893,12 @@ class UniversalTrader:
                     return True
                 if actual_balance < sell_quantity * 0.9:
                     logger.warning(f"[FAST SELL] Quantity mismatch: position={sell_quantity:.2f} wallet={actual_balance:.2f}, using wallet balance")
-                    sell_quantity = actual_balance
+                    if exit_reason in ("TP", "PARTIAL_TP") and position.quantity > 0:
+                        _tp_pct = sell_quantity / position.quantity
+                        sell_quantity = actual_balance * _tp_pct
+                        logger.warning(f"[FAST SELL] PARTIAL_TP moonbag preserved: selling {sell_quantity:.2f} of {actual_balance:.2f} ({_tp_pct:.0%})")
+                    else:
+                        sell_quantity = actual_balance
             elif actual_balance is None:
                 # Token account not found via RPC
                 from datetime import datetime as _dt2, timezone as _tz2
@@ -4940,7 +4945,11 @@ class UniversalTrader:
                 logger.warning(f"[FAST SELL] Jupiter SUCCESS (confirmed): {sig} [{_elapsed:.0f}ms]")
                 # Session 9: Refresh balance cache after sell (background)
                 asyncio.create_task(self._update_balance_after_trade())
-                original_qty = getattr(position, "quantity", sell_quantity)
+                original_qty = (
+                    actual_balance
+                    if (actual_balance is not None and actual_balance >= 0)
+                    else getattr(position, "quantity", sell_quantity)
+                )  # P3: pre-sell snapshot for accurate VERIFY
                 _exit_reason_str = exit_reason.value if isinstance(exit_reason, ExitReason) else (str(exit_reason) if exit_reason else "")
                 asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity, exit_reason=_exit_reason_str))
                 if not skip_cleanup:
@@ -5113,6 +5122,21 @@ class UniversalTrader:
             if remaining < original_qty:
                 # Near-full sell (>90% sold)
                 if remaining < original_qty * 0.1:
+                    # For SL exits: retry selling residual if > 100 tokens (not dust)
+                    _is_sl = exit_reason in ("stop_loss", "trailing_stop", "hard_stop_loss", "emergency_stop_loss")
+                    if _is_sl and remaining > 100:
+                        logger.warning(f"[VERIFY] {symbol}: SL RESIDUAL {remaining:.2f} tokens — scheduling cleanup sell")
+                        try:
+                            from solders.pubkey import Pubkey as _Pk
+                            _ok, _sig, _err = await self._fallback_seller._sell_via_jupiter(
+                                _Pk.from_string(mint_str), remaining, symbol
+                            )
+                            if _ok:
+                                logger.warning(f"[VERIFY] {symbol}: SL residual sell TX: {_sig}")
+                            else:
+                                logger.warning(f"[VERIFY] {symbol}: SL residual sell failed: {_err}")
+                        except Exception as _e:
+                            logger.warning(f"[VERIFY] {symbol}: SL residual sell error: {_e}")
                     logger.info(f"[VERIFY] {symbol}: Full sell CONFIRMED! Sold {actual_sold:.2f} tokens")
                     return True
 
