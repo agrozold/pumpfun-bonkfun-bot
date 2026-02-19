@@ -755,6 +755,24 @@ class FallbackSeller:
                     f"[PUMPFUN-DIRECT] ZERO-RPC: using reserves from TX "
                     f"(vsr={vs_reserves}, vtr={vt_reserves})"
                 )
+                # MEDIUM #6: Check complete flag — curve may have migrated
+                # between whale TX and our TX. Fast check (~15ms), skip on timeout.
+                try:
+                    _cbc_resp = await asyncio.wait_for(
+                        rpc_client.get_account_info(bonding_curve, encoding="base64"),
+                        timeout=0.10,
+                    )
+                    if _cbc_resp and _cbc_resp.value and _cbc_resp.value.data:
+                        import base64 as _b64
+                        _cbc_raw = _cbc_resp.value.data
+                        _cbc_bytes = _b64.b64decode(_cbc_raw[0]) if isinstance(_cbc_raw, list) else bytes(_cbc_raw)
+                        if len(_cbc_bytes) > 48 and _cbc_bytes[48] != 0:
+                            logger.info("[PUMPFUN-DIRECT] ZERO-RPC: complete=True (migrated since whale TX) — falling through")
+                            return False, None, "BC complete", 0.0, 0.0
+                except asyncio.TimeoutError:
+                    logger.info("[PUMPFUN-DIRECT] ZERO-RPC: complete check timed out — proceeding optimistically")
+                except Exception as _cc_err:
+                    logger.info(f"[PUMPFUN-DIRECT] ZERO-RPC: complete check error: {_cc_err} — proceeding")
             else:
                 # Fallback: fetch from RPC (~20ms)
                 logger.info("[PUMPFUN-DIRECT] No TX reserves, fetching via RPC...")
@@ -830,7 +848,8 @@ class FallbackSeller:
             # min tokens = tokens * (1 - slippage) — for the instruction
             min_tokens = int(tokens_out_raw * (1.0 - self.slippage))
             
-            tokens_decimal = tokens_out_raw / (10 ** TOKEN_DECIMALS)
+            _actual_decimals = await get_token_decimals(rpc_client, mint)
+            tokens_decimal = tokens_out_raw / (10 ** _actual_decimals)
             price = sol_amount / tokens_decimal if tokens_decimal > 0 else 0
             
             logger.info(

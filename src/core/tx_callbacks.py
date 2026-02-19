@@ -42,6 +42,8 @@ async def on_buy_success(tx: "PendingTransaction"):
 # === POST-BUY VERIFY: Check actual balance vs Jupiter estimate ===
     # Jupiter quote can be wildly wrong for tokens with non-standard decimals
     # (e.g. 9 decimals when get_token_decimals() returned 6 → 1000x error)
+    verified_price = 0.0  # safe default if _post_buy_verify_balance fails/throws
+    verified_tokens = token_amount  # safe default
     try:
         from trading.fallback_seller import _post_buy_verify_balance
         # Get wallet from context, or from trader registry as fallback
@@ -59,7 +61,7 @@ async def on_buy_success(tx: "PendingTransaction"):
             mint_str=mint,
             expected_tokens=token_amount,
             sol_spent=sol_spent,
-            token_decimals_expected=9 if mint.endswith("BAGS") else 6,  # BAGS=9, pump/bonk=6
+            token_decimals_expected=9 if mint.lower().endswith("bags") else 6,  # BAGS=9, pump/bonk=6
         )
         if abs(verified_tokens - token_amount) / max(token_amount, 1) > 0.1:
             logger.warning(
@@ -126,6 +128,27 @@ async def on_buy_success(tx: "PendingTransaction"):
             for _ep in existing:
                 _ep.buy_confirmed = True
                 _ep.tokens_arrived = True
+            # HIGH #4 FIX: Apply verified_price to provisional/soft-source positions
+            _soft_ep_sources = {"jupiter_tx", "dexscreener_fallback", "cost_fallback", "pumpfun_buyer", "unknown"}
+            if verified_price and verified_price > 0:
+                for _ep in existing:
+                    _ep_src = getattr(_ep, "entry_price_source", "unknown")
+                    _ep_prov = getattr(_ep, "entry_price_provisional", False)
+                    if _ep_prov or _ep_src in _soft_ep_sources:
+                        logger.warning(
+                            f"[TX_CALLBACK] Applying verified_price to {symbol}: "
+                            f"{_ep.entry_price:.10f} -> {verified_price:.10f} (src={_ep_src})"
+                        )
+                        _ep.entry_price = verified_price
+                        if hasattr(_ep, "original_entry_price"):
+                            _ep.original_entry_price = verified_price
+                        _ep.entry_price_source = "onchain_verified"
+                        _ep.entry_price_provisional = False
+                    else:
+                        logger.info(
+                            f"[TX_CALLBACK] Keeping hard entry_price for {symbol} "
+                            f"(src={_ep_src}, entry={_ep.entry_price:.10f})"
+                        )
             # Also update in-memory position in trader.active_positions
             try:
                 from trading.trader_registry import get_trader
@@ -135,6 +158,15 @@ async def on_buy_success(tx: "PendingTransaction"):
                         if str(_mp.mint) == mint:
                             _mp.buy_confirmed = True
                             _mp.tokens_arrived = True
+                            # Sync verified_price to in-memory too
+                            _mp_src = getattr(_mp, "entry_price_source", "unknown")
+                            _mp_prov = getattr(_mp, "entry_price_provisional", False)
+                            if verified_price and verified_price > 0 and (_mp_prov or _mp_src in _soft_ep_sources):
+                                _mp.entry_price = verified_price
+                                if hasattr(_mp, "original_entry_price"):
+                                    _mp.original_entry_price = verified_price
+                                _mp.entry_price_source = "onchain_verified"
+                                _mp.entry_price_provisional = False
                             logger.warning(f"[TX_CALLBACK] buy_confirmed=True, tokens_arrived=True for {symbol} (in-memory)")
                             break
             except Exception as _bc_err:

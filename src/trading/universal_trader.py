@@ -1338,7 +1338,7 @@ class UniversalTrader:
                         mint=mint_str,
                         curve_address=str(bonding_curve_derived),
                         symbol=whale_buy.token_symbol,
-                        decimals=6,
+                        decimals=9 if mint_str.lower().endswith("bags") else 6,
                     ))
                     logger.warning(f"[PATCH12] \u26a1 INSTANT gRPC subscribe for {whale_buy.token_symbol} (curve={str(bonding_curve_derived)[:16]}...)")
                 # === END PATCH 12 ===
@@ -1384,8 +1384,17 @@ class UniversalTrader:
                 )
                 # Mark entry as provisional: will be corrected to first curve/batch price
                 if hasattr(position, "entry_price_provisional"):
-                    position.entry_price_provisional = True
-                    position.entry_price_source = "tx_price"
+                    _ep_source_map = {
+                        "pump_fun_direct": ("pumpfun_curve", False),
+                        "pump_fun":        ("pumpfun_buyer", True),
+                        "lets_bonk":       ("letsbonk_tx",  True),
+                        "bags":            ("bags_tx",       True),
+                        "bags_fallback":   ("bags_tx",       True),
+                        "jupiter":         ("jupiter_tx",    True),
+                    }
+                    _ep_src, _ep_prov = _ep_source_map.get(dex_used, ("unknown", True))
+                    position.entry_price_provisional = _ep_prov
+                    position.entry_price_source = _ep_src
                 position.tp_sell_pct = self.tp_sell_pct  # from yaml (0.8)
                 position.buy_confirmed = False  # PATCH: race condition guard — wait for TX confirmation
                 position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
@@ -3661,25 +3670,35 @@ class UniversalTrader:
                     f"fresh={_fresh:.10f}, deviation={_dev*100:+.1f}%"
                 )
                 if _dev < -0.15:
-                    # Price dropped >15% from entry — entry was stale
-                    logger.warning(
-                        f"[POST-BUY] {token_info.symbol}: STALE PRICE detected! "
-                        f"entry={position.entry_price:.10f} vs fresh={_fresh:.10f} ({_dev*100:+.1f}%)"
-                    )
-                    # Adjust entry to fresh price (more realistic PnL tracking)
-                    old_entry = position.entry_price
-                    position.entry_price = _fresh
-                    # Recalculate TP/SL from corrected entry
-                    if self.take_profit_percentage and position.take_profit_price:
-                        position.take_profit_price = _fresh * (1 + self.take_profit_percentage)
-                    if self.stop_loss_percentage and position.stop_loss_price:
-                        position.stop_loss_price = _fresh * (1 - self.stop_loss_percentage)
-                    position.high_water_mark = _fresh
-                    self._save_position(position)
-                    logger.warning(
-                        f"[POST-BUY] {token_info.symbol}: Entry corrected {old_entry:.10f} -> {_fresh:.10f}, "
-                        f"new TP={position.take_profit_price}, new SL={position.stop_loss_price}"
-                    )
+                    # Price dropped >15% from entry — check source before overwriting
+                    _ep_src = getattr(position, "entry_price_source", "unknown")
+                    _hard_sources = {"pumpfun_curve", "onchain_verified"}
+                    if _ep_src in _hard_sources:
+                        logger.info(
+                            f"[POST-BUY] {token_info.symbol}: SKIP stale correction — "
+                            f"entry_price_source='{_ep_src}' is authoritative (curve/onchain), "
+                            f"deviation={_dev*100:+.1f}% is market impact, not stale price"
+                        )
+                    else:
+                        logger.warning(
+                            f"[POST-BUY] {token_info.symbol}: STALE PRICE detected! "
+                            f"entry={position.entry_price:.10f} vs fresh={_fresh:.10f} ({_dev*100:+.1f}%) "
+                            f"source={_ep_src}"
+                        )
+                        # Adjust entry to fresh price (more realistic PnL tracking)
+                        old_entry = position.entry_price
+                        position.entry_price = _fresh
+                        # Recalculate TP/SL from corrected entry
+                        if self.take_profit_percentage and position.take_profit_price:
+                            position.take_profit_price = _fresh * (1 + self.take_profit_percentage)
+                        if self.stop_loss_percentage and position.stop_loss_price:
+                            position.stop_loss_price = _fresh * (1 - self.stop_loss_percentage)
+                        position.high_water_mark = _fresh
+                        self._save_position(position)
+                        logger.warning(
+                            f"[POST-BUY] {token_info.symbol}: Entry corrected {old_entry:.10f} -> {_fresh:.10f}, "
+                            f"new TP={position.take_profit_price}, new SL={position.stop_loss_price}"
+                        )
                 if _dev < -0.30:
                     # Price dropped >30% — emergency sell immediately
                     logger.error(
@@ -5049,14 +5068,14 @@ class UniversalTrader:
                 base_vault=position.pool_base_vault,
                 quote_vault=position.pool_quote_vault,
                 symbol=position.symbol,
-                decimals=6,
+                decimals=9 if str(position.mint).lower().endswith("bags") else 6,
             ))
         elif self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_bonding_curve') and position.bonding_curve and not position.pool_base_vault:
             asyncio.create_task(self.whale_tracker.subscribe_bonding_curve(
                 mint=str(position.mint),
                 curve_address=str(position.bonding_curve),
                 symbol=position.symbol,
-                decimals=6,
+                decimals=9 if str(position.mint).lower().endswith("bags") else 6,
             ))
 
     async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None, exit_reason: str = ""):
@@ -5562,7 +5581,7 @@ class UniversalTrader:
                     base_vault=position.pool_base_vault,
                     quote_vault=position.pool_quote_vault,
                     symbol=position.symbol,
-                    decimals=6,
+                    decimals=9 if mint_str.lower().endswith("bags") else 6,
                 )
                 logger.info(f"[RESTORE] {position.symbol}: Subscribed to vault tracking via whale_geyser")
             elif self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_bonding_curve') and position.bonding_curve and not position.pool_base_vault:
@@ -5570,7 +5589,7 @@ class UniversalTrader:
                     mint=mint_str,
                     curve_address=str(position.bonding_curve),
                     symbol=position.symbol,
-                    decimals=6,
+                    decimals=9 if mint_str.lower().endswith("bags") else 6,
                 )
                 logger.info(f"[RESTORE] {position.symbol}: Subscribed to bonding curve tracking via whale_geyser")
             asyncio.create_task(self._monitor_position_until_exit(token_info, position))
