@@ -2916,6 +2916,10 @@ class UniversalTrader:
                     logger.info("Starting volume pattern analyzer in background...")
                     volume_task = asyncio.create_task(self.volume_pattern_analyzer.start())
 
+                # Start periodic wallet balance sync (phantom cleanup every 5 min)
+                from trading.periodic_sync import start_periodic_sync
+                start_periodic_sync()
+
 
                 try:
                     if self.sniper_enabled:
