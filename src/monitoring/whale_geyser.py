@@ -1433,9 +1433,11 @@ class WhaleGeyserReceiver:
                 _last_log = _trigger.get('_last_log_time', 0)
                 if time.time() - _last_log >= 2.0:
                     _trigger['_last_log_time'] = time.time()
+                    _sym = sub.symbol or mint[:8]
+                    _tp_s = f"{_tp:.10f}" if _tp else "None"
                     logger.info(
-                        f"[REACTIVE CHECK] {sub.symbol}: price={sub.price:.10f} "
-                        f"entry={_entry_p:.10f} SL={_sl:.10f} TP={_tp:.10f} "
+                        f"[REACTIVE CHECK] {_sym}: price={sub.price:.10f} "
+                        f"entry={_entry_p:.10f} SL={_sl:.10f} TP={_tp_s} "
                         f"PnL={_pnl_now:+.1f}% age={_age_log:.1f}s"
                     )
                 if _sl and sub.price <= _sl:
@@ -1475,7 +1477,7 @@ class WhaleGeyserReceiver:
                     if _do_sl:
                         _trigger['triggered'] = True
                         logger.warning(
-                            f'[REACTIVE SL] {sub.symbol}: {sub.price:.10f} <= SL {_sl:.10f} '
+                            f'[REACTIVE SL] {sub.symbol or mint[:8]}: {sub.price:.10f} <= SL {_sl:.10f} '
                             f'(PnL: {_pnl:.1f}%, age: {_p_age:.0f}s, threshold: {_effective_label}) '
                             f'— INSTANT SELL!'
                         )
@@ -1486,7 +1488,7 @@ class WhaleGeyserReceiver:
                         if time.time() - _last_dsl >= 2.0:
                             _trigger['_last_dsl_log'] = time.time()
                             logger.warning(
-                                f'[DYNAMIC SL] {sub.symbol}: price={sub.price:.10f} '
+                                f'[DYNAMIC SL] {sub.symbol or mint[:8]}: price={sub.price:.10f} '
                                 f'PnL={_pnl:.1f}% age={_p_age:.1f}s — {_effective_label} active, holding '
                                 f'(config SL={_sl:.10f} at -20%)'
                             )
@@ -1494,16 +1496,16 @@ class WhaleGeyserReceiver:
                     _entry_t_tp = _trigger.get('entry_time')
                     _tp_age = (time.time() - _entry_t_tp) if _entry_t_tp else 999
                     if _tp_age < 0.3:
-                        logger.info(f'[REACTIVE TP] {sub.symbol}: price >= TP but age={_tp_age:.2f}s < 0.3s — COOLDOWN')
+                        logger.info(f'[REACTIVE TP] {sub.symbol or mint[:8]}: price >= TP but age={_tp_age:.2f}s < 0.3s — COOLDOWN')
                     else:
                         _trigger["triggered"] = True
                         _pnl = (sub.price - _trigger["entry_price"]) / max(_trigger["entry_price"], 1e-15) * 100
-                        logger.warning(f'[REACTIVE TP] {sub.symbol}: {sub.price:.10f} >= TP {_tp:.10f} (PnL: {_pnl:.1f}%) — INSTANT SELL!')
+                        logger.warning(f'[REACTIVE TP] {sub.symbol or mint[:8]}: {sub.price:.10f} >= TP {_tp:.10f} (PnL: {_pnl:.1f}%) — INSTANT SELL!')
                         asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, "take_profit", _pnl))
 
             if old_price <= 0:
                 logger.warning(
-                    f'[GEYSER] Curve FIRST price: {sub.symbol} '
+                    f'[GEYSER] Curve FIRST price: {sub.symbol or mint[:8]} '
                     f'{sub.price:.10f} SOL '
                     f'(vtr={virtual_token_reserves}, vsr={virtual_sol_reserves})'
                 )
@@ -1512,7 +1514,7 @@ class WhaleGeyserReceiver:
                 _has_trigger = mint in self._sl_tp_triggers
                 _sl_tp_tag = " [SL/TP]" if _has_trigger else ""
                 logger.info(
-                    f'[GEYSER] Curve price: {sub.symbol} '
+                    f'[GEYSER] Curve price: {sub.symbol or mint[:8]} '
                     f'{sub.price:.10f} SOL ({change_pct:+.1f}%){_sl_tp_tag}'
                 )
 
