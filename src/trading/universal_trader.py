@@ -4675,7 +4675,7 @@ class UniversalTrader:
                                 position.tsl_active = True
                                 position.tsl_trail_pct = self.tsl_trail_pct
                                 position.tsl_sell_pct = self.tsl_sell_pct
-                                position.stop_loss_price = _mb_sl
+                                position.stop_loss_price = _orig_entry * 0.70  # FIX S18-11: moonbag SL -30% from entry
                                 position.entry_price = current_price
                                 position.high_water_mark = current_price
                                 position.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
@@ -4694,9 +4694,11 @@ class UniversalTrader:
                                     f"for potential moon 🌙"
                                 )
                                 
-                                logger.warning(f"[MOONBAG] {token_info.symbol}: Exiting gRPC loop → batch monitor tracks SL 🌙")
+                                logger.warning(f"[MOONBAG TSL] {token_info.symbol}: TSL partial done, continuing monitor for remaining moonbag")
                                 position.is_selling = False
-                                break  # Exit gRPC, batch continues
+                                # FIX S18-11: was break — killed monitor! moonbag had NO monitoring
+                                # Must continue loop so SL/TSL keeps checking price
+                                continue
                             else:
                                 logger.info(f"[MOONBAG] {token_info.symbol}: Remaining {remaining_quantity:.4f} too small, closing fully")
                         
@@ -4718,7 +4720,7 @@ class UniversalTrader:
                                 _sl_from_tp = current_price * (1 - _sl_pct_tp)
                                 position.tsl_trail_pct = self.tsl_trail_pct
                                 position.tsl_sell_pct = self.tsl_sell_pct
-                                position.stop_loss_price = max(_sl_from_tp, position.entry_price)
+                                position.stop_loss_price = position.entry_price * 0.70  # FIX S18-11: moonbag SL -30% from entry
                                 # Force-activate TSL for remaining position if not already active
                                 if not position.tsl_active and self.tsl_enabled:
                                     position.tsl_active = True
@@ -5742,8 +5744,7 @@ class UniversalTrader:
                     logger.warning(f"[RESTORE] {position.symbol}: MOONBAG TSL reactivated: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}")
                 elif position.tsl_active:
                     # Ensure moonbag trail is wide (50%) not default
-                    # FIX S18-10: trail from yaml, no forced minimum
-                    pass  # tsl_trail_pct already set from yaml/position
+                    pass  # trail already set from yaml
                 # Keep a safety SL at -80% from entry as absolute floor
                 if not position.stop_loss_price or position.stop_loss_price <= 0:
                     position.stop_loss_price = position.entry_price  # FIX S18-10: moonbag SL = entry (break-even)
@@ -5800,8 +5801,6 @@ class UniversalTrader:
                     position.take_profit_price = None
                 if not position.is_moonbag:
                     position.is_moonbag = True
-                    # FIX S18-10: trail from yaml, no forced minimum
-                    pass  # tsl_trail_pct already set from yaml/position
                     position.tsl_sell_pct = 1.0
                     if not position.stop_loss_price or position.stop_loss_price > position.entry_price * 0.25:
                         position.stop_loss_price = position.entry_price  # FIX S18-10: moonbag SL = entry (break-even)

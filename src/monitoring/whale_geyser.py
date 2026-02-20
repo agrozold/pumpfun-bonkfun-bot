@@ -1709,7 +1709,7 @@ class WhaleGeyserReceiver:
                     _sl_from_r = price * (1 - _sl_pct_r)
                     position.tsl_trail_pct = getattr(trader, 'tsl_trail_pct', 0.30)
                     position.tsl_sell_pct = getattr(trader, 'tsl_sell_pct', 0.50)
-                    position.stop_loss_price = max(_sl_from_r, position.entry_price)
+                    position.stop_loss_price = position.entry_price * 0.70  # FIX S18-11: moonbag SL -30% from entry (after partial TP)
                     # Force-activate TSL with wide trail for remaining tokens
                     if not position.tsl_active and trader.tsl_enabled:
                         position.tsl_active = True
@@ -1726,7 +1726,7 @@ class WhaleGeyserReceiver:
                         '_last_log_time': 0, '_last_dsl_log': 0,
                         'is_moonbag': True,  # FIX S18-9: flag for moonbag
                     }
-                    logger.info(f"[REACTIVE TP] {mint[:8]} re-registered SL={position.entry_price*0.20:.8f}")
+                    logger.info(f"[REACTIVE TP] {mint[:8]} re-registered SL={position.stop_loss_price:.10f} (-30% from entry)")
                     trader._save_position(position)
                     logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens as MOONBAG. TSL active: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}, trail=50%")
                     # FIX S18-9: Unsubscribe from gRPC curve — moonbag switches to batch price monitor
