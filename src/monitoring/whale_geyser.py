@@ -1650,8 +1650,12 @@ class WhaleGeyserReceiver:
                     logger.info(f"[REACTIVE TP] {mint[:8]} re-registered SL={position.entry_price*0.20:.8f}")
                     trader._save_position(position)
                     logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens as MOONBAG. TSL active: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}, trail=50%")
+            # FIX S17-2: Reset is_selling after BOTH success and failure
+            # Previously only reset on failure — caused monitor loop to see is_selling=True
+            # forever after partial TP, potentially triggering double-sell path
+            position.is_selling = False
             if not success:
-                position.is_selling = False
+                pass  # is_selling already reset above
                 _trigger = self._sl_tp_triggers.get(mint)
                 if _trigger:
                     _trigger["triggered"] = False  # Allow retry

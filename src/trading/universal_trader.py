@@ -4587,6 +4587,18 @@ class UniversalTrader:
                     should_exit = False
                     exit_reason = None
 
+                # FIX S17-3: Skip sell if REACTIVE path already selling
+                # is_selling=True means _reactive_sell launched _fast_sell_with_timeout
+                # Monitor loop must NOT launch a second sell — it causes double-sell
+                # and _remove_position with skip_cleanup=False killing the moonbag
+                if should_exit and exit_reason and getattr(position, 'is_selling', False):
+                    logger.warning(
+                        f"[SELL SKIP] {token_info.symbol}: is_selling=True — "
+                        f"REACTIVE path already selling, monitor skip (FIX S17-3)"
+                    )
+                    should_exit = False
+                    exit_reason = None
+
                 if should_exit and exit_reason:
                     logger.warning(f"[EXIT] Exit condition met: {exit_reason.value}")
                     logger.warning(f"[EXIT] Current price: {current_price:.10f} SOL, PnL: {pnl_pct:+.2f}%")
@@ -5614,8 +5626,21 @@ class UniversalTrader:
         asyncio.create_task(self._forget_position_async(mint))
     
     async def _forget_position_async(self, mint: str) -> None:
-        """Async helper to forget position forever."""
+        """Async helper to forget position forever.
+        FIX S17-1: Check is_moonbag from in-memory BEFORE calling forget
+        (Redis position may already be deleted by remove_position by the time
+        forget_position_forever runs, causing the moonbag guard to miss it).
+        """
         try:
+            # Check in-memory first (most reliable — not subject to Redis HDEL race)
+            _is_mb_memory = False
+            for _p in self.active_positions:
+                if str(_p.mint) == mint:
+                    _is_mb_memory = getattr(_p, 'is_moonbag', False) or getattr(_p, 'tp_partial_done', False)
+                    break
+            if _is_mb_memory:
+                logger.warning(f"[FORGET SKIP] {mint[:16]}... is MOONBAG in memory — NOT adding to sold_mints (FIX S17-1)")
+                return
             from trading.redis_state import forget_position_forever
             await forget_position_forever(mint, reason="position_removed")
         except Exception as e:
