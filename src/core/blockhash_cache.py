@@ -1,14 +1,16 @@
 """
-Global Blockhash Cache - high-performance caching for sniper bots.
+Global Blockhash Cache - dual mode: gRPC (fast) + HTTP fallback.
 
-Provides sub-second blockhash access by maintaining a background
-update loop. Critical for sniper bots where every millisecond counts.
+Mode 1 (gRPC): Uses existing Geyser channel GetLatestBlockhash (~13ms)
+Mode 2 (HTTP): Polls RPC endpoint every N seconds (~51ms)
+
+Both modes keep blockhash in memory — TX build gets it in 0ms.
 
 Usage:
     from core.blockhash_cache import get_blockhash_cache
 
-    cache = await get_blockhash_cache()
-    blockhash = await cache.get_blockhash()  # Returns cached or fresh
+    cache = await get_blockhash_cache(rpc_endpoint="https://...")
+    blockhash = await cache.get_blockhash()  # Returns cached, 0ms
 """
 
 import asyncio
@@ -30,35 +32,32 @@ class CachedBlockhash:
     hash: Hash
     timestamp: float
     slot: int = 0
+    source: str = "http"
 
     @property
     def age_seconds(self) -> float:
-        """How old is this blockhash in seconds."""
         return time.time() - self.timestamp
 
-    def is_fresh(self, max_age: float = 2.0) -> bool:
-        """Check if blockhash is still fresh enough to use."""
+    def is_fresh(self, max_age: float = 5.0) -> bool:
         return self.age_seconds < max_age
 
 
 class BlockhashCache:
     """
-    High-performance blockhash cache with background updates.
-
-    Features:
-    - Background update every 1-2 seconds
-    - Automatic fallback to fresh fetch if cache is stale
-    - Thread-safe with asyncio.Lock
-    - Singleton pattern for global access
+    High-performance blockhash cache with gRPC primary + HTTP fallback.
+    
+    Starts with HTTP polling immediately.
+    When gRPC channel becomes available, switches to gRPC (faster, free).
     """
 
     _instance: Optional["BlockhashCache"] = None
     _lock = asyncio.Lock()
 
     # Configuration
-    UPDATE_INTERVAL = 30.0  # seconds between updates
-    MAX_CACHE_AGE = 30.0    # seconds before cache is considered stale
-    BLOCKHASH_VALIDITY = 60  # Solana blockhash valid for ~60-90 seconds
+    HTTP_POLL_INTERVAL = 5.0    # seconds between HTTP polls
+    GRPC_POLL_INTERVAL = 2.0    # seconds between gRPC polls (faster)
+    MAX_CACHE_AGE = 10.0        # max age before fallback fetch
+    BLOCKHASH_VALIDITY = 60     # Solana blockhash valid ~60-90s
 
     def __init__(self):
         self._cached: Optional[CachedBlockhash] = None
@@ -67,7 +66,11 @@ class BlockhashCache:
         self._running = False
         self._rpc_endpoint: Optional[str] = None
         self._client: Optional[AsyncClient] = None
-
+        
+        # gRPC mode
+        self._grpc_stub = None
+        self._grpc_mode = False
+        
         # Metrics
         self._metrics = {
             "cache_hits": 0,
@@ -75,6 +78,8 @@ class BlockhashCache:
             "fallback_fetches": 0,
             "update_errors": 0,
             "total_updates": 0,
+            "grpc_updates": 0,
+            "http_updates": 0,
         }
 
     @classmethod
@@ -91,25 +96,56 @@ class BlockhashCache:
         return cls._instance
 
     async def initialize(self, rpc_endpoint: str) -> None:
-        """Initialize the cache with RPC endpoint and start background updater."""
+        """Initialize with HTTP polling. Call once at startup."""
+        if self._running and self._rpc_endpoint == rpc_endpoint:
+            return  # Already initialized with same endpoint
+            
         self._rpc_endpoint = rpc_endpoint
 
         if self._client:
             await self._client.close()
 
         self._client = AsyncClient(rpc_endpoint)
-        await self._fetch_and_cache()
+        
+        # First fetch
+        try:
+            await self._fetch_http()
+            logger.info(f"[BlockhashCache] First blockhash fetched via HTTP")
+        except Exception as e:
+            logger.warning(f"[BlockhashCache] First fetch failed: {e}")
 
         if not self._running:
             await self.start()
 
-        logger.info(f"[BlockhashCache] Initialized (interval: {self.UPDATE_INTERVAL}s)")
+        logger.info(
+            f"[BlockhashCache] Initialized HTTP mode "
+            f"(interval: {self.HTTP_POLL_INTERVAL}s)"
+        )
+
+    def enable_grpc(self, grpc_stub) -> None:
+        """
+        Switch to gRPC mode. Call when Geyser channel is ready.
+        
+        Args:
+            grpc_stub: GeyserStub with GetLatestBlockhash method
+        """
+        self._grpc_stub = grpc_stub
+        self._grpc_mode = True
+        logger.warning(
+            f"[BlockhashCache] Switched to gRPC mode "
+            f"(interval: {self.GRPC_POLL_INTERVAL}s)"
+        )
+
+    def disable_grpc(self) -> None:
+        """Fall back to HTTP mode (e.g., on gRPC disconnect)."""
+        self._grpc_mode = False
+        self._grpc_stub = None
+        logger.warning("[BlockhashCache] Fell back to HTTP mode")
 
     async def start(self) -> None:
         """Start the background update loop."""
         if self._running:
             return
-
         self._running = True
         self._updater_task = asyncio.create_task(self._update_loop())
         logger.info("[BlockhashCache] Background updater started")
@@ -117,7 +153,6 @@ class BlockhashCache:
     async def stop(self) -> None:
         """Stop the background update loop and cleanup."""
         self._running = False
-
         if self._updater_task:
             self._updater_task.cancel()
             try:
@@ -125,81 +160,114 @@ class BlockhashCache:
             except asyncio.CancelledError:
                 pass
             self._updater_task = None
-
         if self._client:
             await self._client.close()
             self._client = None
-
         logger.info("[BlockhashCache] Stopped")
 
     async def _update_loop(self) -> None:
-        """Background loop that continuously updates the blockhash."""
+        """Background loop — gRPC or HTTP based on mode."""
         while self._running:
             try:
-                await self._fetch_and_cache()
+                if self._grpc_mode and self._grpc_stub:
+                    await self._fetch_grpc()
+                    interval = self.GRPC_POLL_INTERVAL
+                else:
+                    await self._fetch_http()
+                    interval = self.HTTP_POLL_INTERVAL
                 self._metrics["total_updates"] += 1
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 self._metrics["update_errors"] += 1
-                logger.warning(f"[BlockhashCache] Update failed: {e}")
+                # If gRPC fails, fall back to HTTP
+                if self._grpc_mode:
+                    logger.warning(f"[BlockhashCache] gRPC failed, trying HTTP: {e}")
+                    try:
+                        await self._fetch_http()
+                        interval = self.HTTP_POLL_INTERVAL
+                    except Exception as e2:
+                        logger.warning(f"[BlockhashCache] HTTP also failed: {e2}")
+                        interval = self.HTTP_POLL_INTERVAL
+                else:
+                    logger.warning(f"[BlockhashCache] Update failed: {e}")
+                    interval = self.HTTP_POLL_INTERVAL
 
-            await asyncio.sleep(self.UPDATE_INTERVAL)
+            await asyncio.sleep(interval)
 
-    async def _fetch_and_cache(self) -> CachedBlockhash:
-        """Fetch fresh blockhash from RPC and cache it."""
+    async def _fetch_grpc(self) -> CachedBlockhash:
+        """Fetch blockhash via gRPC GetLatestBlockhash."""
+        from geyser.generated import geyser_pb2
+        
+        req = geyser_pb2.GetLatestBlockhashRequest()
+        resp = await asyncio.wait_for(
+            self._grpc_stub.GetLatestBlockhash(req), 
+            timeout=5.0
+        )
+        
+        blockhash = Hash.from_string(resp.blockhash)
+        self._cached = CachedBlockhash(
+            hash=blockhash,
+            timestamp=time.time(),
+            slot=resp.slot,
+            source="grpc",
+        )
+        self._metrics["grpc_updates"] += 1
+        return self._cached
+
+    async def _fetch_http(self) -> CachedBlockhash:
+        """Fetch blockhash via HTTP RPC."""
         if not self._client:
-            raise RuntimeError("BlockhashCache not initialized")
+            raise RuntimeError("BlockhashCache HTTP client not initialized")
 
         async with self._update_lock:
             response = await self._client.get_latest_blockhash(commitment="processed")
-
             self._cached = CachedBlockhash(
                 hash=response.value.blockhash,
                 timestamp=time.time(),
                 slot=response.context.slot if hasattr(response, 'context') else 0,
+                source="http",
             )
+            self._metrics["http_updates"] += 1
             return self._cached
 
     async def get_blockhash(self, max_age: float = None) -> Hash:
         """
-        Get blockhash - from cache if fresh, otherwise fetch new one.
-
-        Args:
-            max_age: Maximum acceptable cache age in seconds (default: MAX_CACHE_AGE)
-
-        Returns:
-            Valid blockhash Hash object
+        Get blockhash — from cache if fresh, otherwise fetch.
+        
+        In normal operation, cache is always fresh (updated every 2-5s).
+        Direct fetch only happens if background updater is behind.
         """
         if max_age is None:
             max_age = self.MAX_CACHE_AGE
 
-        # Fast path: return cached if fresh
         if self._cached and self._cached.is_fresh(max_age):
             self._metrics["cache_hits"] += 1
             return self._cached.hash
 
-        # Cache miss or stale
+        # Cache miss — fetch now
         self._metrics["cache_misses"] += 1
-
+        self._metrics["fallback_fetches"] += 1
+        
         try:
-            self._metrics["fallback_fetches"] += 1
-            cached = await self._fetch_and_cache()
+            if self._grpc_mode and self._grpc_stub:
+                cached = await self._fetch_grpc()
+            else:
+                cached = await self._fetch_http()
             return cached.hash
         except Exception as e:
-            # If fetch fails but we have somewhat recent cache, use it
             if self._cached and self._cached.age_seconds < self.BLOCKHASH_VALIDITY:
-                logger.warning(f"[BlockhashCache] Fetch failed, using stale cache: {e}")
+                logger.warning(f"[BlockhashCache] Fetch failed, using stale: {e}")
                 return self._cached.hash
             raise RuntimeError(f"Failed to get blockhash: {e}") from e
 
     async def get_blockhash_with_info(self) -> CachedBlockhash:
-        """Get blockhash with full info (timestamp, slot, etc)."""
+        """Get blockhash with full metadata."""
         await self.get_blockhash()
         return self._cached
 
     def get_cached_sync(self) -> Optional[Hash]:
-        """Get cached blockhash synchronously (no fetch). Returns None if stale."""
+        """Synchronous cache read. Returns None if stale."""
         if self._cached and self._cached.is_fresh(self.MAX_CACHE_AGE):
             return self._cached.hash
         return None
@@ -209,27 +277,30 @@ class BlockhashCache:
         return self._running
 
     @property
+    def is_grpc_mode(self) -> bool:
+        return self._grpc_mode
+
+    @property
     def cache_age(self) -> Optional[float]:
         return self._cached.age_seconds if self._cached else None
 
     def get_metrics(self) -> dict:
-        """Get cache performance metrics."""
         total = self._metrics["cache_hits"] + self._metrics["cache_misses"]
         hit_rate = (self._metrics["cache_hits"] / total * 100) if total > 0 else 0
-
         return {
             **self._metrics,
             "cache_hit_rate_pct": round(hit_rate, 1),
             "cache_age_seconds": round(self.cache_age, 2) if self.cache_age else None,
             "is_running": self._running,
+            "mode": "grpc" if self._grpc_mode else "http",
         }
 
     def log_metrics(self) -> None:
-        """Log current metrics."""
         m = self.get_metrics()
         logger.info(
-            f"[BlockhashCache] Hits: {m['cache_hits']}, Misses: {m['cache_misses']}, "
-            f"Rate: {m['cache_hit_rate_pct']}%, Errors: {m['update_errors']}"
+            f"[BlockhashCache] Mode: {m['mode']} | Hits: {m['cache_hits']} "
+            f"Misses: {m['cache_misses']} | Rate: {m['cache_hit_rate_pct']}% | "
+            f"gRPC: {m['grpc_updates']} HTTP: {m['http_updates']} Errors: {m['update_errors']}"
         )
 
 
@@ -243,20 +314,20 @@ async def get_blockhash_cache(rpc_endpoint: Optional[str] = None) -> BlockhashCa
 
 
 async def get_cached_blockhash(rpc_endpoint: Optional[str] = None) -> Hash:
-    """Convenience function to get blockhash in one call."""
+    """Convenience: get blockhash in one call."""
     cache = await get_blockhash_cache(rpc_endpoint)
     return await cache.get_blockhash()
 
 
 async def init_blockhash_cache(rpc_endpoint: str) -> BlockhashCache:
-    """Initialize the global blockhash cache. Call once at startup."""
+    """Initialize at startup. Call once."""
     cache = await get_blockhash_cache(rpc_endpoint)
     await cache.initialize(rpc_endpoint)
     return cache
 
 
 async def stop_blockhash_cache() -> None:
-    """Stop the global blockhash cache. Call at shutdown."""
+    """Stop at shutdown."""
     if BlockhashCache._instance:
         await BlockhashCache._instance.stop()
         BlockhashCache._instance = None

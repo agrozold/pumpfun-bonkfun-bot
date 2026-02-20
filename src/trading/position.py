@@ -276,34 +276,18 @@ class Position:
         # Old thresholds (30s) caused 662 SL vs 18 TP — 37:1 loss ratio
         if self.stop_loss_price and not self.is_moonbag:
             _pos_age = (datetime.utcnow() - self.entry_time).total_seconds() if self.entry_time else 999
-            if _pos_age < 15.0:
-                # First 15s: whale impact absorption — SL at -35% (FIX S18-9b)
+            if _pos_age < 30.0:
+                # First 30s: whale impact absorption — SL at -35%
                 _dynamic_sl = self.entry_price * (1 - 0.35)
                 if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 15s, price hit -35% SL")
-                    return True, ExitReason.STOP_LOSS
-            elif _pos_age < 60.0:
-                # 15-60s: settling period — SL at -35%
-                _dynamic_sl = self.entry_price * (1 - 0.35)
-                if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 60s, price hit -35% SL")
-                    return True, ExitReason.STOP_LOSS
-            elif _pos_age < 120.0:
-                # 60-120s: stabilization — SL at -30%
-                _dynamic_sl = self.entry_price * (1 - 0.30)
-                if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 120s, price hit -30% SL")
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 30s, price hit -35% SL")
                     return True, ExitReason.STOP_LOSS
             else:
-                # After 120s: normal config SL
+                # After 30s: normal config SL (-20%)
                 if current_price <= self.stop_loss_price:
                     return True, ExitReason.STOP_LOSS
 
-        # Session 5: Moonbag safety SL (absolute floor, bypasses dynamic SL)
-        if self.is_moonbag and self.stop_loss_price and current_price <= self.stop_loss_price:
-            logger.warning(f"[MOONBAG SL] {self.symbol}: price {current_price:.10f} <= safety SL {self.stop_loss_price:.10f}")
-            return True, ExitReason.STOP_LOSS
-
+        # TSL check BEFORE moonbag SL — TSL partial sell takes priority
         if self.tsl_active and (current_price <= self.tsl_trigger_price or self.tsl_triggered):
             # Grace period after restore: update HWM but don't trigger TSL for 15s
             # FIX 7-1: Start grace period at first monitor tick, not at RESTORE
@@ -325,6 +309,11 @@ class Position:
             else:
                 logger.warning(f"[TSL] {self.symbol} RESUMING triggered sell after restart")
             return True, ExitReason.TRAILING_STOP
+
+        # Moonbag safety SL (absolute floor, checked after TSL)
+        if self.is_moonbag and self.stop_loss_price and current_price <= self.stop_loss_price:
+            logger.warning(f"[MOONBAG SL] {self.symbol}: price {current_price:.10f} <= safety SL {self.stop_loss_price:.10f}")
+            return True, ExitReason.STOP_LOSS
 
         if self.take_profit_price and current_price >= self.take_profit_price and not self.is_moonbag:
             # FIX 10-4: Block TP while entry is provisional (may be 3-18x wrong)

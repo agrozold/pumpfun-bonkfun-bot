@@ -1733,8 +1733,9 @@ class WhaleGeyserReceiver:
                     logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens as MOONBAG. TSL active: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}, trail=50%")
                     # FIX S18-9: Unsubscribe from gRPC curve — moonbag switches to batch price monitor
                     try:
-                        await self.unsubscribe_curve(mint)
-                        logger.warning(f"[REACTIVE TP] {symbol}: Curve UNSUBSCRIBED — moonbag now on batch price monitor")
+                        await self.unsubscribe_bonding_curve(mint)
+                        await self.unsubscribe_ata(mint)
+                        logger.warning(f"[REACTIVE TP] {symbol}: Curve+ATA UNSUBSCRIBED — moonbag now on batch price monitor")
                     except Exception as _unsub_err:
                         logger.warning(f"[REACTIVE TP] Curve unsubscribe failed: {_unsub_err}")
             # FIX S17-2: Reset is_selling after BOTH success and failure

@@ -1384,6 +1384,7 @@ class UniversalTrader:
                     tsl_trail_pct=self.tsl_trail_pct,
                     tsl_sell_pct=self.tsl_sell_pct,
                 )
+                position.original_entry_price = entry_price  # Save original for moonbag SL
                 # Mark entry as provisional: will be corrected to first curve/batch price
                 if hasattr(position, "entry_price_provisional"):
                     _ep_source_map = {
@@ -2910,6 +2911,47 @@ class UniversalTrader:
                 watchdog_task = asyncio.create_task(self._watchdog.run())
                 logger.warning("[WATCHDOG] Background task STARTED")
 
+            # === BlockhashCache: init HTTP mode, then upgrade to gRPC ===
+            try:
+                from core.blockhash_cache import init_blockhash_cache
+                _bh_cache = await init_blockhash_cache(self.rpc_endpoint)
+                logger.warning(f"[BlockhashCache] Started (HTTP mode, interval={_bh_cache.HTTP_POLL_INTERVAL}s)")
+                
+                # Schedule gRPC upgrade after whale_tracker channel is ready
+                async def _upgrade_blockhash_to_grpc():
+                    """Wait for gRPC channel, then switch blockhash to gRPC mode."""
+                    await asyncio.sleep(5)  # Give whale_tracker time to connect
+                    for attempt in range(10):
+                        try:
+                            if (self.whale_tracker 
+                                and hasattr(self.whale_tracker, '_grpc_instances')
+                                and self.whale_tracker._grpc_instances):
+                                # Prefer Chainstack (index 0) — 13ms vs PublicNode 382ms
+                                for inst in self.whale_tracker._grpc_instances:
+                                    if inst.channel and inst.name == "chainstack":
+                                        from geyser.generated import geyser_pb2_grpc
+                                        stub = geyser_pb2_grpc.GeyserStub(inst.channel)
+                                        # Test it works
+                                        from geyser.generated import geyser_pb2
+                                        req = geyser_pb2.GetLatestBlockhashRequest()
+                                        resp = await asyncio.wait_for(
+                                            stub.GetLatestBlockhash(req), timeout=5.0
+                                        )
+                                        _bh_cache.enable_grpc(stub)
+                                        logger.warning(
+                                            f"[BlockhashCache] Upgraded to gRPC ({inst.name}) "
+                                            f"slot={resp.slot}"
+                                        )
+                                        return
+                        except Exception as e:
+                            logger.info(f"[BlockhashCache] gRPC upgrade attempt {attempt+1}: {e}")
+                        await asyncio.sleep(3)
+                    logger.warning("[BlockhashCache] gRPC upgrade failed, staying on HTTP")
+                
+                asyncio.create_task(_upgrade_blockhash_to_grpc())
+            except Exception as e:
+                logger.error(f"[BlockhashCache] Init failed: {e}")
+
             # Phase 4: Start PriceStream for real-time price monitoring
             price_stream_task = None
             # Phase 4b: PriceStream disabled - vault tracking moved to whale_geyser
@@ -3687,6 +3729,8 @@ class UniversalTrader:
             tp_sell_pct=self.tp_sell_pct,
         )
         
+        # Always save original entry price (needed for moonbag SL calculation)
+        position.original_entry_price = buy_result.price
         # Set DCA flags after creation
         if dca_enabled:
             position.dca_enabled = True
@@ -4510,6 +4554,14 @@ class UniversalTrader:
                     pending_stop_loss = True
 
 
+                # MOONBAG SL — safety floor
+                if should_exit and exit_reason == ExitReason.STOP_LOSS and position.is_moonbag and not skip_sl:
+                    logger.error(
+                        f"[MOONBAG SL] {token_info.symbol}: MOONBAG STOP LOSS! "
+                        f"Price {current_price:.10f} <= SL {position.stop_loss_price:.10f}"
+                    )
+                    pending_stop_loss = True
+
                 # Handle TRAILING STOP (TSL) - sells with locked profit
                 if should_exit and exit_reason == ExitReason.TRAILING_STOP:
                     locked_profit = ((current_price - position.entry_price) / position.entry_price) * 100
@@ -4671,14 +4723,21 @@ class UniversalTrader:
                                 _sl_pct = self.stop_loss_percentage or 0.20
                                 _sl_from_fix = current_price * (1 - _sl_pct)
                                 _mb_sl = max(_sl_from_fix, _orig_entry)
-                                position.tsl_enabled = self.tsl_enabled
-                                position.tsl_active = True
-                                position.tsl_trail_pct = self.tsl_trail_pct
-                                position.tsl_sell_pct = self.tsl_sell_pct
-                                position.stop_loss_price = _orig_entry * 0.70  # FIX S18-11: moonbag SL -30% from entry
-                                position.entry_price = current_price
-                                position.high_water_mark = current_price
-                                position.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+                                position.tsl_enabled = False
+                                position.tsl_active = False
+                                position.tsl_trail_pct = 0
+                                position.tsl_sell_pct = 0
+                                position.tsl_trigger_price = 0
+                                position.high_water_mark = 0
+                                position.stop_loss_price = position.original_entry_price * (1 - self.stop_loss_percentage) if position.original_entry_price > 0 else _orig_entry * (1 - self.stop_loss_percentage)
+
+
+
+
+
+
+
+
                                 logger.warning(
                                     f"[MOONBAG TSL] {token_info.symbol}: SL={_mb_sl:.10f} "
                                     f"(fix={current_price:.10f} -{_sl_pct*100:.0f}%={_sl_from_fix:.10f} "
@@ -4696,6 +4755,17 @@ class UniversalTrader:
                                 
                                 logger.warning(f"[MOONBAG TSL] {token_info.symbol}: TSL partial done, continuing monitor for remaining moonbag")
                                 position.is_selling = False
+                                # Unsubscribe gRPC curve+ATA — moonbag uses batch price
+                                try:
+                                    _mint_str = str(token_info.mint)
+                                    if self.whale_tracker:
+                                        if hasattr(self.whale_tracker, 'unsubscribe_bonding_curve'):
+                                            asyncio.create_task(self.whale_tracker.unsubscribe_bonding_curve(_mint_str))
+                                        if hasattr(self.whale_tracker, 'unsubscribe_ata'):
+                                            asyncio.create_task(self.whale_tracker.unsubscribe_ata(_mint_str))
+                                        logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Curve+ATA UNSUBSCRIBED — moonbag on batch price")
+                                except Exception as _ue:
+                                    logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Unsubscribe failed: {_ue}")
                                 # FIX S18-11: was break — killed monitor! moonbag had NO monitoring
                                 # Must continue loop so SL/TSL keeps checking price
                                 continue
@@ -4728,6 +4798,17 @@ class UniversalTrader:
                                     position.tsl_trigger_price = current_price * (1 - position.tsl_trail_pct)
                                     logger.warning(f"[TSL] {token_info.symbol}: FORCE-ACTIVATED after partial TP. HWM={current_price:.10f}, trigger={position.tsl_trigger_price:.10f}")
                                 self._save_position(position)
+                                # Unsubscribe gRPC curve+ATA — moonbag uses batch price
+                                try:
+                                    _mint_str = str(token_info.mint)
+                                    if self.whale_tracker:
+                                        if hasattr(self.whale_tracker, 'unsubscribe_bonding_curve'):
+                                            asyncio.create_task(self.whale_tracker.unsubscribe_bonding_curve(_mint_str))
+                                        if hasattr(self.whale_tracker, 'unsubscribe_ata'):
+                                            asyncio.create_task(self.whale_tracker.unsubscribe_ata(_mint_str))
+                                        logger.warning(f"[TP MOONBAG] {token_info.symbol}: Curve+ATA UNSUBSCRIBED — moonbag on batch price")
+                                except Exception as _ue:
+                                    logger.warning(f"[TP MOONBAG] {token_info.symbol}: Unsubscribe failed: {_ue}")
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
                                 continue
                             else:
@@ -6066,7 +6147,10 @@ class UniversalTrader:
                     logger.warning(f"[RESTORE] Vault resolve error for {position.symbol}: {ve}")
             # === END vault resolve ===
             # Phase 4b/4c: Subscribe restored position to price tracking via whale_geyser
-            if self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_vault_accounts') and position.pool_base_vault and position.pool_quote_vault:
+            # Moonbags use batch price — no gRPC subscription needed
+            if position.is_moonbag or getattr(position, 'tp_partial_done', False):
+                logger.info(f"[RESTORE] {position.symbol}: MOONBAG — skipping gRPC subscribe, using batch price")
+            elif self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_vault_accounts') and position.pool_base_vault and position.pool_quote_vault:
                 await self.whale_tracker.subscribe_vault_accounts(
                     mint=mint_str,
                     base_vault=position.pool_base_vault,
