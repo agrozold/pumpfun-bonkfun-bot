@@ -586,7 +586,8 @@ class UniversalTrader:
             client=self.solana_client,
             wallet=self.wallet,
             slippage=sell_slippage,
-            priority_fee=50000,
+            priority_fee=6_500_000,         # microlamports/CU for pumpfun (~650K lamports at ~100K CU)
+            jupiter_priority_fee=650_000,   # lamports total for Jupiter (~0.00065 SOL)
             max_retries=1,
             jupiter_api_key=self.jupiter_api_key,
         )
@@ -595,7 +596,8 @@ class UniversalTrader:
             client=self.solana_client,
             wallet=self.wallet,
             slippage=buy_slippage,
-            priority_fee=50000,
+            priority_fee=6_500_000,         # microlamports/CU for pumpfun (~650K lamports at ~100K CU)
+            jupiter_priority_fee=650_000,   # lamports total for Jupiter (~0.00065 SOL)
             max_retries=1,
             jupiter_api_key=self.jupiter_api_key,
         )
@@ -5976,7 +5978,18 @@ class UniversalTrader:
                             _label = _deployer_wallets.get(_creator_str, "unknown")
                             logger.warning(f"[BLACKLIST] ⛔ SCAMMER DETECTED post-buy: {_label} ({_creator_str[:12]}...) — EMERGENCY SELL")
                             try:
-                                await self._fast_sell_with_timeout(token_info, position, current_price, exit_reason=ExitReason.STOP_LOSS)
+                                # FIX S18-4: current_price may not exist in RESTORE context
+                                _bl_price = locals().get('current_price') or position.entry_price
+                                try:
+                                    from utils.batch_price_service import get_batch_price_service
+                                    _bps = get_batch_price_service()
+                                    if _bps:
+                                        _cached = _bps.get_cached_price(str(position.mint))
+                                        if _cached and _cached > 0:
+                                            _bl_price = _cached
+                                except Exception:
+                                    pass
+                                await self._fast_sell_with_timeout(token_info, position, _bl_price, exit_reason=ExitReason.STOP_LOSS)
                             except Exception as _e:
                                 logger.error(f"[BLACKLIST] Emergency sell failed: {_e}")
                             break

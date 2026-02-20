@@ -221,6 +221,7 @@ class FallbackSeller:
         wallet: "Wallet",
         slippage: float = 0.30,  # 30% buy, 10% sell from config
         priority_fee: int = 10000,
+        jupiter_priority_fee: int = None,
         max_retries: int = 3,
         alt_rpc_endpoint: str | None = None,  # Alternative RPC to avoid rate limits
         jupiter_api_key: str | None = None,  # Jupiter Ultra API key
@@ -229,6 +230,7 @@ class FallbackSeller:
         self.wallet = wallet
         self.slippage = slippage
         self.priority_fee = priority_fee
+        self.jupiter_priority_fee = jupiter_priority_fee if jupiter_priority_fee is not None else priority_fee
         self.max_retries = max_retries
         self.alt_rpc_endpoint = alt_rpc_endpoint
         self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY")  # NO fallback to monitor key!
@@ -1211,7 +1213,7 @@ class FallbackSeller:
                             "quoteResponse": quote,
                             "userPublicKey": str(self.wallet.pubkey),
                             "wrapAndUnwrapSol": True,
-                            "prioritizationFeeLamports": self.priority_fee,
+                            "prioritizationFeeLamports": self.jupiter_priority_fee,
                             "dynamicComputeUnitLimit": True,  # Better CU estimation
                             # "dynamicSlippage": True,  # DISABLED - use fixed slippage  # Let Jupiter calculate optimal slippage
                             "asLegacyTransaction": False,  # Use versioned TX for Token2022
@@ -1341,7 +1343,7 @@ class FallbackSeller:
                         "quoteResponse": quote,
                         "userPublicKey": str(self.wallet.pubkey),
                         "wrapAndUnwrapSol": True,
-                        "prioritizationFeeLamports": self.priority_fee,
+                        "prioritizationFeeLamports": self.jupiter_priority_fee,
                         "dynamicComputeUnitLimit": True,  # Better CU estimation
                         # "dynamicSlippage": True,  # DISABLED - use fixed slippage  # Let Jupiter calculate optimal slippage
                         "asLegacyTransaction": False,  # Use versioned TX for Token2022
@@ -1928,7 +1930,7 @@ class FallbackSeller:
             "quoteResponse": quote,
             "userPublicKey": str(self.wallet.pubkey),
             "wrapAndUnwrapSol": True,
-            "prioritizationFeeLamports": self.priority_fee,
+            "prioritizationFeeLamports": self.jupiter_priority_fee,
             "dynamicComputeUnitLimit": True,  # Better CU estimation
             # "dynamicSlippage": True,  # DISABLED - use fixed slippage  # Let Jupiter calculate optimal slippage
             "asLegacyTransaction": False,  # Use versioned TX for Token2022

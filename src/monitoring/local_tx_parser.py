@@ -448,21 +448,23 @@ class LocalTxParser:
                                 _vsr = 0
                                 _vtr = 0
 
-                            # S14: Extract whale accounts from outer instruction
-                            # Whale may use direct pump.fun OR router (term9, etc.)
-                            # Both pass same 16 accounts in same order
-                            # Detect by: 16+ accounts with GLOBAL at [0] and PUMP at [11]
+                            # S14/S18: Extract whale accounts from outer OR inner instructions
+                            # Direct pump.fun TX: accounts in outer instruction
+                            # Router TX (FLASH, Axiom, etc.): pump.fun is CPI = inner instruction
+                            # Both have same 16 accounts in same order
+                            # Detect by: program_id = PUMP_PROG and accounts[0] = GLOBAL
                             _w_token_program = ""
                             _w_creator_vault = ""
                             _w_fee_recipient = ""
                             _w_assoc_bc = ""
                             _PUMP_PROG = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
                             _GLOBAL = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
+                            _s14_found = False
                             try:
+                                # --- Pass 1: outer instructions (direct pump.fun TX) ---
                                 for _oix in msg.instructions:
                                     _oix_accs = list(_oix.accounts)
                                     if len(_oix_accs) >= 16:
-                                        # Check signature: GLOBAL at [0], PUMP at [11]
                                         _a0 = account_keys[_oix_accs[0]] if _oix_accs[0] < len(account_keys) else ""
                                         _a11 = account_keys[_oix_accs[11]] if _oix_accs[11] < len(account_keys) else ""
                                         if _a0 == _GLOBAL and _a11 == _PUMP_PROG:
@@ -475,14 +477,56 @@ class LocalTxParser:
                                             if _oix_accs[9] < len(account_keys):
                                                 _w_creator_vault = account_keys[_oix_accs[9]]
                                             logger.info(
-                                                f"[LOCAL_PARSER] S14 whale accounts: "
+                                                f"[LOCAL_PARSER] S14 whale accounts (OUTER): "
                                                 f"tp={_w_token_program[:8]}... "
                                                 f"cv={_w_creator_vault[:8]}... "
                                                 f"fee={_w_fee_recipient[:8]}..."
                                             )
+                                            _s14_found = True
                                             break
+                                # --- Pass 2: inner instructions (router TX — CPI to pump.fun) ---
+                                if not _s14_found and meta.inner_instructions:
+                                    for _ig in meta.inner_instructions:
+                                        for _iix in _ig.instructions:
+                                            _iix_accs = list(_iix.accounts)
+                                            # Inner CPI: program_id_index points to pump.fun in account_keys
+                                            _iix_prog_idx = _iix.program_id_index
+                                            _iix_prog = account_keys[_iix_prog_idx] if _iix_prog_idx < len(account_keys) else ""
+                                            if _iix_prog != _PUMP_PROG:
+                                                continue
+                                            if len(_iix_accs) < 10:
+                                                continue
+                                            # Validate: first account should be GLOBAL
+                                            _ia0 = account_keys[_iix_accs[0]] if _iix_accs[0] < len(account_keys) else ""
+                                            if _ia0 != _GLOBAL:
+                                                continue
+                                            # Found pump.fun CPI with correct layout!
+                                            if _iix_accs[1] < len(account_keys):
+                                                _w_fee_recipient = account_keys[_iix_accs[1]]
+                                            if _iix_accs[4] < len(account_keys):
+                                                _w_assoc_bc = account_keys[_iix_accs[4]]
+                                            if _iix_accs[8] < len(account_keys):
+                                                _w_token_program = account_keys[_iix_accs[8]]
+                                            if len(_iix_accs) > 9 and _iix_accs[9] < len(account_keys):
+                                                _w_creator_vault = account_keys[_iix_accs[9]]
+                                            logger.info(
+                                                f"[LOCAL_PARSER] S18 whale accounts (INNER CPI): "
+                                                f"tp={_w_token_program[:8]}... "
+                                                f"cv={_w_creator_vault[:8]}... "
+                                                f"fee={_w_fee_recipient[:8]}..."
+                                            )
+                                            _s14_found = True
+                                            break
+                                        if _s14_found:
+                                            break
+                                if not _s14_found:
+                                    logger.warning(
+                                        f"[LOCAL_PARSER] S14/S18 NO whale accounts found "
+                                        f"(outer={len(msg.instructions)} ix, "
+                                        f"inner={sum(len(g.instructions) for g in meta.inner_instructions) if meta.inner_instructions else 0} ix)"
+                                    )
                             except Exception as _e:
-                                logger.debug(f"[LOCAL_PARSER] S14 whale account extract: {_e}")
+                                logger.debug(f"[LOCAL_PARSER] S14/S18 whale account extract: {_e}")
 
                             return ParsedSwap(
                                 signature=signature,

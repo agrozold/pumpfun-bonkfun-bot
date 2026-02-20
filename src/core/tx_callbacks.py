@@ -381,7 +381,23 @@ async def on_buy_failure(tx: "PendingTransaction"):
             # Clean Redis
             try:
                 from trading.redis_state import forget_position_forever
-                await forget_position_forever(mint, reason="buy_tx_failed")
+                # FIX S18-5: Check if a NEW successful buy created a fresh position
+                # (whale signal #2 may have succeeded while TX #1 was failing)
+                _skip_forget = False
+                try:
+                    from trading.position import load_positions
+                    _current_positions = load_positions()
+                    for _cp in _current_positions:
+                        if str(_cp.mint) == mint:
+                            # Position exists! A new buy succeeded — do NOT forget
+                            logger.warning(f"[TX_CALLBACK] SKIP FORGET for {symbol}: active position exists (new buy succeeded)")
+                            _skip_forget = True
+                            break
+                except Exception as _pce:
+                    logger.warning(f"[TX_CALLBACK] Position check failed: {_pce}")
+
+                if not _skip_forget:
+                    await forget_position_forever(mint, reason="buy_tx_failed")
             except Exception as re:
                 logger.warning(f"[TX_CALLBACK] Redis cleanup failed: {re}")
 

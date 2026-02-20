@@ -393,7 +393,18 @@ async def forget_position_forever(mint: str, reason: str = "sold") -> bool:
         # 1. Remove from positions
         await state.remove_position(mint)
 
-        # 2. Add to sold_mints (permanent)
+        # FIX S18-5: buy_tx_failed must NOT add to sold_mints!
+        # Reason: whale may send multiple signals, and a SECOND buy attempt
+        # may succeed. If we add to sold_mints here, ZOMBIE KILL will destroy
+        # the valid position from the second buy.
+        if reason == "buy_tx_failed":
+            logger.warning(
+                f"[FORGET] Position removed but NOT added to sold_mints "
+                f"(reason=buy_tx_failed — retry/new signal may succeed): {mint[:16]}..."
+            )
+            return True
+
+        # 2. Add to sold_mints (permanent) — only for real sells
         await state._redis.sadd(SOLD_MINTS_KEY, mint)
 
         logger.warning(f"[FORGET] Position forgotten forever: {mint[:16]}... (reason: {reason})")

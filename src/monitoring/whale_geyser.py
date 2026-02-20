@@ -826,16 +826,20 @@ class WhaleGeyserReceiver:
                                             _pos.original_entry_price = _real_entry
                                         _pos.entry_price_source = 'grpc_execution'
                                         _pos.entry_price_provisional = False
-                                        _pos.quantity = parsed.token_amount
+                                        # FIX S18-5: quantity NOT overwritten from CPI
+                                        # _pos.quantity = parsed.token_amount  # DISABLED
                                         if hasattr(_trader, 'take_profit_percentage') and _trader.take_profit_percentage and _pos.take_profit_price:
                                             _pos.take_profit_price = _real_entry * (1 + _trader.take_profit_percentage)
                                         if hasattr(_trader, 'stop_loss_percentage') and _trader.stop_loss_percentage and _pos.stop_loss_price:
                                             _pos.stop_loss_price = _real_entry * (1 - _trader.stop_loss_percentage)
                                         _pos.high_water_mark = _real_entry
+                                        # FIX S18-5: Do NOT overwrite quantity from CPI event!
+                                        # Jupiter quote amount (703k) != CPI event amount (541k)
+                                        # Keep original qty from buy result.
                                         logger.warning(
                                             f"[GEYSER-SELF] ENTRY FIXED: {_pos.symbol} "
                                             f"{_old:.10f} -> {_real_entry:.10f} ({_corr:+.1f}%) "
-                                            f"qty={parsed.token_amount:.2f} "
+                                            f"qty_kept={_pos.quantity:.2f} (CPI={parsed.token_amount:.2f} ignored) "
                                             f"TP={_pos.take_profit_price or 0:.10f} SL={_pos.stop_loss_price or 0:.10f}"
                                         )
                                         # Register reactive SL/TP with CORRECT prices
