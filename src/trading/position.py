@@ -395,6 +395,48 @@ async def remove_position_redis(mint: str) -> bool:
     return False
 
 
+
+async def load_positions_async(filepath: Path = POSITIONS_FILE) -> list[Position]:
+    """Async load: Redis FIRST (primary), JSON fallback.
+    
+    FIX 11-1: _restore_positions() is async, so load_positions() (sync)
+    could never reach Redis — always fell back to stale JSON.
+    This caused entry prices, tp_partial_done, is_moonbag to be lost on restart.
+    """
+    # Try Redis first (works in running event loop)
+    try:
+        state = await _get_redis()
+        if state and await state.is_connected():
+            count = await state.get_positions_count()
+            if count > 0:
+                data = await state.get_all_positions()
+                positions = [Position.from_dict(d) for d in data]
+                logger.info(f"[LOAD] Loaded {len(positions)} positions from REDIS (async primary)")
+                return positions
+            else:
+                logger.info("[LOAD] Redis has 0 positions, trying JSON fallback")
+    except Exception as e:
+        logger.warning(f"[LOAD] Redis async load failed: {e}, trying JSON fallback")
+
+    # Fallback to JSON
+    if not filepath.exists():
+        logger.info("[LOAD] No positions file found")
+        return []
+
+    try:
+        with open(filepath, 'r') as f:
+            import json as _json_load
+            data = _json_load.load(f)
+        if not data:
+            return []
+        positions = [Position.from_dict(p) for p in data if p.get("is_active", True)]
+        logger.warning(f"[LOAD] Loaded {len(positions)} from JSON FALLBACK (Redis unavailable)")
+        return positions
+    except Exception as e:
+        logger.error(f"[LOAD] Failed to load from JSON: {e}")
+        return []
+
+
 # ==================== SYNC FUNCTIONS (backward compatible) ====================
 
 def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -> None:

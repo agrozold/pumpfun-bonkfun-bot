@@ -70,7 +70,7 @@ from monitoring.volume_pattern_analyzer import VolumePatternAnalyzer, TokenVolum
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.position import Position, save_positions, load_positions, remove_position, ExitReason, register_monitor, unregister_monitor
+from trading.position import Position, save_positions, load_positions, load_positions_async, remove_position, ExitReason, register_monitor, unregister_monitor
 from security.token_vetter import TokenVetter, VetResult
 from trading.purchase_history import (
     was_token_purchased,
@@ -4578,11 +4578,19 @@ class UniversalTrader:
                                 position.quantity = remaining_quantity
                                 position.take_profit_price = None  # disable TP forever
                                 position.tp_partial_done = True  # marker for restore
+                                # FIX 11-3: TP partial → moonbag (was missing!)
+                                # Without this, position stays is_moonbag=False after TP partial sell.
+                                # RESTORE then treats it as regular position, HARD SL can kill it,
+                                # and tsl_trail stays at 30% instead of 50%.
+                                position.is_moonbag = True
+                                position.tsl_trail_pct = 0.50  # Wide trail for moonbag
+                                position.tsl_sell_pct = 1.0  # Sell 100% on TSL trigger (moonbag exit)
+                                position.stop_loss_price = position.entry_price * 0.20  # Safety SL -80%
                                 # Force-activate TSL for remaining position if not already active
                                 if not position.tsl_active and self.tsl_enabled:
                                     position.tsl_active = True
                                     position.high_water_mark = current_price
-                                    position.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+                                    position.tsl_trigger_price = current_price * (1 - position.tsl_trail_pct)
                                     logger.warning(f"[TSL] {token_info.symbol}: FORCE-ACTIVATED after partial TP. HWM={current_price:.10f}, trigger={position.tsl_trigger_price:.10f}")
                                 self._save_position(position)
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
@@ -5478,7 +5486,7 @@ class UniversalTrader:
     async def _restore_positions(self) -> None:
         """Restore and resume monitoring of saved positions on startup."""
         logger.info("[RESTORE] Checking for saved positions to restore...")
-        positions = load_positions()
+        positions = await load_positions_async()
 
         if not positions:
             logger.info("[RESTORE] No saved positions found")
@@ -5501,11 +5509,24 @@ class UniversalTrader:
                 logger.info(f"[RESTORE] Skipping closed position {position.symbol}")
                 continue
 
-            # Check if already sold - skip forever
+            # Check if already sold - but Redis position overrides sold_mints
+            # FIX 11-4: If position loaded from Redis with is_active=True, it IS alive.
+            # sold_mints may contain stale entries from partial sells.
             from trading.redis_state import is_sold_mint
             if await is_sold_mint(mint_str):
-                logger.info(f"[RESTORE] Skipping SOLD position {position.symbol} - already sold")
-                continue
+                if position.is_active:
+                    # Position is in Redis AND active — sold_mints is STALE, remove it
+                    try:
+                        import redis.asyncio as _r114
+                        _rc = _r114.Redis(host='localhost', port=6379, db=0)
+                        await _rc.srem("sold_mints", mint_str)
+                        await _rc.aclose()
+                        logger.warning(f"[RESTORE] {position.symbol}: ACTIVE in Redis but in sold_mints — REMOVED from sold_mints (FIX 11-4)")
+                    except Exception as _e114:
+                        logger.warning(f"[RESTORE] {position.symbol}: Failed to remove from sold_mints: {_e114}")
+                else:
+                    logger.info(f"[RESTORE] Skipping SOLD position {position.symbol} - already sold")
+                    continue
             logger.info(f"[RESTORE] Restoring position: {position.symbol} on {position.platform}")
 
             # === SYNC ENTRY PRICE FROM PURCHASE HISTORY ===
@@ -5572,6 +5593,27 @@ class UniversalTrader:
                 position.tsl_sell_pct = getattr(self, 'tsl_sell_pct', 1.0)
                 position.tp_sell_pct = getattr(self, 'tp_sell_pct', 0.8)
             # === END SYNC TSL PARAMS ===
+
+            # === FIX 11-2: RESTORE GUARD for tp_partial_done positions ===
+            # If TP partial sell already happened, this position MUST NOT have TP.
+            # RESTORE from stale JSON could reset tp_partial_done=False or assign TP.
+            # This is the FINAL safety net before monitor starts.
+            if getattr(position, "tp_partial_done", False):
+                if position.take_profit_price is not None:
+                    logger.warning(
+                        f"[RESTORE] {position.symbol}: tp_partial_done=True but TP={position.take_profit_price} — FORCING TP=None"
+                    )
+                    position.take_profit_price = None
+                if not position.is_moonbag:
+                    position.is_moonbag = True
+                    position.tsl_trail_pct = max(position.tsl_trail_pct, 0.50)
+                    position.tsl_sell_pct = 1.0
+                    if not position.stop_loss_price or position.stop_loss_price > position.entry_price * 0.25:
+                        position.stop_loss_price = position.entry_price * 0.20
+                    logger.warning(
+                        f"[RESTORE] {position.symbol}: tp_partial_done=True, FORCED is_moonbag=True, trail=50%, SL={position.stop_loss_price:.10f}"
+                    )
+            # === END FIX 11-2 ===
 
             
 
