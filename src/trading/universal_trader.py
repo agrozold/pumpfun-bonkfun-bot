@@ -5795,26 +5795,35 @@ class UniversalTrader:
             
 
             # === BALANCE CHECK: Skip ghost positions ===
+            # FIX S17-4: Moonbag with zero balance = tokens sold via TSL/SL or token account closed
+            # Clean up gracefully — remove from Redis and memory, add to sold_mints
             try:
                 _bal = await self._get_token_balance(mint_str)
-                if _bal is not None and _bal == 0.0:
-                    logger.warning(f"[RESTORE] {position.symbol}: ZERO BALANCE on wallet — removing ghost position")
-                    self._remove_position(mint_str)
-                    try:
-                        from trading.redis_state import forget_position_forever
-                        await forget_position_forever(mint_str, reason="ghost_zero_balance")
-                    except Exception:
-                        pass
-                    continue
-                elif _bal is None:
-                    # Token account not found — also a ghost
-                    logger.warning(f"[RESTORE] {position.symbol}: Token account not found — removing ghost position")
-                    self._remove_position(mint_str)
-                    try:
-                        from trading.redis_state import forget_position_forever
-                        await forget_position_forever(mint_str, reason="ghost_no_account")
-                    except Exception:
-                        pass
+                _is_ghost = (_bal is not None and _bal == 0.0) or (_bal is None)
+                if _is_ghost:
+                    _ghost_reason = "zero_balance" if _bal == 0.0 else "no_account"
+                    _is_mb = getattr(position, 'is_moonbag', False) or getattr(position, 'tp_partial_done', False)
+                    if _is_mb:
+                        # Moonbag ghost — tokens are gone (sold or account closed)
+                        # Use allowed reasons so forget_position_forever won't block
+                        logger.warning(
+                            f"[RESTORE] {position.symbol}: MOONBAG ghost ({_ghost_reason}) — "
+                            f"tokens gone, cleaning up position"
+                        )
+                        self._remove_position(mint_str)
+                        try:
+                            from trading.redis_state import forget_position_forever
+                            await forget_position_forever(mint_str, reason="tsl_sell")  # Allowed reason for moonbag
+                        except Exception:
+                            pass
+                    else:
+                        logger.warning(f"[RESTORE] {position.symbol}: Ghost position ({_ghost_reason}) — removing")
+                        self._remove_position(mint_str)
+                        try:
+                            from trading.redis_state import forget_position_forever
+                            await forget_position_forever(mint_str, reason="ghost_{_ghost_reason}")
+                        except Exception:
+                            pass
                     continue
                 elif _bal == self.BALANCE_RPC_ERROR:
                     # All RPCs failed — keep position as-is (don't delete, don't update)
