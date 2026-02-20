@@ -3942,10 +3942,22 @@ class UniversalTrader:
                 try:
                     from trading.redis_state import is_sold_mint
                     if await is_sold_mint(mint_str_check):
-                        logger.warning(f"[ZOMBIE KILL] {token_info.symbol}: found in sold_mints — stopping monitor")
-                        position.is_active = False
-                        self._remove_position(mint_str_check)
-                        break
+                        # FIX S16-1: NEVER kill moonbag positions via zombie checker
+                        _is_mb = getattr(position, 'is_moonbag', False) or getattr(position, 'tp_partial_done', False)
+                        if _is_mb:
+                            logger.warning(f"[ZOMBIE SKIP] {token_info.symbol}: in sold_mints but is MOONBAG — removing from sold_mints, keeping alive")
+                            try:
+                                import redis as _redis_sync
+                                _r = _redis_sync.Redis()
+                                _r.srem("sold_mints", mint_str_check)
+                                _r.close()
+                            except Exception:
+                                pass
+                        else:
+                            logger.warning(f"[ZOMBIE KILL] {token_info.symbol}: found in sold_mints — stopping monitor")
+                            position.is_active = False
+                            self._remove_position(mint_str_check)
+                            break
                 except Exception:
                     pass  # Redis error — continue monitoring
 

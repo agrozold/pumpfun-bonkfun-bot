@@ -356,7 +356,7 @@ async def forget_position_forever(mint: str, reason: str = "sold") -> bool:
     """
     Completely forget a position - never track again.
     Called after ANY sell (TSL, SL, TP, manual).
-    
+
     1. Remove from Redis positions
     2. Add to sold_mints (permanent ignore list)
     3. Returns True if successful
@@ -364,22 +364,43 @@ async def forget_position_forever(mint: str, reason: str = "sold") -> bool:
     try:
         from utils.logger import get_logger
         logger = get_logger(__name__)
-        
+
+        # FIX S16-2: DEBUG — log stack trace to find who adds moonbags to sold_mints
+        import traceback
+        _stack = ''.join(traceback.format_stack()[-5:-1])
+        logger.warning(f"[FORGET] CALLED for {mint[:16]}... reason={reason}\n{_stack}")
+
+        # FIX S16-2: BLOCK forgetting moonbag positions (unless TSL/SL sell)
+        try:
+            state_check = await get_redis_state()
+            if state_check and state_check._connected:
+                _pos_data = await state_check._redis.hget(POSITIONS_KEY, mint)
+                if _pos_data:
+                    import json as _json
+                    _pos = _json.loads(_pos_data)
+                    _is_mb = _pos.get('is_moonbag', False) or _pos.get('tp_partial_done', False)
+                    if _is_mb and reason not in ("tsl_sell", "sl_sell", "manual"):
+                        logger.warning(f"[FORGET BLOCKED] {mint[:16]}... is MOONBAG — refusing to forget (reason={reason})")
+                        return False
+        except Exception as _e:
+            logger.warning(f"[FORGET] Moonbag check failed: {_e}")
+
         state = await get_redis_state()
         if not state or not state._connected:
             logger.warning(f"[FORGET] Redis not connected for {mint[:16]}...")
             return False
-        
+
         # 1. Remove from positions
         await state.remove_position(mint)
-        
+
         # 2. Add to sold_mints (permanent)
         await state._redis.sadd(SOLD_MINTS_KEY, mint)
-        
+
         logger.warning(f"[FORGET] Position forgotten forever: {mint[:16]}... (reason: {reason})")
         return True
-        
+
     except Exception as e:
         from utils.logger import get_logger
         get_logger(__name__).error(f"[FORGET] Error: {e}")
         return False
+
