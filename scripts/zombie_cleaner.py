@@ -19,7 +19,7 @@ from solana.rpc.types import TokenAccountOpts
 TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 TOKEN_2022_PROGRAM_ID = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 
-CHAINSTACK_RPC = "https://solana-mainnet.core.chainstack.com/28c858a6ec92aafc2569516da978dfb8"
+CHAINSTACK_RPC = os.environ.get("CHAINSTACK_RPC_ENDPOINT", "")
 
 def load_env():
     env_file = '/opt/pumpfun-bonkfun-bot/.env'

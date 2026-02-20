@@ -854,7 +854,24 @@ class WhaleGeyserReceiver:
                                         except Exception:
                                             pass
                                     else:
-                                        logger.info(f"[GEYSER-SELF] {_pos.symbol}: entry ok ({_corr:+.1f}%), no fix")
+                                        _pos.entry_price_provisional = False
+                                        _pos.entry_price_source = 'grpc_verified'
+                                        # Register reactive SL/TP even when no correction needed
+                                        try:
+                                            self.register_sl_tp(
+                                                mint=_mint, symbol=_pos.symbol,
+                                                entry_price=_pos.entry_price,
+                                                sl_price=_pos.stop_loss_price or 0,
+                                                tp_price=_pos.take_profit_price or 0,
+                                            )
+                                        except Exception:
+                                            pass
+                                        try:
+                                            from trading.position import save_positions
+                                            save_positions(_trader.active_positions)
+                                        except Exception:
+                                            pass
+                                        logger.info(f"[GEYSER-SELF] {_pos.symbol}: entry ok ({_corr:+.1f}%), provisional=False, REACTIVE registered")
                                     break
                     except Exception as _self_err:
                         logger.warning(f"[GEYSER-SELF] Entry fix error: {_self_err}")

@@ -71,6 +71,7 @@ class Position:
     whale_label: str | None = None  # Цена первой покупки
     entry_price_provisional: bool = False
     entry_price_source: str = "unknown"
+    buy_tx_sig: str | None = None  # FIX 10-3: buy TX signature for on-chain entry price verification
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
@@ -125,6 +126,7 @@ class Position:
             "whale_label": self.whale_label,
             "entry_price_provisional": self.entry_price_provisional,
             "entry_price_source": self.entry_price_source,
+            "buy_tx_sig": self.buy_tx_sig,
             "state": self.state,
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
@@ -168,6 +170,7 @@ class Position:
             whale_label=data.get("whale_label"),
             entry_price_provisional=data.get("entry_price_provisional", False),
             entry_price_source=data.get("entry_price_source", "unknown"),
+            buy_tx_sig=data.get("buy_tx_sig"),
             platform=data.get("platform", "pump_fun"),
             bonding_curve=data.get("bonding_curve"),
             pool_base_vault=data.get("pool_base_vault"),
@@ -321,6 +324,10 @@ class Position:
             return True, ExitReason.TRAILING_STOP
 
         if self.take_profit_price and current_price >= self.take_profit_price and not self.is_moonbag:
+            # FIX 10-4: Block TP while entry is provisional (may be 3-18x wrong)
+            if getattr(self, 'entry_price_provisional', False):
+                logger.warning(f"[TP BLOCKED] {self.symbol}: entry still provisional ({self.entry_price_source}), TP skipped")
+                return False, None
             return True, ExitReason.TAKE_PROFIT
 
         if self.max_hold_time:

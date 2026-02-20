@@ -1398,6 +1398,7 @@ class UniversalTrader:
                 position.tp_sell_pct = self.tp_sell_pct  # from yaml (0.8)
                 position.buy_confirmed = False  # PATCH: race condition guard — wait for TX confirmation
                 position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
+                position.buy_tx_sig = tx_sig  # FIX 10-3: save for on-chain entry verification
                 self.active_positions.append(position)
                 _save_pos(self.active_positions)
                 _watch(str(position.mint))
@@ -4073,11 +4074,41 @@ class UniversalTrader:
                     _ep_src_chk = getattr(position, 'entry_price_source', '')
                     _ep_prov_chk = getattr(position, 'entry_price_provisional', False)
                     _confirmed_chk = getattr(position, 'buy_confirmed', False) or getattr(position, 'tokens_arrived', False)
-                    if _confirmed_chk and (_ep_prov_chk or _ep_src_chk == 'pumpfun_curve'):
+                    # FIX 10-2: Skip if GEYSER-SELF already verified/corrected entry
+                    if _ep_src_chk in ('grpc_verified', 'grpc_execution', 'onchain_verified'):
+                        logger.info(f"[ENTRY FIX] {token_info.symbol}: SKIP — already {_ep_src_chk}, provisional={_ep_prov_chk}")
+                        _entry_corrected = True
+                    elif _confirmed_chk and (_ep_prov_chk or _ep_src_chk == 'pumpfun_curve'):
                         try:
                             _real_bal = await self._get_token_balance(str(token_info.mint))
                             if _real_bal is not None and _real_bal > 0 and self.buy_amount > 0:
-                                _real_entry = self.buy_amount / _real_bal
+                                # FIX 10-3c: Try on-chain TX query for REAL sol spent (not config buy_amount)
+                                _actual_sol_spent = None
+                                _buy_sig = getattr(position, 'buy_tx_sig', None)
+                                if _buy_sig:
+                                    try:
+                                        from solana.rpc.async_api import AsyncClient as _AC103
+                                        from solders.signature import Signature as _Sig103
+                                        _cs103 = _AC103(os.environ.get("CHAINSTACK_RPC_ENDPOINT", ""))
+                                        try:
+                                            _tx_r = await _cs103.get_transaction(_Sig103.from_string(_buy_sig), max_supported_transaction_version=0)
+                                            if _tx_r.value:
+                                                _m = _tx_r.value.transaction.meta
+                                                _pre_s = _m.pre_balances[0] / 1e9
+                                                _post_s = _m.post_balances[0] / 1e9
+                                                _fee_s = _m.fee / 1e9
+                                                _actual_sol_spent = (_pre_s - _post_s) - _fee_s
+                                                if _actual_sol_spent > 0:
+                                                    logger.info(f"[ENTRY FIX] {token_info.symbol}: on-chain SOL spent={_actual_sol_spent:.6f} (config={self.buy_amount})")
+                                                else:
+                                                    logger.warning(f"[ENTRY FIX] {token_info.symbol}: on-chain SOL spent={_actual_sol_spent:.6f} invalid, using config")
+                                                    _actual_sol_spent = None
+                                        finally:
+                                            await _cs103.close()
+                                    except Exception as _tx_e:
+                                        logger.warning(f"[ENTRY FIX] {token_info.symbol}: TX query failed: {_tx_e}, using config buy_amount")
+                                _sol_for_entry = _actual_sol_spent if _actual_sol_spent else self.buy_amount
+                                _real_entry = _sol_for_entry / _real_bal
                                 _old_entry = position.entry_price
                                 _correction_pct = (_real_entry - _old_entry) / _old_entry * 100 if _old_entry > 0 else 0
                                 if abs(_correction_pct) > 5:
@@ -4404,7 +4435,7 @@ class UniversalTrader:
                 # Проверка 1: Обычный HARD STOP LOSS (25%)
                 # PATCHED Session 3: HARD SL skips first 30s (Dynamic SL covers this window)
                 _pos_age_hs = (datetime.utcnow() - position.entry_time).total_seconds() if position.entry_time else 999
-                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl and _pos_age_hs >= 30:
+                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not getattr(position, "tp_partial_done", False) and not skip_sl and _pos_age_hs >= 30:
                     logger.error(
                         f"[HARD SL] {token_info.symbol}: LOSS {pnl_pct:.1f}%! "
                         f"HARD STOP LOSS triggered (threshold: -{HARD_STOP_LOSS_PCT:.0f}%)"
@@ -4415,7 +4446,7 @@ class UniversalTrader:
 
                 # Проверка 2: EMERGENCY STOP LOSS (40%) - максимальный приоритет
                 # PATCHED Session 3: EMERGENCY SL skips first 15s (Dynamic SL -45% covers)
-                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl and _pos_age_hs >= 15:
+                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag and not getattr(position, "tp_partial_done", False) and not skip_sl and _pos_age_hs >= 15:
                     logger.error(
                         f"[EMERGENCY] {token_info.symbol}: CATASTROPHIC LOSS {pnl_pct:.1f}%! "
                         f"EMERGENCY sell triggered (threshold: -{EMERGENCY_STOP_LOSS_PCT:.0f}%)"
@@ -4668,7 +4699,7 @@ class UniversalTrader:
                             
                             # Check hard SL
                             skip_sl_dex = str(token_info.mint) in NO_SL_MINTS
-                            if pnl_pct <= -HARD_STOP_LOSS_PCT and not skip_sl_dex:
+                            if pnl_pct <= -HARD_STOP_LOSS_PCT and not skip_sl_dex and not position.is_moonbag and not getattr(position, "tp_partial_done", False):
                                 logger.error(f"[HARD SL] {token_info.symbol}: {pnl_pct:.1f}% - SELLING!")
                                 should_exit = True
                                 exit_reason = ExitReason.STOP_LOSS
@@ -4706,7 +4737,7 @@ class UniversalTrader:
 
                     # If we're in significant loss based on last price - SELL IMMEDIATELY
                     skip_sl_emerg = str(token_info.mint) in NO_SL_MINTS
-                    if pnl_pct_estimate <= -HARD_STOP_LOSS_PCT and not skip_sl_emerg:
+                    if pnl_pct_estimate <= -HARD_STOP_LOSS_PCT and not skip_sl_emerg and not position.is_moonbag and not getattr(position, "tp_partial_done", False):
                         logger.error(
                             f"[EMERGENCY SL] {token_info.symbol}: Estimated loss {pnl_pct_estimate:.1f}% "
                             f"based on last price! FORCING EMERGENCY SELL!"
@@ -5071,7 +5102,7 @@ class UniversalTrader:
                     else getattr(position, "quantity", sell_quantity)
                 )  # P3: pre-sell snapshot for accurate VERIFY
                 _exit_reason_str = exit_reason.value if isinstance(exit_reason, ExitReason) else (str(exit_reason) if exit_reason else "")
-                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity, exit_reason=_exit_reason_str))
+                asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity, exit_reason=_exit_reason_str, tx_sig=sig))
                 if not skip_cleanup:
                     position.close_position(current_price, ExitReason.STOP_LOSS)
                     self._remove_position(mint_str)
@@ -5207,10 +5238,42 @@ class UniversalTrader:
                 decimals=9 if str(position.mint).lower().endswith("bags") else 6,
             ))
 
-    async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None, exit_reason: str = ""):
+    async def _verify_sell_in_background(self, mint_str: str, original_qty: float, symbol: str, sell_quantity: float = None, exit_reason: str = "", tx_sig: str = None):
         """Background task to verify sell. Smarter logic for partial fills and DCA races."""
         try:
             await asyncio.sleep(5)  # Wait for TX to confirm
+
+            # FIX 9-2: Query TX on-chain for actual SOL received
+            _sol_received_actual = None
+            if tx_sig:
+                try:
+                    from solana.rpc.async_api import AsyncClient as _AsyncClient92
+                    from solders.signature import Signature as _Sig92
+                    _cs = _AsyncClient92(os.environ.get("CHAINSTACK_RPC_ENDPOINT", ""))
+                    try:
+                        _tx_resp = await _cs.get_transaction(_Sig92.from_string(tx_sig), max_supported_transaction_version=0)
+                        if _tx_resp.value:
+                            _meta = _tx_resp.value.transaction.meta
+                            _pre_sol = _meta.pre_balances[0] / 1e9
+                            _post_sol = _meta.post_balances[0] / 1e9
+                            _fee = _meta.fee / 1e9
+                            _sol_received_actual = (_post_sol - _pre_sol) + _fee
+                            logger.warning(
+                                f"[SELL RESULT] {symbol}: SOL received={_sol_received_actual:.6f} "
+                                f"(pre={_pre_sol:.6f} post={_post_sol:.6f} fee={_fee:.6f}) "
+                                f"exit={exit_reason} TX={tx_sig[:20]}..."
+                            )
+                            if _sol_received_actual < 0:
+                                logger.error(
+                                    f"[SELL PRICE ANOMALY] {symbol}: NEGATIVE SOL received={_sol_received_actual:.6f}! "
+                                    f"TX may have failed or been frontrun. TX={tx_sig[:20]}..."
+                                )
+                        else:
+                            logger.warning(f"[SELL RESULT] {symbol}: TX not found on-chain (may need more time): {tx_sig[:20]}...")
+                    finally:
+                        await _cs.close()
+                except Exception as _tx_err:
+                    logger.warning(f"[SELL RESULT] {symbol}: TX query failed: {type(_tx_err).__name__}: {_tx_err}")
 
             # Try to get balance (with retries)
             remaining = None
