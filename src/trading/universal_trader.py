@@ -3885,6 +3885,26 @@ class UniversalTrader:
             total_iterations += 1
             check_count += 1
 
+            # FIX S12-2: Zombie monitor detection — stop if position removed or in sold_mints
+            mint_str_check = str(token_info.mint)
+            _still_active = any(str(p.mint) == mint_str_check for p in self.active_positions)
+            if not _still_active:
+                logger.warning(f"[ZOMBIE KILL] {token_info.symbol}: not in active_positions — stopping monitor")
+                position.is_active = False
+                unregister_monitor(mint_str_check)
+                break
+            # Async sold_mints check (every 10 ticks to avoid Redis spam)
+            if check_count % 10 == 0:
+                try:
+                    from trading.redis_state import is_sold_mint
+                    if await is_sold_mint(mint_str_check):
+                        logger.warning(f"[ZOMBIE KILL] {token_info.symbol}: found in sold_mints — stopping monitor")
+                        position.is_active = False
+                        self._remove_position(mint_str_check)
+                        break
+                except Exception:
+                    pass  # Redis error — continue monitoring
+
             # Safety check: prevent infinite loops
             # PATCH 13: removed redundant 0.1s sleep (main sleep is at end of loop)
             if total_iterations > max_iterations:
@@ -4029,14 +4049,34 @@ class UniversalTrader:
                                 get_token_price(mint_str), timeout=3.0
                             )
                             if fresh_price and fresh_price > 0:
-                                if abs(fresh_price - current_price) / current_price > 0.05:
+                                # FIX S12-5: Sanity check — reject anomalous Jupiter prices (>100% deviation)
+                                _jup_deviation = abs(fresh_price - current_price) / current_price if current_price > 0 else 0
+                                if _jup_deviation > 1.0:
+                                    logger.warning(
+                                        f"[STALE] {token_info.symbol}: Jupiter price {fresh_price:.10f} "
+                                        f"deviates {_jup_deviation*100:.0f}% from cache {current_price:.10f} — ANOMALOUS, IGNORING"
+                                    )
+                                    price_source = "jupiter_fallback_rejected"
+                                elif _jup_deviation > 0.05:
+                                    # FIX S12-5: Update batch cache, use on NEXT tick (not this tick)
+                                    # This prevents false TP/SL trigger from stale->fresh jump
                                     logger.warning(
                                         f"[STALE] {token_info.symbol}: Cache stuck at {current_price:.10f}, "
-                                        f"Jupiter says {fresh_price:.10f} ({((fresh_price-current_price)/current_price)*100:+.1f}%)"
+                                        f"Jupiter says {fresh_price:.10f} ({_jup_deviation*100:+.1f}%) — "
+                                        f"updating cache, decision on NEXT tick"
                                     )
-                                    current_price = fresh_price
+                                    try:
+                                        from utils.batch_price_service import update_cached_price
+                                        update_cached_price(mint_str, fresh_price)
+                                    except (ImportError, Exception):
+                                        pass
                                     last_known_price = fresh_price
-                                _stale_count = 0
+                                    price_source = "jupiter_fallback_deferred"
+                                    # Do NOT set current_price = fresh_price (decision deferred to next tick)
+                                else:
+                                    # <5% deviation — cache is fine, just stale RPC
+                                    pass
+                            _stale_count = 0
                         except Exception as e:
                             logger.debug(f"[STALE] Jupiter refresh failed: {e}")
                 else:
@@ -5041,8 +5081,14 @@ class UniversalTrader:
             return True
 
         # Check actual wallet balance — never try to sell more than we have
+        # FIX S12-4: Short timeout (2s) to avoid 2-22s latency. If timeout, use position.quantity.
+        # _sell_via_jupiter has its own on-chain balance check as safety net.
+        actual_balance = None  # Initialize for later use in verify
         try:
-            actual_balance = await self._get_token_balance(str(token_info.mint))
+            actual_balance = await asyncio.wait_for(
+                self._get_token_balance(str(token_info.mint)),
+                timeout=2.0
+            )
             if actual_balance is not None and actual_balance >= 0:
                 # Normal balance — use it
                 if actual_balance < MIN_SELL_TOKENS:
@@ -5052,7 +5098,12 @@ class UniversalTrader:
                     return True
                 if actual_balance < sell_quantity * 0.9:
                     logger.warning(f"[FAST SELL] Quantity mismatch: position={sell_quantity:.2f} wallet={actual_balance:.2f}, using wallet balance")
-                    if exit_reason in ("TP", "PARTIAL_TP") and position.quantity > 0:
+                    # FIX S12-1: Compare ExitReason enum properly (was string comparison, always False)
+                    _is_partial_tp = (
+                        (isinstance(exit_reason, ExitReason) and exit_reason == ExitReason.TAKE_PROFIT)
+                        or (isinstance(exit_reason, str) and exit_reason in ("TP", "PARTIAL_TP", "take_profit"))
+                    )
+                    if _is_partial_tp and position.quantity > 0 and sell_quantity < position.quantity:
                         _tp_pct = sell_quantity / position.quantity
                         sell_quantity = actual_balance * _tp_pct
                         logger.warning(f"[FAST SELL] PARTIAL_TP moonbag preserved: selling {sell_quantity:.2f} of {actual_balance:.2f} ({_tp_pct:.0%})")
@@ -5079,8 +5130,12 @@ class UniversalTrader:
             else:
                 # BALANCE_RPC_ERROR (-1.0) — all RPCs failed, but tokens may exist
                 logger.warning(f"[FAST SELL] Balance check RPC error for {token_info.symbol} — selling with position qty {sell_quantity:.2f} as fallback")
-        except Exception as bal_err:
-            logger.warning(f"[FAST SELL] Balance check exception: {type(bal_err).__name__}: {bal_err}, using position quantity")
+        except (asyncio.TimeoutError, Exception) as bal_err:
+            # FIX S12-4: Timeout or RPC error — proceed with position.quantity (fast path)
+            if isinstance(bal_err, asyncio.TimeoutError):
+                logger.warning(f"[FAST SELL] Balance check TIMEOUT for {token_info.symbol} — using position qty {sell_quantity:.2f} (fast path)")
+            else:
+                logger.warning(f"[FAST SELL] Balance check exception: {type(bal_err).__name__}: {bal_err}, using position quantity")
 
         # Per-mint lock — only check, never wait
         sell_lock = self._get_sell_lock(mint_str)
@@ -5225,7 +5280,19 @@ class UniversalTrader:
 
     def _save_position(self, position: Position) -> None:
         """Save position to active positions list and persist to file."""
-        self.active_positions.append(position)
+        # FIX S12-7: Don't append if already in list or if position is inactive
+        if not position.is_active:
+            return
+        mint_str = str(position.mint)
+        # Replace existing or append new
+        found = False
+        for i, p in enumerate(self.active_positions):
+            if str(p.mint) == mint_str:
+                self.active_positions[i] = position
+                found = True
+                break
+        if not found:
+            self.active_positions.append(position)
         save_positions(self.active_positions)
         # Add to batch price monitoring
         watch_token(str(position.mint))
@@ -5461,6 +5528,11 @@ class UniversalTrader:
 
     def _remove_position(self, mint: str) -> None:
         """Remove position from active list and file - FORGET FOREVER."""
+        # FIX S12-2: Set is_active=False on the position object before removing
+        # This ensures monitor loop sees the flag even if it holds a reference
+        for p in self.active_positions:
+            if str(p.mint) == mint:
+                p.is_active = False
         self.active_positions = [p for p in self.active_positions if str(p.mint) != mint]
         save_positions(self.active_positions)
         # Remove from batch price monitoring

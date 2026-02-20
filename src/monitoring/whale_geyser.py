@@ -1611,25 +1611,31 @@ class WhaleGeyserReceiver:
                     position.quantity = remaining
                     position.take_profit_price = None
                     position.tp_partial_done = True
-                    # Session 5: DO NOT set is_moonbag=True here — it kills TSL in monitor loop
-                    # Instead keep position as normal with TSL active, TP disabled
+                    # FIX S12-3: Apply moonbag metadata (was missing in REACTIVE path!)
+                    # Must match universal_trader.py FIX 11-3 exactly.
+                    # Without this, positions get is_moonbag=False, tsl_trail_pct=0.30 (wrong),
+                    # HARD SL can kill moonbags, and TSL is too tight.
+                    position.is_moonbag = True
+                    position.tsl_trail_pct = 0.50  # Wide trail for moonbag
+                    position.tsl_sell_pct = 1.0  # Sell 100% on TSL trigger (moonbag exit)
+                    position.stop_loss_price = position.entry_price * 0.20  # Safety SL -80%
                     # Force-activate TSL with wide trail for remaining tokens
                     if not position.tsl_active and trader.tsl_enabled:
                         position.tsl_active = True
                     position.tsl_enabled = True
                     position.high_water_mark = max(price, position.high_water_mark or 0)
-                    position.tsl_trigger_price = position.high_water_mark * (1 - trader.tsl_trail_pct)
+                    position.tsl_trigger_price = position.high_water_mark * (1 - position.tsl_trail_pct)
                     # Re-register reactive SL (no TP) as safety net
                     self._sl_tp_triggers[mint] = {
                         'triggered': False,
                         'entry_price': position.entry_price,
-                        'sl_price': position.entry_price * 0.50,
+                        'sl_price': position.entry_price * 0.20,  # Match safety SL
                         'tp_price': None,
                         'entry_time': time.time(),
                     }
-                    logger.info(f"[REACTIVE TP] {mint[:8]} re-registered SL={position.entry_price*0.50:.8f}")
+                    logger.info(f"[REACTIVE TP] {mint[:8]} re-registered SL={position.entry_price*0.20:.8f}")
                     trader._save_position(position)
-                    logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens. TSL active: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}")
+                    logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens as MOONBAG. TSL active: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}, trail=50%")
             if not success:
                 position.is_selling = False
                 _trigger = self._sl_tp_triggers.get(mint)

@@ -344,6 +344,16 @@ def get_cached_price(mint: str) -> Optional[float]:
     return get_batch_price_service().get_price(mint)
 
 
+def update_cached_price(mint: str, sol_price: float) -> None:
+    """FIX S12-5: Manually update cached price (e.g., from Jupiter STALE fallback).
+    Used to inject fresh price into cache so next tick picks it up."""
+    service = get_batch_price_service()
+    if sol_price and sol_price > 0:
+        service._prices[mint] = sol_price
+        service._last_update[mint] = time.time()
+        logger.info(f"[BATCH] Manual price update for {mint[:12]}...: {sol_price:.10f} SOL")
+
+
 def get_cached_price_usd(mint: str) -> Optional[float]:
     """Get USD price from cache."""
     return get_batch_price_service().get_price_usd(mint)

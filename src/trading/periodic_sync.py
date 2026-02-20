@@ -140,8 +140,34 @@ async def run_periodic_sync():
                 sym = pos.get("symbol", "?")
 
                 # Skip already sold tokens - they will be dropped from valid list
+                # FIX S12-6: Also kill zombie monitors for sold positions
                 if await is_sold_mint(mint):
-                    logger.info(f"[SYNC] Skipping SOLD zombie: {sym} - will be removed")
+                    logger.info(f"[SYNC] Skipping SOLD zombie: {sym} - removing and killing monitor")
+                    # Try to kill monitor task via trader registry
+                    try:
+                        from trading.trader_registry import get_trader
+                        from trading.position import unregister_monitor
+                        trader = get_trader()
+                        if trader:
+                            # Set is_active=False on position in trader.active_positions
+                            for p in trader.active_positions:
+                                if str(p.mint) == mint or p.get("mint", "") == mint if isinstance(p, dict) else False:
+                                    if hasattr(p, 'is_active'):
+                                        p.is_active = False
+                            # Remove from active_positions list
+                            trader.active_positions = [
+                                p for p in trader.active_positions
+                                if (str(p.mint) if hasattr(p, 'mint') else p.get("mint", "")) != mint
+                            ]
+                        unregister_monitor(mint)
+                    except Exception as _e:
+                        logger.debug(f"[SYNC] Could not kill monitor for {sym}: {_e}")
+                    # Remove from Redis
+                    if state and use_redis:
+                        try:
+                            await state.remove_position(mint)
+                        except Exception:
+                            pass
                     continue
 
                 actual_balance = balances.get(mint, 0)

@@ -1724,7 +1724,10 @@ class FallbackSeller:
             sell_amount = None
             token_decimals = 6  # default fallback
 
-            # Try to get ACTUAL raw balance from on-chain (most reliable)
+            # FIX S12-1: Get decimals from on-chain, then compute sell_amount from
+            # the REQUESTED token_amount (not from wallet balance).
+            # Previous code re-derived sell_pct from wallet balance, which could
+            # round to 100% and sell entire position instead of partial amount.
             try:
                 import aiohttp as _aiohttp
                 _helius_key = os.getenv("HELIUS_API_KEY", "")
@@ -1756,12 +1759,16 @@ class FallbackSeller:
                                         token_decimals = int(_ti.get("decimals", 6))
                                         _raw = int(_ti.get("amount", "0"))
                                         _decimals_cache[str(mint)] = token_decimals
-                                        if _ui > 0 and token_amount > 0:
-                                            sell_pct = min(token_amount / _ui, 1.0)
-                                            sell_amount = int(_raw * sell_pct)
-                                            logger.info(f"[SELL] On-chain: {_ui:,.2f} tokens (decimals={token_decimals}, raw={_raw}), selling {sell_pct*100:.1f}% = {sell_amount} raw")
-                                        else:
+                                        # FIX S12-1: Use requested token_amount directly
+                                        # Convert to raw using on-chain decimals
+                                        sell_amount = int(token_amount * 10**token_decimals)
+                                        # Safety: never sell more than wallet balance
+                                        if sell_amount > _raw and _raw > 0:
+                                            logger.warning(f"[SELL] Capped: requested {sell_amount} raw > wallet {_raw} raw, using wallet balance")
                                             sell_amount = _raw
+                                        if _ui > 0:
+                                            _sell_pct_log = (sell_amount / _raw * 100) if _raw > 0 else 0
+                                            logger.info(f"[SELL] On-chain: {_ui:,.2f} tokens (decimals={token_decimals}, raw={_raw}), selling {_sell_pct_log:.1f}% = {sell_amount} raw")
                                     break  # Success — stop trying RPCs
                         except Exception:
                             continue  # Try next RPC
