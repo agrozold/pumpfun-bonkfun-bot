@@ -470,6 +470,11 @@ class WhaleGeyserReceiver:
             tx_filter.account_include.append(addr)
 
         # Only successful transactions
+
+        # Session 3: Subscribe to our own wallet for entry price correction
+        if self._wallet_pubkey_str and self._wallet_pubkey_str not in whale_addresses:
+            tx_filter.account_include.append(self._wallet_pubkey_str)
+
         tx_filter.failed = False
 
         # Vault account subscriptions for price tracking (Phase 4b)
@@ -665,7 +670,23 @@ class WhaleGeyserReceiver:
                             fee_payer_bytes = bytes(msg.account_keys[0])
                             fee_payer = base58.b58encode(fee_payer_bytes).decode()
 
+                            # Session 4: Diagnostic — detect our wallet in ANY account key
+                            if self._wallet_pubkey_str and fee_payer == self._wallet_pubkey_str:
+                                logger.warning(f"[GEYSER-SELF] OUR TX detected! sig={signature[:20]}... fee_payer=US")
+
                             if fee_payer not in self.whale_wallets:
+                                # Session 3: Don't skip our own wallet — parse for entry fix
+                                if fee_payer == self._wallet_pubkey_str and self.local_parser:
+                                    try:
+                                        parsed = self.local_parser.parse(tx, fee_payer)
+                                        if parsed:
+                                            asyncio.create_task(
+                                                self._emit_from_local_parse(
+                                                    parsed, grpc_receive_time, inst.name
+                                                )
+                                            )
+                                    except Exception as _own_err:
+                                        logger.warning(f'[GEYSER-SELF] Parse error: {_own_err}')
                                 continue
 
                             logger.warning(
@@ -782,6 +803,61 @@ class WhaleGeyserReceiver:
 
             whale_info = self.whale_wallets.get(fee_payer)
             if not whale_info:
+                # Session 3: Check if this is OUR wallet -> fix entry price
+                if fee_payer == self._wallet_pubkey_str and parsed.is_buy and parsed.token_amount > 0:
+                    _real_entry = parsed.sol_amount / parsed.token_amount
+                    _mint = parsed.token_mint
+                    logger.warning(
+                        f"[GEYSER-SELF] OWN BUY: {_mint[:12]}... "
+                        f"sol={parsed.sol_amount:.4f} tok={parsed.token_amount:.2f} "
+                        f"real_entry={_real_entry:.10f}"
+                    )
+                    try:
+                        from trading.trader_registry import get_trader
+                        _trader = get_trader()
+                        if _trader:
+                            for _pos in _trader.active_positions:
+                                if str(_pos.mint) == _mint:
+                                    _old = _pos.entry_price
+                                    _corr = (_real_entry - _old) / _old * 100 if _old > 0 else 0
+                                    if abs(_corr) > 5:
+                                        _pos.entry_price = _real_entry
+                                        if hasattr(_pos, 'original_entry_price'):
+                                            _pos.original_entry_price = _real_entry
+                                        _pos.entry_price_source = 'grpc_execution'
+                                        _pos.entry_price_provisional = False
+                                        _pos.quantity = parsed.token_amount
+                                        if hasattr(_trader, 'take_profit_percentage') and _trader.take_profit_percentage and _pos.take_profit_price:
+                                            _pos.take_profit_price = _real_entry * (1 + _trader.take_profit_percentage)
+                                        if hasattr(_trader, 'stop_loss_percentage') and _trader.stop_loss_percentage and _pos.stop_loss_price:
+                                            _pos.stop_loss_price = _real_entry * (1 - _trader.stop_loss_percentage)
+                                        _pos.high_water_mark = _real_entry
+                                        logger.warning(
+                                            f"[GEYSER-SELF] ENTRY FIXED: {_pos.symbol} "
+                                            f"{_old:.10f} -> {_real_entry:.10f} ({_corr:+.1f}%) "
+                                            f"qty={parsed.token_amount:.2f} "
+                                            f"TP={_pos.take_profit_price or 0:.10f} SL={_pos.stop_loss_price or 0:.10f}"
+                                        )
+                                        # Register reactive SL/TP with CORRECT prices
+                                        try:
+                                            self.register_sl_tp(
+                                                mint=_mint, symbol=_pos.symbol,
+                                                entry_price=_real_entry,
+                                                sl_price=_pos.stop_loss_price or 0,
+                                                tp_price=_pos.take_profit_price or 0,
+                                            )
+                                        except Exception:
+                                            pass
+                                        try:
+                                            from trading.position import save_positions
+                                            save_positions(_trader.active_positions)
+                                        except Exception:
+                                            pass
+                                    else:
+                                        logger.info(f"[GEYSER-SELF] {_pos.symbol}: entry ok ({_corr:+.1f}%), no fix")
+                                    break
+                    except Exception as _self_err:
+                        logger.warning(f"[GEYSER-SELF] Entry fix error: {_self_err}")
                 return
 
             # Only process BUY signals
@@ -1336,10 +1412,15 @@ class WhaleGeyserReceiver:
                         if int(_p_age) % 5 == 0:  # Log every ~5s
                             logger.info(f'[DYNAMIC SL] {sub.symbol}: PnL {_pnl:.1f}% at age {_p_age:.0f}s — SL widened, holding')
                 elif _tp and _tp > 0 and sub.price >= _tp:
-                    _trigger["triggered"] = True
-                    _pnl = (sub.price - _trigger["entry_price"]) / max(_trigger["entry_price"], 1e-15) * 100
-                    logger.warning(f'[REACTIVE TP] {sub.symbol}: {sub.price:.10f} >= TP {_tp:.10f} (PnL: {_pnl:.1f}%) — INSTANT SELL!')
-                    asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, "take_profit", _pnl))
+                    _entry_t_tp = _trigger.get('entry_time')
+                    _tp_age = (time.time() - _entry_t_tp) if _entry_t_tp else 999
+                    if _tp_age < 0.3:
+                        logger.info(f'[REACTIVE TP] {sub.symbol}: price >= TP but age={_tp_age:.2f}s < 0.3s — COOLDOWN')
+                    else:
+                        _trigger["triggered"] = True
+                        _pnl = (sub.price - _trigger["entry_price"]) / max(_trigger["entry_price"], 1e-15) * 100
+                        logger.warning(f'[REACTIVE TP] {sub.symbol}: {sub.price:.10f} >= TP {_tp:.10f} (PnL: {_pnl:.1f}%) — INSTANT SELL!')
+                        asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, "take_profit", _pnl))
 
             if old_price <= 0:
                 logger.warning(
@@ -1513,12 +1594,25 @@ class WhaleGeyserReceiver:
                     position.quantity = remaining
                     position.take_profit_price = None
                     position.tp_partial_done = True
+                    # Session 5: DO NOT set is_moonbag=True here — it kills TSL in monitor loop
+                    # Instead keep position as normal with TSL active, TP disabled
+                    # Force-activate TSL with wide trail for remaining tokens
                     if not position.tsl_active and trader.tsl_enabled:
                         position.tsl_active = True
-                        position.high_water_mark = price
-                        position.tsl_trigger_price = price * (1 - trader.tsl_trail_pct)
+                    position.tsl_enabled = True
+                    position.high_water_mark = max(price, position.high_water_mark or 0)
+                    position.tsl_trigger_price = position.high_water_mark * (1 - trader.tsl_trail_pct)
+                    # Re-register reactive SL (no TP) as safety net
+                    self._sl_tp_triggers[mint] = {
+                        'triggered': False,
+                        'entry_price': position.entry_price,
+                        'sl_price': position.entry_price * 0.50,
+                        'tp_price': None,
+                        'entry_time': time.time(),
+                    }
+                    logger.info(f"[REACTIVE TP] {mint[:8]} re-registered SL={position.entry_price*0.50:.8f}")
                     trader._save_position(position)
-                    logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens on TSL")
+                    logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens. TSL active: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}")
             if not success:
                 position.is_selling = False
                 _trigger = self._sl_tp_triggers.get(mint)

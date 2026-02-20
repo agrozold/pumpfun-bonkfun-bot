@@ -229,6 +229,12 @@ class Position:
         if not self.is_active or not self.tsl_enabled:
             return False
 
+        # FIX 7-1: Start grace period at first price update after RESTORE
+        if getattr(self, '_restore_pending', False):
+            self.restore_time = datetime.utcnow()
+            self._restore_pending = False
+            logger.info(f"[TSL] {self.symbol} GRACE PERIOD started at first price tick (15s)")
+
         profit_pct = (current_price - self.entry_price) / self.entry_price
         state_changed = False
 
@@ -259,28 +265,46 @@ class Position:
         if getattr(self, "is_selling", False):
             return False, None
 
-        # DYNAMIC SL: wider SL in first 30s to survive impact dip from whale buy
+        # DYNAMIC SL: wider SL in first 120s to survive impact dip from whale buy
+        # Whale copy: bot buys AFTER whale, price naturally retraces 15-30%
+        # Old thresholds (30s) caused 662 SL vs 18 TP — 37:1 loss ratio
         if self.stop_loss_price and not self.is_moonbag:
             _pos_age = (datetime.utcnow() - self.entry_time).total_seconds() if self.entry_time else 999
-            if _pos_age < 10.0:
-                # First 10s: only trigger at -35% (impact dip zone)
+            if _pos_age < 15.0:
+                # First 15s: only trigger at -45% (whale impact absorption)
+                _dynamic_sl = self.entry_price * (1 - 0.45)
+                if current_price <= _dynamic_sl:
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 15s, price hit -45% SL")
+                    return True, ExitReason.STOP_LOSS
+            elif _pos_age < 60.0:
+                # 15-60s: settling period — SL at -35%
                 _dynamic_sl = self.entry_price * (1 - 0.35)
                 if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 10s, price hit -35% SL")
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 60s, price hit -35% SL")
                     return True, ExitReason.STOP_LOSS
-            elif _pos_age < 30.0:
-                # 10-30s: intermediate SL at -25%
-                _dynamic_sl = self.entry_price * (1 - 0.25)
+            elif _pos_age < 120.0:
+                # 60-120s: stabilization — SL at -30%
+                _dynamic_sl = self.entry_price * (1 - 0.30)
                 if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 30s, price hit -25% SL")
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 120s, price hit -30% SL")
                     return True, ExitReason.STOP_LOSS
             else:
-                # After 30s: normal config SL
+                # After 120s: normal config SL
                 if current_price <= self.stop_loss_price:
                     return True, ExitReason.STOP_LOSS
 
+        # Session 5: Moonbag safety SL (absolute floor, bypasses dynamic SL)
+        if self.is_moonbag and self.stop_loss_price and current_price <= self.stop_loss_price:
+            logger.warning(f"[MOONBAG SL] {self.symbol}: price {current_price:.10f} <= safety SL {self.stop_loss_price:.10f}")
+            return True, ExitReason.STOP_LOSS
+
         if self.tsl_active and (current_price <= self.tsl_trigger_price or self.tsl_triggered):
             # Grace period after restore: update HWM but don't trigger TSL for 15s
+            # FIX 7-1: Start grace period at first monitor tick, not at RESTORE
+            if getattr(self, '_restore_pending', False):
+                self.restore_time = datetime.utcnow()
+                self._restore_pending = False
+                logger.info(f"[TSL] {self.symbol} GRACE PERIOD started at first monitor tick (15s)")
             _restore_t = getattr(self, 'restore_time', None)
             if _restore_t and not self.tsl_triggered:
                 _since_restore = (datetime.utcnow() - _restore_t).total_seconds()

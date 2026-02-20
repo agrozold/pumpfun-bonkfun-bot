@@ -1385,7 +1385,7 @@ class UniversalTrader:
                 # Mark entry as provisional: will be corrected to first curve/batch price
                 if hasattr(position, "entry_price_provisional"):
                     _ep_source_map = {
-                        "pump_fun_direct": ("pumpfun_curve", True),   # Session 3: was False
+                        "pump_fun_direct": ("pumpfun_curve", False),
                         "pump_fun":        ("pumpfun_buyer", True),
                         "lets_bonk":       ("letsbonk_tx",  True),
                         "bags":            ("bags_tx",       True),
@@ -1403,22 +1403,16 @@ class UniversalTrader:
                 _watch(str(position.mint))
                 logger.warning(f"[WHALE] ⚡ INSTANT Position created for {whale_buy.token_symbol}")
                 # Register reactive SL/TP for instant gRPC-driven sells
-                # Session 3: DEFER for pumpfun — GEYSER-SELF will register with correct entry
-                # Session 3 fix: Only defer for pumpfun_curve (Jupiter entry is accurate)
-                _is_pumpfun_provisional = getattr(position, 'entry_price_source', '') == 'pumpfun_curve'
-                if not _is_pumpfun_provisional:
-                    try:
-                        if self.whale_tracker and hasattr(self.whale_tracker, 'register_sl_tp'):
-                            self.whale_tracker.register_sl_tp(
-                                mint=mint_str, symbol=whale_buy.token_symbol,
-                                entry_price=entry_price,
-                                sl_price=position.stop_loss_price or 0,
-                                tp_price=position.take_profit_price or 0,
-                            )
-                    except Exception as _rsl_err:
-                        logger.warning(f'[WHALE] register_sl_tp failed: {_rsl_err}')
-                else:
-                    logger.warning('[WHALE] REACTIVE TP/SL deferred — waiting for GEYSER-SELF entry fix')
+                try:
+                    if self.whale_tracker and hasattr(self.whale_tracker, 'register_sl_tp'):
+                        self.whale_tracker.register_sl_tp(
+                            mint=mint_str, symbol=whale_buy.token_symbol,
+                            entry_price=entry_price,
+                            sl_price=position.stop_loss_price or 0,
+                            tp_price=position.take_profit_price or 0,
+                        )
+                except Exception as _rsl_err:
+                    logger.warning(f"[WHALE] register_sl_tp failed: {_rsl_err}")
                 if position.take_profit_price:
                     logger.warning(f"[WHALE] Take profit target: {position.take_profit_price:.10f} SOL (+{(self.take_profit_percentage or 0)*100:.0f}%)")
                 if position.stop_loss_price:
@@ -3709,9 +3703,6 @@ class UniversalTrader:
                             f"[POST-BUY] {token_info.symbol}: Entry corrected {old_entry:.10f} -> {_fresh:.10f}, "
                             f"new TP={position.take_profit_price}, new SL={position.stop_loss_price}"
                         )
-                # Session 3: Recalculate _dev from (possibly corrected) entry_price
-                if _fresh and _fresh > 0 and position.entry_price > 0:
-                    _dev = (_fresh - position.entry_price) / position.entry_price
                 if _dev < -0.30:
                     # Price dropped >30% — emergency sell immediately
                     logger.error(
@@ -3859,9 +3850,6 @@ class UniversalTrader:
         consecutive_price_errors = 0
         last_known_price = position.entry_price  # Use entry price as fallback
         _anomaly_count = 0  # consecutive price anomaly counter
-        _batch_anomaly_count = 0  # Session 4: separate counter for BATCH PRICE GUARD
-        _entry_corrected = False  # Session 3: one-time entry price correction flag
-        _entry_fix_ts = 0  # FIX 7-3: timestamp of ENTRY FIX REACTIVE registration
         _stale_count = 0  # PATCH 9A: consecutive ticks with same price
         _prev_price = 0.0
         check_count = 0
@@ -3973,22 +3961,10 @@ class UniversalTrader:
                         pass
                     break
                 if pending_stop_loss:
-                    # Price recovered above SL? Cancel pending sell
-                    if position.stop_loss_price and current_price > position.stop_loss_price * 1.05:
-                        pending_stop_loss = False
-                        sell_retry_count = 0
-                        logger.warning(
-                            f"[RETRY SL CANCEL] {token_info.symbol}: price {current_price:.10f} "
-                            f"recovered above SL {position.stop_loss_price:.10f}, cancelling pending sell"
-                        )
-                    else:
-                        # Still below SL — force sell on this tick
-                        should_exit = True
-                        exit_reason = ExitReason.STOP_LOSS
-                        logger.warning(
-                            f"[RETRY SL] {token_info.symbol}: pending sell active, "
-                            f"retry #{sell_retry_count}, price {current_price:.10f}, forcing sell"
-                        )
+                    logger.warning(
+                        f"[RETRY SL] Pending stop loss for {token_info.symbol}, "
+                        f"retry #{sell_retry_count}, current price: {current_price:.10f}"
+                    )
 
                 # === PRICE ANOMALY DETECTION ===
                 # If price changes > 90% in one tick, likely garbage data from Jupiter/cache
@@ -4044,93 +4020,22 @@ class UniversalTrader:
                 # === END PATCH 9A ===
 
                 # Session 9: BATCH PRICE GUARD — reject anomalous batch prices
-                # If batch price shows >50% drop, skip first 5 ticks (stale data), then accept as real
-                # Session 4: moonbag bypass + separate counter (was shared with anomaly detection)
-                if price_source in ("batch_cache", "batch_retry") and position.entry_price > 0 and not position.is_moonbag:
+                # If batch price shows >50% drop, it's likely stale/wrong data — skip this tick
+                if price_source in ("batch_cache", "batch_retry") and position.entry_price > 0:
                     _batch_pnl = (current_price - position.entry_price) / position.entry_price
                     if _batch_pnl < -0.50:
-                        _batch_anomaly_count += 1
-                        if _batch_anomaly_count <= 5:
+                        _anomaly_count += 1
+                        if _anomaly_count <= 3:
                             logger.warning(
                                 f"[PRICE GUARD] {token_info.symbol}: batch price {current_price:.10f} "
-                                f"looks anomalous ({_batch_pnl*100:+.1f}% vs entry), skipping tick #{_batch_anomaly_count}/5"
+                                f"looks anomalous ({_batch_pnl*100:+.1f}% vs entry), skipping tick #{_anomaly_count}"
                             )
-                            await asyncio.sleep(self.price_check_interval)
-                            continue
-                        elif _batch_anomaly_count == 6:
-                            logger.warning(
-                                f"[PRICE GUARD] {token_info.symbol}: price {current_price:.10f} "
-                                f"confirmed real after 5 ticks ({_batch_pnl*100:+.1f}%), proceeding with SL check"
-                            )
+                        await asyncio.sleep(self.price_check_interval)
+                        continue
                     else:
-                        _batch_anomaly_count = 0
+                        _anomaly_count = 0
 
                 # Calculate current PnL FIRST (needed for all checks)
-                # SESSION 3: One-time entry price correction for PumpFun tokens
-                # Quote price from bonding curve != execution price (30-40% slippage on new tokens)
-                # Correct entry = buy_amount_sol / actual_tokens_received
-                if not _entry_corrected:
-                    _ep_src_chk = getattr(position, 'entry_price_source', '')
-                    _ep_prov_chk = getattr(position, 'entry_price_provisional', False)
-                    _confirmed_chk = getattr(position, 'buy_confirmed', False) or getattr(position, 'tokens_arrived', False)
-                    if _confirmed_chk and (_ep_prov_chk or _ep_src_chk == 'pumpfun_curve'):
-                        try:
-                            _real_bal = await self._get_token_balance(str(token_info.mint))
-                            if _real_bal is not None and _real_bal > 0 and self.buy_amount > 0:
-                                _real_entry = self.buy_amount / _real_bal
-                                _old_entry = position.entry_price
-                                _correction_pct = (_real_entry - _old_entry) / _old_entry * 100 if _old_entry > 0 else 0
-                                if abs(_correction_pct) > 5:
-                                    position.entry_price = _real_entry
-                                    if hasattr(position, 'original_entry_price'):
-                                        position.original_entry_price = _real_entry
-                                    position.entry_price_source = 'execution_corrected'
-                                    position.entry_price_provisional = False
-                                    if self.take_profit_percentage and position.take_profit_price:
-                                        position.take_profit_price = _real_entry * (1 + self.take_profit_percentage)
-                                    if self.stop_loss_percentage and position.stop_loss_price:
-                                        position.stop_loss_price = _real_entry * (1 - self.stop_loss_percentage)
-                                    position.high_water_mark = max(_real_entry, current_price)
-                                    position.quantity = _real_bal
-                                    self._save_position(position)
-                                    logger.warning(
-                                        f"[ENTRY FIX] {token_info.symbol}: CORRECTED entry "
-                                        f"{_old_entry:.10f} -> {_real_entry:.10f} ({_correction_pct:+.1f}%) "
-                                        f"qty={_real_bal:.2f} | new TP={position.take_profit_price or 0:.10f} SL={position.stop_loss_price or 0:.10f}"
-                                    )
-                                    try:
-                                        if self.whale_tracker and hasattr(self.whale_tracker, 'register_sl_tp'):
-                                            self.whale_tracker.register_sl_tp(
-                                                mint=str(token_info.mint), symbol=token_info.symbol,
-                                                entry_price=_real_entry,
-                                                sl_price=position.stop_loss_price or 0,
-                                                tp_price=position.take_profit_price or 0,
-                                            )
-                                    except Exception:
-                                        pass
-                                    _entry_fix_ts = time.time()  # FIX 7-3: cooldown after entry correction
-                                else:
-                                    logger.info(f"[ENTRY FIX] {token_info.symbol}: entry ok ({_correction_pct:+.1f}%), no correction needed")
-                                    # Session 4: Register REACTIVE TP/SL even if no correction needed (was deferred for PumpFun)
-                                    try:
-                                        if self.whale_tracker and hasattr(self.whale_tracker, 'register_sl_tp'):
-                                            self.whale_tracker.register_sl_tp(
-                                                mint=str(token_info.mint), symbol=token_info.symbol,
-                                                entry_price=position.entry_price,
-                                                sl_price=position.stop_loss_price or 0,
-                                                tp_price=position.take_profit_price or 0,
-                                            )
-                                            logger.warning(f"[ENTRY FIX] {token_info.symbol}: REACTIVE TP/SL registered (fallback, no correction)")
-                                            _entry_fix_ts = time.time()  # FIX 7-3: cooldown before TP check
-                                    except Exception:
-                                        pass
-                                _entry_corrected = True
-                            elif _real_bal is not None and _real_bal == 0:
-                                logger.warning(f"[ENTRY FIX] {token_info.symbol}: wallet balance=0, buy may have failed")
-                                _entry_corrected = True
-                        except Exception as _ec_err:
-                            logger.warning(f"[ENTRY FIX] {token_info.symbol}: correction failed: {_ec_err}")
-
                 pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
                 
                 # ============================================
@@ -4402,9 +4307,7 @@ class UniversalTrader:
                     logger.warning(f"[NO_SL] {token_info.symbol}: SL DISABLED for this token!")
                 
                 # Проверка 1: Обычный HARD STOP LOSS (25%)
-                # PATCHED Session 3: HARD SL skips first 30s (Dynamic SL covers this window)
-                _pos_age_hs = (datetime.utcnow() - position.entry_time).total_seconds() if position.entry_time else 999
-                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl and _pos_age_hs >= 30:
+                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl:
                     logger.error(
                         f"[HARD SL] {token_info.symbol}: LOSS {pnl_pct:.1f}%! "
                         f"HARD STOP LOSS triggered (threshold: -{HARD_STOP_LOSS_PCT:.0f}%)"
@@ -4414,8 +4317,7 @@ class UniversalTrader:
                     pending_stop_loss = True
 
                 # Проверка 2: EMERGENCY STOP LOSS (40%) - максимальный приоритет
-                # PATCHED Session 3: EMERGENCY SL skips first 15s (Dynamic SL -45% covers)
-                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl and _pos_age_hs >= 15:
+                if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag and not skip_sl:
                     logger.error(
                         f"[EMERGENCY] {token_info.symbol}: CATASTROPHIC LOSS {pnl_pct:.1f}%! "
                         f"EMERGENCY sell triggered (threshold: -{EMERGENCY_STOP_LOSS_PCT:.0f}%)"
@@ -4440,15 +4342,6 @@ class UniversalTrader:
                         f"SL: {(position.stop_loss_price or 0):.10f} | "
                         f"HARD_SL: -{HARD_STOP_LOSS_PCT:.0f}%"
                     )
-
-                # FIX 7-3: Block TP for 1.5s after ENTRY FIX REACTIVE registration
-                if should_exit and exit_reason == ExitReason.TAKE_PROFIT and _entry_fix_ts > 0:
-                    import time as _time73
-                    _since_fix = _time73.time() - _entry_fix_ts
-                    if _since_fix < 1.5:
-                        logger.warning(f"[TP COOLDOWN] {token_info.symbol}: TP blocked, {_since_fix:.1f}s < 1.5s after ENTRY FIX")
-                        should_exit = False
-                        exit_reason = None
 
                 if should_exit and exit_reason:
                     logger.warning(f"[EXIT] Exit condition met: {exit_reason.value}")
@@ -4515,15 +4408,12 @@ class UniversalTrader:
                             if remaining_quantity > 1.0:  # Only keep moonbag if > 1 token
                                 position.quantity = remaining_quantity
                                 position.is_moonbag = True
-                                # Session 5: Keep TSL active with wide trail (50%) for moonbag
-                                position.tsl_enabled = True
-                                position.tsl_active = True
-                                position.tsl_trail_pct = 0.50  # Wide 50% trail for moonbag
-                                position.stop_loss_price = current_price * 0.20  # Safety floor -80%
+                                position.tsl_enabled = False  # Disable TSL for moonbag
+                                position.tsl_active = False
+                                position.stop_loss_price = current_price * (1 - 0.35)  # Hard SL -35%
                                 position.entry_price = current_price  # Reset entry to current
                                 position.high_water_mark = current_price
-                                position.tsl_trigger_price = current_price * 0.50  # 50% trail trigger
-
+                                
                                 # Save updated position
                                 self._save_position(position)
                                 
@@ -4588,45 +4478,21 @@ class UniversalTrader:
                     else:
                         # Не удалось продать - retry с лимитом
                         position.is_selling = False  # PATCH 6: reset guard on failure
+                        MAX_SELL_RETRIES = 5
                         sell_retry_count += 1
-
-                        if sell_retry_count >= 5:
-                            logger.error(f"[GIVE UP] {token_info.symbol}: 5 sell attempts failed! Checking balance...")
-                            # Check if we actually have tokens - if not, this is a zombie
-                            try:
-                                _actual_bal = await self._get_token_balance(str(token_info.mint))
-                            except Exception:
-                                _actual_bal = None
-                            # _get_token_balance returns: float>=0, None (no account), -1.0 (RPC error)
-                            if _actual_bal is not None and _actual_bal != -1.0 and _actual_bal <= 0:
-                                logger.warning(
-                                    f"[ZOMBIE] {token_info.symbol}: 0 tokens on wallet after 5 sell fails! "
-                                    f"Cleaning up phantom position."
-                                )
-                                position.is_active = False
-                                pending_stop_loss = False
-                                try:
-                                    self._remove_position(str(token_info.mint))
-                                    unregister_monitor(str(token_info.mint))
-                                    from trading.redis_state import forget_position_forever
-                                    await forget_position_forever(str(token_info.mint), reason="zombie_no_tokens")
-                                except Exception as _ce:
-                                    logger.warning(f"[ZOMBIE] Cleanup error (non-fatal): {_ce}")
-                                break  # Exit monitoring loop
-                            else:
-                                # Tokens exist or RPC failed - keep trying
-                                logger.error(
-                                    f"[RETRY] {token_info.symbol}: balance={_actual_bal}, "
-                                    f"resetting retries (tokens exist or RPC error)"
-                                )
-                                sell_retry_count = 0
-                                pending_stop_loss = True
-                                await asyncio.sleep(30)
-                                continue
-
+                        
+                        if sell_retry_count >= MAX_SELL_RETRIES:
+                            logger.error(f"[GIVE UP] {token_info.symbol}: {MAX_SELL_RETRIES} sell attempts failed!")
+                            logger.error(f"[MANUAL] Position requires MANUAL intervention: {token_info.mint}")
+                            sell_retry_count = 0  # Reset counter, keep trying
+                            pending_stop_loss = True  # Keep selling
+                            await asyncio.sleep(300)  # Wait 5 min before any retry
+                            sell_retry_count = 0  # Reset for rare retry
+                            continue
+                        
                         # Exponential backoff: 2s, 4s, 8s, 16s, 32s
                         backoff = min(2 ** sell_retry_count, 32)
-                        logger.error(f"[RETRY {sell_retry_count}/5] {token_info.symbol} sell failed, waiting {backoff}s...")
+                        logger.error(f"[RETRY {sell_retry_count}/{MAX_SELL_RETRIES}] {token_info.symbol} sell failed, waiting {backoff}s...")
                         pending_stop_loss = True
                         await asyncio.sleep(backoff)
                         continue
@@ -5454,22 +5320,12 @@ class UniversalTrader:
             
             # === ALWAYS CALCULATE TP/SL IF MISSING (skip moonbag) ===
             if position.is_moonbag:
-                # Session 5: Moonbag KEEPS TSL as exit mechanism (wide trail 50%)
-                # No TP, but TSL protects from total collapse
+                # Moonbag: no TP, no SL — only HARD_SL protects
                 position.take_profit_price = None
-                if not position.tsl_enabled:
-                    position.tsl_enabled = True
-                if not position.tsl_active and position.high_water_mark and position.high_water_mark > 0:
-                    position.tsl_active = True
-                    position.tsl_trigger_price = position.high_water_mark * 0.50  # 50% trail for moonbag
-                    logger.warning(f"[RESTORE] {position.symbol}: MOONBAG TSL reactivated: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}")
-                elif position.tsl_active:
-                    # Ensure moonbag trail is wide (50%) not default
-                    position.tsl_trail_pct = max(position.tsl_trail_pct, 0.50)
-                # Keep a safety SL at -80% from entry as absolute floor
-                if not position.stop_loss_price or position.stop_loss_price <= 0:
-                    position.stop_loss_price = position.entry_price * 0.20
-                logger.info(f"[RESTORE] {position.symbol}: MOONBAG — TSL active={position.tsl_active}, SL={position.stop_loss_price:.10f}")
+                position.stop_loss_price = None
+                position.tsl_enabled = False
+                position.tsl_active = False
+                logger.info(f"[RESTORE] {position.symbol}: MOONBAG — no TP/SL assigned")
             else:
                 if position.take_profit_price is None and self.take_profit_percentage:
                     # Don't reassign TP if TSL is already active (means TP already fired via partial sell)
@@ -5612,7 +5468,7 @@ class UniversalTrader:
             # Set restore_time for TSL grace period (15s warmup after restart)
             from datetime import datetime as _dt_restore
             if getattr(position, 'tsl_active', False):
-                position._restore_pending = True  # FIX 7-1: grace starts at first monitor tick, not at RESTORE
+                position.restore_time = _dt_restore.utcnow()
                 logger.info(f"[RESTORE] {position.symbol}: TSL grace period started (15s)")
 
             self.active_positions.append(position)
