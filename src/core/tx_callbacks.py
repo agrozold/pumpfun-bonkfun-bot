@@ -239,6 +239,26 @@ async def on_buy_success(tx: "PendingTransaction"):
                 logger.error(f"[TX_CALLBACK] ⚠️ MONITOR FAILED for {symbol} - manual restart may be needed!")
         except Exception as monitor_err:
             logger.error(f"[TX_CALLBACK] Monitor start error: {monitor_err}")
+        # FIX S14-1: Check blacklist_sell_pending — sell immediately if deployer blacklisted
+        try:
+            from trading.trader_registry import get_trader
+            _trader = get_trader()
+            if _trader:
+                for _bp in _trader.active_positions:
+                    if str(_bp.mint) == mint and getattr(_bp, 'blacklist_sell_pending', False):
+                        logger.warning(
+                            f"[TX_CALLBACK] [BLACKLIST SELL] {symbol}: BUY confirmed but deployer "
+                            f"blacklisted — SELLING IMMEDIATELY (FIX S14-1)"
+                        )
+                        _bp.blacklist_sell_pending = False
+                        _bp.buy_confirmed = True
+                        _bp.tokens_arrived = True
+                        # Sell via trader's method
+                        asyncio.create_task(_trader._blacklist_instant_sell(mint, symbol))
+                        break
+        except Exception as _bl_err:
+            logger.error(f"[TX_CALLBACK] Blacklist sell check failed: {_bl_err}")
+
         # Schedule delayed symbol update (for newly indexed tokens)
         asyncio.create_task(_delayed_symbol_update(mint, symbol, delay=30))
         # === Phase 4: Resolve vault addresses for gRPC price stream ===

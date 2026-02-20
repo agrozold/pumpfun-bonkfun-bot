@@ -72,6 +72,7 @@ class Position:
     entry_price_provisional: bool = False
     entry_price_source: str = "unknown"
     buy_tx_sig: str | None = None  # FIX 10-3: buy TX signature for on-chain entry price verification
+    blacklist_sell_pending: bool = False  # FIX S14-1: sell on confirm if deployer blacklisted
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
@@ -127,6 +128,7 @@ class Position:
             "entry_price_provisional": self.entry_price_provisional,
             "entry_price_source": self.entry_price_source,
             "buy_tx_sig": self.buy_tx_sig,
+            "blacklist_sell_pending": self.blacklist_sell_pending,
             "state": self.state,
             "platform": self.platform,
             "bonding_curve": str(self.bonding_curve) if self.bonding_curve else None,
@@ -171,6 +173,7 @@ class Position:
             entry_price_provisional=data.get("entry_price_provisional", False),
             entry_price_source=data.get("entry_price_source", "unknown"),
             buy_tx_sig=data.get("buy_tx_sig"),
+            blacklist_sell_pending=data.get("blacklist_sell_pending", False),
             platform=data.get("platform", "pump_fun"),
             bonding_curve=data.get("bonding_curve"),
             pool_base_vault=data.get("pool_base_vault"),

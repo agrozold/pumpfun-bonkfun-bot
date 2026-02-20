@@ -872,6 +872,21 @@ class WhaleGeyserReceiver:
                                         except Exception:
                                             pass
                                         logger.info(f"[GEYSER-SELF] {_pos.symbol}: entry ok ({_corr:+.1f}%), provisional=False, REACTIVE registered")
+                                    # FIX S14-1: Check blacklist_sell_pending
+                                    if getattr(_pos, 'blacklist_sell_pending', False):
+                                        logger.warning(
+                                            f"[GEYSER-SELF] [BLACKLIST SELL] {_pos.symbol}: "
+                                            f"deployer blacklisted — triggering immediate sell (FIX S14-1)"
+                                        )
+                                        _pos.blacklist_sell_pending = False
+                                        _pos.buy_confirmed = True
+                                        _pos.tokens_arrived = True
+                                        try:
+                                            asyncio.create_task(
+                                                _trader._blacklist_instant_sell(_mint, _pos.symbol)
+                                            )
+                                        except Exception as _bl_sell_err:
+                                            logger.error(f"[GEYSER-SELF] Blacklist sell trigger failed: {_bl_sell_err}")
                                     break
                     except Exception as _self_err:
                         logger.warning(f"[GEYSER-SELF] Entry fix error: {_self_err}")
@@ -1397,8 +1412,7 @@ class WhaleGeyserReceiver:
             # First curve price tick: sync entry_price for provisional positions (async, non-blocking)
             try:
                 if old_price <= 0 and sub.price > 0:
-                    import asyncio as _asyncio
-                    _asyncio.ensure_future(self._sync_entry_price_from_curve(mint, sub.price))
+                    asyncio.ensure_future(self._sync_entry_price_from_curve(mint, sub.price))
             except Exception:
                 pass
 

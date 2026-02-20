@@ -1662,11 +1662,55 @@ class UniversalTrader:
                     position.quantity, exit_reason=ExitReason.STOP_LOSS
                 )
             else:
-                # Tokens not yet arrived — just remove position, TX will fail anyway
-                logger.warning(f"[BLACKLIST] Removing unconfirmed blacklisted position {symbol}")
-                self._remove_position(mint_str)
+                # FIX S14-1: TX sent but not confirmed — DON'T remove, mark for sell on confirm
+                _has_tx = getattr(position, 'buy_tx_sig', None)
+                if _has_tx:
+                    position.blacklist_sell_pending = True
+                    logger.warning(
+                        f"[BLACKLIST] {symbol}: TX pending ({_has_tx[:16]}...) — "
+                        f"will SELL immediately on confirm (FIX S14-1)"
+                    )
+                    try:
+                        from trading.position import save_positions
+                        save_positions(self.active_positions)
+                    except Exception:
+                        pass
+                else:
+                    # No TX sent — safe to remove
+                    logger.warning(f"[BLACKLIST] Removing unconfirmed blacklisted position {symbol}")
+                    self._remove_position(mint_str)
         except Exception as e:
             logger.error(f"[BLACKLIST] Abort failed for {symbol}: {e}")
+
+    async def _blacklist_instant_sell(self, mint_str: str, symbol: str):
+        """FIX S14-1: Instantly sell a blacklisted position after BUY confirmed."""
+        try:
+            position = None
+            for p in self.active_positions:
+                if str(p.mint) == mint_str:
+                    position = p
+                    break
+            if not position:
+                logger.warning(f"[BLACKLIST SELL] {symbol}: position not found, may already be sold")
+                return
+            logger.warning(f"[BLACKLIST SELL] {symbol}: executing immediate sell (FIX S14-1)")
+            from interfaces.core import TokenInfo
+            from solders.pubkey import Pubkey as SoldersPubkey
+            bc = SoldersPubkey.from_string(position.bonding_curve) if position.bonding_curve else None
+            token_info = TokenInfo(
+                name=symbol, symbol=symbol, uri="",
+                mint=SoldersPubkey.from_string(mint_str),
+                platform=self.platform, bonding_curve=bc,
+                creator=None, creator_vault=None,
+            )
+            from trading.position import ExitReason
+            await self._fast_sell_with_timeout(
+                token_info, position, position.entry_price,
+                position.quantity, exit_reason=ExitReason.STOP_LOSS
+            )
+            logger.warning(f"[BLACKLIST SELL] {symbol}: sell completed (FIX S14-1)")
+        except Exception as e:
+            logger.error(f"[BLACKLIST SELL] {symbol}: sell failed: {e} — monitor will handle via SL")
 
     async def _buy_any_dex(
         self,
@@ -4521,6 +4565,16 @@ class UniversalTrader:
                         should_exit = False
                         exit_reason = None
 
+                # FIX S15-2: Moonbag CANNOT exit via TP — safety net in monitor loop
+                if should_exit and exit_reason == ExitReason.TAKE_PROFIT and (position.is_moonbag or getattr(position, 'tp_partial_done', False)):
+                    logger.warning(
+                        f"[TP BLOCKED] {token_info.symbol}: moonbag={position.is_moonbag} tp_partial={position.tp_partial_done} "
+                        f"— TP exit BLOCKED, forcing TP=None (FIX S15-2)"
+                    )
+                    position.take_profit_price = None
+                    should_exit = False
+                    exit_reason = None
+
                 if should_exit and exit_reason:
                     logger.warning(f"[EXIT] Exit condition met: {exit_reason.value}")
                     logger.warning(f"[EXIT] Current price: {current_price:.10f} SOL, PnL: {pnl_pct:+.2f}%")
@@ -5601,6 +5655,20 @@ class UniversalTrader:
                     continue
             logger.info(f"[RESTORE] Restoring position: {position.symbol} on {position.platform}")
 
+            # === DEBUG S15: Log ALL critical fields BEFORE any modification ===
+            logger.warning(
+                f"[RESTORE DEBUG] {position.symbol}: "
+                f"is_moonbag={position.is_moonbag}, "
+                f"tp_partial_done={getattr(position, 'tp_partial_done', 'N/A')}, "
+                f"take_profit_price={position.take_profit_price}, "
+                f"tsl_active={position.tsl_active}, "
+                f"tsl_trail_pct={position.tsl_trail_pct}, "
+                f"tsl_sell_pct={getattr(position, 'tsl_sell_pct', 'N/A')}, "
+                f"entry={position.entry_price}, "
+                f"qty={position.quantity}"
+            )
+            # === END DEBUG S15 ===
+
             # === SYNC ENTRY PRICE FROM PURCHASE HISTORY ===
             # DISABLED: This caused issues - was overwriting SL from old purchase_history
             # positions.json has correct entry_price and SL set by buy.py
@@ -5791,6 +5859,25 @@ class UniversalTrader:
             if getattr(position, 'tsl_active', False):
                 position._restore_pending = True  # FIX 7-1: grace starts at first monitor tick, not at RESTORE
                 logger.info(f"[RESTORE] {position.symbol}: TSL grace period started (15s)")
+
+            # === FIX S15-1: FINAL moonbag guard before append ===
+            # No matter what happened above, if tp_partial_done=True this IS a moonbag.
+            # TP MUST be None. This is the absolute last check before monitor starts.
+            if getattr(position, "tp_partial_done", False) or position.is_moonbag:
+                if position.take_profit_price is not None:
+                    logger.warning(
+                        f"[RESTORE] {position.symbol}: FINAL GUARD — tp_partial={position.tp_partial_done} "
+                        f"moonbag={position.is_moonbag} but TP={position.take_profit_price} — FORCING TP=None (FIX S15-1)"
+                    )
+                    position.take_profit_price = None
+                if not position.is_moonbag:
+                    position.is_moonbag = True
+                    logger.warning(f"[RESTORE] {position.symbol}: FINAL GUARD — forced is_moonbag=True (FIX S15-1)")
+                # Moonbag must sell 100% on TSL, trail 50%
+                position.tsl_sell_pct = 1.0
+                position.tsl_trail_pct = max(position.tsl_trail_pct, 0.50)
+                position.tp_sell_pct = 1.0
+            # === END FIX S15-1 ===
 
             self.active_positions.append(position)
 
