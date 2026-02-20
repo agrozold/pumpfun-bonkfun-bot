@@ -44,9 +44,9 @@ class Position:
 
     tsl_enabled: bool = False
     tsl_activation_pct: float = 0.15
-    tsl_trail_pct: float = 0.10
+    tsl_trail_pct: float = 0.30  # FIX S18-8: match yaml
     tsl_sell_pct: float = 1.0
-    tp_sell_pct: float = 0.80
+    tp_sell_pct: float = 0.90  # FIX S18-8: match yaml (90% sell, 10% moonbag)
     tsl_active: bool = False
     high_water_mark: float = 0.0
     tsl_trigger_price: float = 0.0
@@ -195,7 +195,7 @@ class Position:
         bonding_curve: str | None = None,
         tsl_enabled: bool = False,
         tsl_activation_pct: float = 0.15,
-        tsl_trail_pct: float = 0.10,
+        tsl_trail_pct: float = 0.30,  # FIX S18-8: match yaml
         tsl_sell_pct: float = 1.0,
     ) -> "Position":
         if entry_price <= 0:
@@ -277,10 +277,10 @@ class Position:
         if self.stop_loss_price and not self.is_moonbag:
             _pos_age = (datetime.utcnow() - self.entry_time).total_seconds() if self.entry_time else 999
             if _pos_age < 15.0:
-                # First 15s: only trigger at -45% (whale impact absorption)
-                _dynamic_sl = self.entry_price * (1 - 0.45)
+                # First 15s: whale impact absorption — SL at -35% (FIX S18-9b)
+                _dynamic_sl = self.entry_price * (1 - 0.35)
                 if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 15s, price hit -45% SL")
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 15s, price hit -35% SL")
                     return True, ExitReason.STOP_LOSS
             elif _pos_age < 60.0:
                 # 15-60s: settling period — SL at -35%

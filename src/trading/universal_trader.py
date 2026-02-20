@@ -155,7 +155,7 @@ class UniversalTrader:
         tsl_activation_pct: float = 0.15,  # MUST match yaml
         tsl_trail_pct: float = 0.10,  # MUST match yaml
         tsl_sell_pct: float = 1.0,  # MUST match yaml
-        tp_sell_pct: float = 0.80,  # MUST match yaml
+        tp_sell_pct: float = 0.90,  # FIX S18-8: MUST match yaml (0.9)
         dca_enabled: bool = True,  # MUST match yaml
         # Token Vetting (security)
         token_vetting_enabled: bool = False,
@@ -1397,7 +1397,7 @@ class UniversalTrader:
                     _ep_src, _ep_prov = _ep_source_map.get(dex_used, ("unknown", True))
                     position.entry_price_provisional = _ep_prov
                     position.entry_price_source = _ep_src
-                position.tp_sell_pct = self.tp_sell_pct  # from yaml (0.8)
+                position.tp_sell_pct = self.tp_sell_pct  # FIX S18-8: from yaml (0.9)
                 position.buy_confirmed = False  # PATCH: race condition guard — wait for TX confirmation
                 position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
                 position.buy_tx_sig = tx_sig  # FIX 10-3: save for on-chain entry verification
@@ -3915,8 +3915,8 @@ class UniversalTrader:
 
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
-        HARD_STOP_LOSS_PCT = 30.0  # 30% убыток = НЕМЕДЛЕННАЯ продажа
-        EMERGENCY_STOP_LOSS_PCT = 40.0  # 40% убыток = ЭКСТРЕННАЯ продажа (последний рубеж)
+        HARD_STOP_LOSS_PCT = 35.0  # 35% убыток = matches position.py 15-60s window (FIX S18-7)
+        EMERGENCY_STOP_LOSS_PCT = 35.0  # 35% = matches unified table 0-15s (FIX S18-9b)
 
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
@@ -4574,8 +4574,8 @@ class UniversalTrader:
                 if should_exit and exit_reason == ExitReason.TAKE_PROFIT and _entry_fix_ts > 0:
                     import time as _time73
                     _since_fix = _time73.time() - _entry_fix_ts
-                    if _since_fix < 1.5:
-                        logger.warning(f"[TP COOLDOWN] {token_info.symbol}: TP blocked, {_since_fix:.1f}s < 1.5s after ENTRY FIX")
+                    if _since_fix < 2.0:
+                        logger.warning(f"[TP COOLDOWN] {token_info.symbol}: TP blocked, {_since_fix:.1f}s < 2.0s after ENTRY FIX (S18-9)")
                         should_exit = False
                         exit_reason = None
 
@@ -4666,14 +4666,24 @@ class UniversalTrader:
                             if remaining_quantity > 1.0:  # Only keep moonbag if > 1 token
                                 position.quantity = remaining_quantity
                                 position.is_moonbag = True
-                                # Session 5: Keep TSL active with wide trail (50%) for moonbag
-                                position.tsl_enabled = True
+                                # FIX S18-10: all moonbag params from yaml (self)
+                                _orig_entry = position.entry_price
+                                _sl_pct = self.stop_loss_percentage or 0.20
+                                _sl_from_fix = current_price * (1 - _sl_pct)
+                                _mb_sl = max(_sl_from_fix, _orig_entry)
+                                position.tsl_enabled = self.tsl_enabled
                                 position.tsl_active = True
-                                position.tsl_trail_pct = 0.50  # Wide 50% trail for moonbag
-                                position.stop_loss_price = current_price * 0.20  # Safety floor -80%
-                                position.entry_price = current_price  # Reset entry to current
+                                position.tsl_trail_pct = self.tsl_trail_pct
+                                position.tsl_sell_pct = self.tsl_sell_pct
+                                position.stop_loss_price = _mb_sl
+                                position.entry_price = current_price
                                 position.high_water_mark = current_price
-                                position.tsl_trigger_price = current_price * 0.50  # 50% trail trigger
+                                position.tsl_trigger_price = current_price * (1 - self.tsl_trail_pct)
+                                logger.warning(
+                                    f"[MOONBAG TSL] {token_info.symbol}: SL={_mb_sl:.10f} "
+                                    f"(fix={current_price:.10f} -{_sl_pct*100:.0f}%={_sl_from_fix:.10f} "
+                                    f"entry={_orig_entry:.10f}) trail={self.tsl_trail_pct} sell={self.tsl_sell_pct}"
+                                )
 
                                 # Save updated position
                                 self._save_position(position)
@@ -4703,9 +4713,12 @@ class UniversalTrader:
                                 # RESTORE then treats it as regular position, HARD SL can kill it,
                                 # and tsl_trail stays at 30% instead of 50%.
                                 position.is_moonbag = True
-                                position.tsl_trail_pct = 0.50  # Wide trail for moonbag
-                                position.tsl_sell_pct = 1.0  # Sell 100% on TSL trigger (moonbag exit)
-                                position.stop_loss_price = position.entry_price * 0.20  # Safety SL -80%
+                                # FIX S18-10: TP moonbag from yaml
+                                _sl_pct_tp = self.stop_loss_percentage or 0.20
+                                _sl_from_tp = current_price * (1 - _sl_pct_tp)
+                                position.tsl_trail_pct = self.tsl_trail_pct
+                                position.tsl_sell_pct = self.tsl_sell_pct
+                                position.stop_loss_price = max(_sl_from_tp, position.entry_price)
                                 # Force-activate TSL for remaining position if not already active
                                 if not position.tsl_active and self.tsl_enabled:
                                     position.tsl_active = True
@@ -5133,18 +5146,14 @@ class UniversalTrader:
         if sell_quantity is None:
             sell_quantity = position.quantity
 
-        # PATCH Phase 6: Don't sell until tokens actually arrived on wallet
+        # FIX S18-9: HARD BLOCK sell if tokens not on wallet (no age bypass)
         _tokens_ok = getattr(position, 'tokens_arrived', True)
         _buy_ok = getattr(position, 'buy_confirmed', True)
-        if not _tokens_ok or not _buy_ok:
-            from datetime import datetime as _dt, timezone as _tz
-            _pos_age = (_dt.now(_tz.utc) - position.entry_time.replace(tzinfo=_tz.utc)).total_seconds() if position.entry_time else 0
-            if _pos_age < 3.0:  # S12: was 15s, Jito TX lands in <2s
-                _reason = "tokens_arrived=False" if not _tokens_ok else "buy_confirmed=False"
-                logger.warning(f"[FAST SELL] BLOCKED: {token_info.symbol} {_reason}, age={_pos_age:.1f}s < 3s — waiting")
-                return False
-            else:
-                logger.warning(f"[FAST SELL] tokens/buy not confirmed but age={_pos_age:.0f}s >= 3s — proceeding (fallback)")
+        if not _tokens_ok:
+            logger.warning(f"[FAST SELL] HARD BLOCK: {token_info.symbol} tokens_arrived=False — cannot sell")
+            return False
+        if not _buy_ok:
+            logger.info(f"[FAST SELL] {token_info.symbol} buy_confirmed=False but tokens_arrived=True — proceeding")
 
         MIN_SELL_TOKENS = 1.0
         MIN_SELL_VALUE_SOL = 0.0001
@@ -5254,6 +5263,11 @@ class UniversalTrader:
                         await forget_position_forever(mint_str, reason="sl_sell")
                     except Exception as e:
                         logger.warning(f"[FAST SELL] Redis cleanup failed: {e}")
+                logger.warning(
+                    f"[FAST SELL] COMPLETE: {token_info.symbol} "
+                    f"exit={exit_reason} qty_sold={sell_quantity:.2f} "
+                    f"price={current_price:.10f} sig={sig}"
+                )
                 return True
 
             logger.error(f"[FAST SELL] Jupiter FAILED: {error} [{_elapsed:.0f}ms]")
@@ -5728,10 +5742,11 @@ class UniversalTrader:
                     logger.warning(f"[RESTORE] {position.symbol}: MOONBAG TSL reactivated: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}")
                 elif position.tsl_active:
                     # Ensure moonbag trail is wide (50%) not default
-                    position.tsl_trail_pct = max(position.tsl_trail_pct, 0.50)
+                    # FIX S18-10: trail from yaml, no forced minimum
+                    pass  # tsl_trail_pct already set from yaml/position
                 # Keep a safety SL at -80% from entry as absolute floor
                 if not position.stop_loss_price or position.stop_loss_price <= 0:
-                    position.stop_loss_price = position.entry_price * 0.20
+                    position.stop_loss_price = position.entry_price  # FIX S18-10: moonbag SL = entry (break-even)
                 logger.info(f"[RESTORE] {position.symbol}: MOONBAG — TSL active={position.tsl_active}, SL={position.stop_loss_price:.10f}")
             else:
                 if position.take_profit_price is None and self.take_profit_percentage:
@@ -5785,10 +5800,11 @@ class UniversalTrader:
                     position.take_profit_price = None
                 if not position.is_moonbag:
                     position.is_moonbag = True
-                    position.tsl_trail_pct = max(position.tsl_trail_pct, 0.50)
+                    # FIX S18-10: trail from yaml, no forced minimum
+                    pass  # tsl_trail_pct already set from yaml/position
                     position.tsl_sell_pct = 1.0
                     if not position.stop_loss_price or position.stop_loss_price > position.entry_price * 0.25:
-                        position.stop_loss_price = position.entry_price * 0.20
+                        position.stop_loss_price = position.entry_price  # FIX S18-10: moonbag SL = entry (break-even)
                     logger.warning(
                         f"[RESTORE] {position.symbol}: tp_partial_done=True, FORCED is_moonbag=True, trail=50%, SL={position.stop_loss_price:.10f}"
                     )
@@ -5923,7 +5939,6 @@ class UniversalTrader:
                     logger.warning(f"[RESTORE] {position.symbol}: FINAL GUARD — forced is_moonbag=True (FIX S15-1)")
                 # Moonbag must sell 100% on TSL, trail 50%
                 position.tsl_sell_pct = 1.0
-                position.tsl_trail_pct = max(position.tsl_trail_pct, 0.50)
                 position.tp_sell_pct = 1.0
             # === END FIX S15-1 ===
 

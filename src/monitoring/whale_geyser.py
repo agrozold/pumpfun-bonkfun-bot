@@ -1425,27 +1425,71 @@ class WhaleGeyserReceiver:
             if _trigger and not _trigger["triggered"]:
                 _sl = _trigger.get("sl_price", 0)
                 _tp = _trigger.get("tp_price", 0)
+                _entry_p = _trigger.get("entry_price", 0)
+                _pnl_now = (sub.price - _entry_p) / max(_entry_p, 1e-15) * 100 if _entry_p > 0 else 0
+                _entry_t_log = _trigger.get('entry_time')
+                _age_log = (time.time() - _entry_t_log) if _entry_t_log else 999
+                # S18-6: Log every SL/TP check (throttled to every 2s)
+                _last_log = _trigger.get('_last_log_time', 0)
+                if time.time() - _last_log >= 2.0:
+                    _trigger['_last_log_time'] = time.time()
+                    logger.info(
+                        f"[REACTIVE CHECK] {sub.symbol}: price={sub.price:.10f} "
+                        f"entry={_entry_p:.10f} SL={_sl:.10f} TP={_tp:.10f} "
+                        f"PnL={_pnl_now:+.1f}% age={_age_log:.1f}s"
+                    )
                 if _sl and sub.price <= _sl:
-                    # DYNAMIC SL: check position age, wider SL in first 10-30s
+                    # UNIFIED DYNAMIC SL — mirrors position.py thresholds exactly
+                    # FIX S18-7: Single source of truth for SL thresholds
                     _entry_t = _trigger.get('entry_time')
                     _p_age = (time.time() - _entry_t) if _entry_t else 999
-                    _pnl = (sub.price - _trigger['entry_price']) / max(_trigger['entry_price'], 1e-15) * 100
+                    _ep = _trigger['entry_price']
+                    _pnl = (sub.price - _ep) / max(_ep, 1e-15) * 100
                     _do_sl = True
-                    if _p_age < 10.0 and _pnl > -35.0:
-                        _do_sl = False  # First 10s: only -35%
-                        if sub.price <= _trigger['entry_price'] * 0.65:
+                    _effective_label = "NORMAL -20%"
+
+                    # Thresholds MUST match position.py exactly:
+                    #   0-15s:   -45% (whale impact absorption)
+                    #   15-60s:  -35% (settling period)
+                    #   60-120s: -30% (stabilization)
+                    #   120s+:   -20% (config SL)
+                    if _p_age < 15.0:
+                        if _pnl > -35.0:
+                            _do_sl = False
+                            _effective_label = "WIDENED -35%"
+                        elif sub.price <= _ep * 0.65:
+                            _do_sl = True  # absolute floor
+                    elif _p_age < 60.0:
+                        if _pnl > -35.0:
+                            _do_sl = False
+                            _effective_label = "WIDENED -35%"
+                        elif sub.price <= _ep * 0.65:
                             _do_sl = True
-                    elif _p_age < 30.0 and _pnl > -25.0:
-                        _do_sl = False  # 10-30s: only -25%
-                        if sub.price <= _trigger['entry_price'] * 0.75:
+                    elif _p_age < 120.0:
+                        if _pnl > -30.0:
+                            _do_sl = False
+                            _effective_label = "WIDENED -30%"
+                        elif sub.price <= _ep * 0.70:
                             _do_sl = True
+
                     if _do_sl:
                         _trigger['triggered'] = True
-                        logger.warning(f'[REACTIVE SL] {sub.symbol}: {sub.price:.10f} <= SL {_sl:.10f} (PnL: {_pnl:.1f}%, age: {_p_age:.0f}s) — INSTANT SELL!')
+                        logger.warning(
+                            f'[REACTIVE SL] {sub.symbol}: {sub.price:.10f} <= SL {_sl:.10f} '
+                            f'(PnL: {_pnl:.1f}%, age: {_p_age:.0f}s, threshold: {_effective_label}) '
+                            f'— INSTANT SELL!'
+                        )
                         asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, 'stop_loss', _pnl))
                     else:
-                        if int(_p_age) % 5 == 0:  # Log every ~5s
-                            logger.info(f'[DYNAMIC SL] {sub.symbol}: PnL {_pnl:.1f}% at age {_p_age:.0f}s — SL widened, holding')
+                        # S18-6: Log when SL is widened (throttled)
+                        _last_dsl = _trigger.get('_last_dsl_log', 0)
+                        if time.time() - _last_dsl >= 2.0:
+                            _trigger['_last_dsl_log'] = time.time()
+                            logger.warning(
+                                f'[DYNAMIC SL] {sub.symbol}: price={sub.price:.10f} '
+                                f'PnL={_pnl:.1f}% age={_p_age:.1f}s — {_effective_label} active, holding '
+                                f'(config SL={_sl:.10f} at -20%)'
+                            )
                 elif _tp and _tp > 0 and sub.price >= _tp:
                     _entry_t_tp = _trigger.get('entry_time')
                     _tp_age = (time.time() - _entry_t_tp) if _entry_t_tp else 999
@@ -1465,9 +1509,11 @@ class WhaleGeyserReceiver:
                 )
             elif abs(sub.price - old_price) / max(old_price, 1e-15) > 0.005:
                 change_pct = (sub.price - old_price) / old_price * 100
+                _has_trigger = mint in self._sl_tp_triggers
+                _sl_tp_tag = " [SL/TP]" if _has_trigger else ""
                 logger.info(
                     f'[GEYSER] Curve price: {sub.symbol} '
-                    f'{sub.price:.10f} SOL ({change_pct:+.1f}%)'
+                    f'{sub.price:.10f} SOL ({change_pct:+.1f}%){_sl_tp_tag}'
                 )
 
         except Exception as e:
@@ -1599,30 +1645,54 @@ class WhaleGeyserReceiver:
                 sell_qty = position.quantity
                 exit_reason = ExitReason.STOP_LOSS if reason == "stop_loss" else ExitReason.TAKE_PROFIT
                 skip_cleanup = False
-            # PATCH Phase 6 + S13: Don't sell until tokens arrived OR age >= 3s
+            # FIX S18-9: HARD BLOCK sell if tokens not on wallet + TP cooldown 8s
             _tokens_ok = getattr(position, 'tokens_arrived', True)
             _buy_ok = getattr(position, 'buy_confirmed', True)
-            if not _tokens_ok or not _buy_ok:
-                # S13: Age check — allow sell after 3s even without confirmation
-                from datetime import datetime, timezone
-                _entry = position.entry_time
-                if _entry.tzinfo is None:
-                    _entry = _entry.replace(tzinfo=timezone.utc)
-                _pos_age = (datetime.now(timezone.utc) - _entry).total_seconds()
-                if _pos_age < 3.0:
-                    _reason = "tokens_arrived=False" if not _tokens_ok else "buy_confirmed=False"
-                    logger.warning(f"[REACTIVE] BLOCKED: {symbol} {_reason}, age={_pos_age:.1f}s < 3s — waiting")
+            # A) tokens_arrived=False -> HARD BLOCK (can't sell what you don't have)
+            if not _tokens_ok:
+                logger.warning(f"[REACTIVE] HARD BLOCK: {symbol} tokens_arrived=False — cannot sell without tokens")
+                _trigger = self._sl_tp_triggers.get(mint)
+                if _trigger:
+                    _trigger["triggered"] = False
+                return
+            # B) buy_confirmed=False but tokens arrived -> allow (tokens are real)
+            if not _buy_ok:
+                logger.info(f"[REACTIVE] {symbol} buy_confirmed=False but tokens_arrived=True — proceeding")
+            # C) TP cooldown: block TP for 8s after entry fix (price bouncing from whale impact)
+            if reason == "take_profit":
+                import time as _time_mod
+                _reactive_reg = self._sl_tp_triggers.get(mint, {})
+                _reg_time = _reactive_reg.get("entry_time", 0)
+                _since_reg = _time_mod.time() - _reg_time if _reg_time else 999
+                if _since_reg < 2.0:
+                    logger.warning(
+                        f"[REACTIVE] TP COOLDOWN: {symbol} only {_since_reg:.1f}s since entry fix "
+                        f"(need 2s) — skip"
+                    )
                     _trigger = self._sl_tp_triggers.get(mint)
                     if _trigger:
-                        _trigger["triggered"] = False  # Allow retry after confirmation
+                        _trigger["triggered"] = False
                     return
-                else:
-                    logger.warning(f"[REACTIVE] tokens/buy not confirmed but age={_pos_age:.0f}s >= 3s — proceeding (fallback)")
             position.is_selling = True
-            logger.warning(f"[REACTIVE] Launching FAST SELL for {symbol} ({reason}, PnL: {pnl_pct:.1f}%)")
+            logger.warning(
+                f"[REACTIVE SELL] Launching FAST SELL for {symbol} "
+                f"reason={reason} PnL={pnl_pct:.1f}% price={price:.10f} "
+                f"qty={sell_qty:.2f} skip_cleanup={skip_cleanup} "
+                f"exit_reason={exit_reason} tokens_arrived={_tokens_ok} buy_confirmed={_buy_ok}"
+            )
             success = await trader._fast_sell_with_timeout(
                 token_info, position, price, sell_qty, skip_cleanup=skip_cleanup, exit_reason=exit_reason
             )
+            if success:
+                logger.warning(
+                    f"[REACTIVE SELL] SUCCESS for {symbol} reason={reason} "
+                    f"sold_qty={sell_qty:.2f} price={price:.10f} PnL={pnl_pct:.1f}%"
+                )
+            else:
+                logger.error(
+                    f"[REACTIVE SELL] FAILED for {symbol} reason={reason} "
+                    f"qty={sell_qty:.2f} price={price:.10f}"
+                )
             if success and reason == "take_profit" and position.tp_sell_pct < 1.0:
                 remaining = max(0, position.quantity * (1 - position.tp_sell_pct))
                 if remaining > 1.0:
@@ -1634,9 +1704,12 @@ class WhaleGeyserReceiver:
                     # Without this, positions get is_moonbag=False, tsl_trail_pct=0.30 (wrong),
                     # HARD SL can kill moonbags, and TSL is too tight.
                     position.is_moonbag = True
-                    position.tsl_trail_pct = 0.50  # Wide trail for moonbag
-                    position.tsl_sell_pct = 1.0  # Sell 100% on TSL trigger (moonbag exit)
-                    position.stop_loss_price = position.entry_price * 0.20  # Safety SL -80%
+                    # FIX S18-10: moonbag from yaml via trader
+                    _sl_pct_r = getattr(trader, 'stop_loss_percentage', 0.20) or 0.20
+                    _sl_from_r = price * (1 - _sl_pct_r)
+                    position.tsl_trail_pct = getattr(trader, 'tsl_trail_pct', 0.30)
+                    position.tsl_sell_pct = getattr(trader, 'tsl_sell_pct', 0.50)
+                    position.stop_loss_price = max(_sl_from_r, position.entry_price)
                     # Force-activate TSL with wide trail for remaining tokens
                     if not position.tsl_active and trader.tsl_enabled:
                         position.tsl_active = True
@@ -1647,13 +1720,21 @@ class WhaleGeyserReceiver:
                     self._sl_tp_triggers[mint] = {
                         'triggered': False,
                         'entry_price': position.entry_price,
-                        'sl_price': position.entry_price * 0.20,  # Match safety SL
+                        'sl_price': position.stop_loss_price,  # FIX S18-10: calculated SL
                         'tp_price': None,
                         'entry_time': time.time(),
+                        '_last_log_time': 0, '_last_dsl_log': 0,
+                        'is_moonbag': True,  # FIX S18-9: flag for moonbag
                     }
                     logger.info(f"[REACTIVE TP] {mint[:8]} re-registered SL={position.entry_price*0.20:.8f}")
                     trader._save_position(position)
                     logger.warning(f"[REACTIVE TP] Partial done, keeping {remaining:.0f} tokens as MOONBAG. TSL active: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}, trail=50%")
+                    # FIX S18-9: Unsubscribe from gRPC curve — moonbag switches to batch price monitor
+                    try:
+                        await self.unsubscribe_curve(mint)
+                        logger.warning(f"[REACTIVE TP] {symbol}: Curve UNSUBSCRIBED — moonbag now on batch price monitor")
+                    except Exception as _unsub_err:
+                        logger.warning(f"[REACTIVE TP] Curve unsubscribe failed: {_unsub_err}")
             # FIX S17-2: Reset is_selling after BOTH success and failure
             # Previously only reset on failure — caused monitor loop to see is_selling=True
             # forever after partial TP, potentially triggering double-sell path
@@ -1669,13 +1750,20 @@ class WhaleGeyserReceiver:
 
     def register_sl_tp(self, mint: str, symbol: str, entry_price: float, sl_price: float, tp_price: float = None):
         """Register SL/TP levels for reactive checking on every gRPC tick."""
+        _now = time.time()
         self._sl_tp_triggers[mint] = {
             "symbol": symbol, "entry_price": entry_price,
             "sl_price": sl_price, "tp_price": tp_price, "triggered": False,
-            "entry_time": time.time(),  # DYNAMIC SL: track position age for wider SL window
+            "entry_time": _now, "_last_log_time": 0, "_last_dsl_log": 0,
         }
-        _tp_str = f"{tp_price:.10f}" if tp_price else "0"
-        logger.info(f"[REACTIVE] Registered SL/TP for {symbol}: SL={sl_price:.10f}, TP={_tp_str}")
+        _tp_str = f"{tp_price:.10f}" if tp_price else "None"
+        _sl_pct = (entry_price - sl_price) / max(entry_price, 1e-15) * 100 if sl_price else 0
+        _tp_pct = (tp_price - entry_price) / max(entry_price, 1e-15) * 100 if tp_price else 0
+        logger.warning(
+            f"[REACTIVE] Registered SL/TP for {symbol}: "
+            f"entry={entry_price:.10f} SL={sl_price:.10f} (-{_sl_pct:.0f}%) "
+            f"TP={_tp_str} (+{_tp_pct:.0f}%) time={_now:.0f}"
+        )
 
     def unregister_sl_tp(self, mint: str):
         """Remove SL/TP trigger for mint."""

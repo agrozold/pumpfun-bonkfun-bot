@@ -80,9 +80,9 @@ async def on_buy_success(tx: "PendingTransaction"):
     stop_loss_pct = tx.context.get("stop_loss_pct") or 0.20  # 20% default
     tsl_enabled = tx.context.get("tsl_enabled", True)
     tsl_activation_pct = tx.context.get("tsl_activation_pct", 0.15)
-    tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.10)
-    tsl_sell_pct = tx.context.get("tsl_sell_pct", 1.0)
-    tp_sell_pct = tx.context.get("tp_sell_pct", 0.80)  # 50% partial TP
+    tsl_trail_pct = tx.context.get("tsl_trail_pct", 0.30)  # FIX S18-8: match yaml
+    tsl_sell_pct = tx.context.get("tsl_sell_pct", 0.5)  # FIX S18-8: match yaml
+    tp_sell_pct = tx.context.get("tp_sell_pct", 0.90)  # FIX S18-8: match yaml (90% sell, 10% moonbag)
     bonding_curve = tx.context.get("bonding_curve", None)
     whale_wallet = tx.context.get("whale_wallet", None)
     whale_label = tx.context.get("whale_label", None)
