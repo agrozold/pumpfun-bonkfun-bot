@@ -54,6 +54,7 @@ class Position:
 
     is_active: bool = True
     is_moonbag: bool = False
+    is_dust: bool = False  # True after TSL partial sell on moonbag — only entry SL, no TSL
     buy_confirmed: bool = True  # False until BUY TX confirmed on-chain (race condition guard)
     tokens_arrived: bool = True   # False until tokens actually appear on wallet (gRPC ATA subscribe)
     is_selling: bool = False  # Guard against double-sell race condition
@@ -114,6 +115,7 @@ class Position:
         "tp_sell_pct": self.tp_sell_pct,
             "is_active": self.is_active,
             "is_moonbag": self.is_moonbag,
+            "is_dust": self.is_dust,
             "buy_confirmed": self.buy_confirmed,
             "tokens_arrived": self.tokens_arrived,
             "tp_partial_done": self.tp_partial_done,
@@ -159,6 +161,7 @@ class Position:
         tp_sell_pct=data.get("tp_sell_pct", 0.80),
             is_active=data.get("is_active", True),
             is_moonbag=data.get("is_moonbag", False),
+            is_dust=data.get("is_dust", False),
             buy_confirmed=data.get("buy_confirmed", True),
             tokens_arrived=data.get("tokens_arrived", True),
             tp_partial_done=data.get("tp_partial_done", False),
@@ -316,6 +319,11 @@ class Position:
             else:
                 logger.warning(f"[TSL] {self.symbol} RESUMING triggered sell after restart")
             return True, ExitReason.TRAILING_STOP
+
+        # Dust safety SL (break-even — sell if price drops to entry)
+        if self.is_dust and self.entry_price > 0 and current_price <= self.entry_price:
+            logger.warning(f"[DUST SL] {self.symbol}: price {current_price:.10f} <= entry {self.entry_price:.10f} — selling dust")
+            return True, ExitReason.STOP_LOSS
 
         # Moonbag safety SL (absolute floor, checked after TSL)
         if self.is_moonbag and self.stop_loss_price and current_price <= self.stop_loss_price:

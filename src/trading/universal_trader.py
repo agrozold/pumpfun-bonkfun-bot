@@ -4718,6 +4718,7 @@ class UniversalTrader:
                             if remaining_quantity > 1.0:  # Only keep moonbag if > 1 token
                                 position.quantity = remaining_quantity
                                 position.is_moonbag = True
+                                position.is_dust = True  # FIX S20: TSL partial sell remnant — only entry SL, no TSL
                                 # FIX S18-10: all moonbag params from yaml (self)
                                 _orig_entry = position.entry_price
                                 _sl_pct = self.stop_loss_percentage or 0.20
@@ -4732,7 +4733,7 @@ class UniversalTrader:
                                 # position.tsl_sell_pct = 0  # REMOVED — caused sell_quantity = qty * 0 = 0
                                 position.tsl_trigger_price = 0
                                 position.high_water_mark = 0
-                                position.stop_loss_price = position.original_entry_price * (1 - self.stop_loss_percentage) if position.original_entry_price > 0 else _orig_entry * (1 - self.stop_loss_percentage)
+                                position.stop_loss_price = position.original_entry_price if position.original_entry_price > 0 else _orig_entry  # FIX S20: dust SL = entry (break-even)
 
 
 
@@ -5840,9 +5841,16 @@ class UniversalTrader:
                 # Session 5: Moonbag KEEPS TSL as exit mechanism (wide trail 50%)
                 # No TP, but TSL protects from total collapse
                 position.take_profit_price = None
-                if not position.tsl_enabled:
+                # FIX S20: Dust (after TSL partial) — no TSL, only entry SL
+                if getattr(position, "is_dust", False):
+                    position.tsl_enabled = False
+                    position.tsl_active = False
+                    if not position.stop_loss_price or position.stop_loss_price <= 0:
+                        position.stop_loss_price = position.entry_price
+                    logger.info(f"[RESTORE] {position.symbol}: DUST — no TSL, SL=entry {position.stop_loss_price:.10f}")
+                if not getattr(position, "is_dust", False) and not position.tsl_enabled:
                     position.tsl_enabled = True
-                if not position.tsl_active and position.high_water_mark and position.high_water_mark > 0:
+                if not getattr(position, "is_dust", False) and not position.tsl_active and position.high_water_mark and position.high_water_mark > 0:
                     position.tsl_active = True
                     position.tsl_trigger_price = position.high_water_mark * 0.50  # 50% trail for moonbag
                     logger.warning(f"[RESTORE] {position.symbol}: MOONBAG TSL reactivated: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}")

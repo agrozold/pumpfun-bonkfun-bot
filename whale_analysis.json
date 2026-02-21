@@ -1,0 +1,1530 @@
+{
+  "generated_at": "2026-02-21T08:00:37.941725+00:00",
+  "hours": 24,
+  "min_sol": 1.0,
+  "whales": [
+    {
+      "label": "whale-30",
+      "wallet": "C21R6y1fqFUNCEzNJgjVcEnjTE2y6Cq7GWLfZzkbBm7a",
+      "win_rate": 50.0,
+      "total_trades": 4,
+      "wins": 2,
+      "losses": 2,
+      "open_positions": 2,
+      "net_pnl_sol": 24.522337,
+      "total_profit_sol": 74.986416,
+      "total_loss_sol": 50.464079,
+      "avg_buy_size_sol": 15.0371,
+      "trades": [
+        {
+          "token": "7zS5vvfL",
+          "mint": "7zS5vvfL2N9Qrp1we1cX7J6sm8BNq6GoLSYyEp6mpump",
+          "buy_sol": 1.222157,
+          "sell_sol": 2.741045,
+          "pnl_sol": 1.518888,
+          "pnl_pct": 124.3,
+          "is_closed": true,
+          "hold_sec": 53
+        },
+        {
+          "token": "3AZAjwZZ",
+          "mint": "3AZAjwZZCe8Jf4yccheZ5Z1c2SPEPyoYJHFT3Le2pump",
+          "buy_sol": 8.462074,
+          "sell_sol": 81.929601,
+          "pnl_sol": 73.467527,
+          "pnl_pct": 868.2,
+          "is_closed": true,
+          "hold_sec": 27399
+        },
+        {
+          "token": "NV2RYH95",
+          "mint": "NV2RYH954cTJ3ckFUpvfqaQXU4ARqqDH3562nFSpump",
+          "buy_sol": 25.232039,
+          "sell_sol": 0,
+          "pnl_sol": -25.232039,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 75295
+        },
+        {
+          "token": "AVF9F4C4",
+          "mint": "AVF9F4C4j8b1Kh4BmNHqybDaHgnZpJ7W7yLvL7hUpump",
+          "buy_sol": 25.232039,
+          "sell_sol": 0,
+          "pnl_sol": -25.232039,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 82519
+        }
+      ]
+    },
+    {
+      "label": "whale-27",
+      "wallet": "4aBauBEAdEHx6nrC4eGNcJBFvYmZuiFLi5pwYPToQd1d",
+      "win_rate": 100.0,
+      "total_trades": 6,
+      "wins": 6,
+      "losses": 0,
+      "open_positions": 1,
+      "net_pnl_sol": 2.866499,
+      "total_profit_sol": 2.866499,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 1.3558,
+      "trades": [
+        {
+          "token": "Fr8RLwFL",
+          "mint": "Fr8RLwFLbMwJYYMk66BxB2nhAFMmZLdvckcCXFBpump",
+          "buy_sol": 2.034318,
+          "sell_sol": 2.179458,
+          "pnl_sol": 0.14514,
+          "pnl_pct": 7.1,
+          "is_closed": true,
+          "hold_sec": 53047
+        },
+        {
+          "token": "9Vpgeuze",
+          "mint": "9VpgeuzemTSBPg36iKYM5eonRdWNhdgD3bnUoj31pump",
+          "buy_sol": 1.018213,
+          "sell_sol": 1.28436,
+          "pnl_sol": 0.266147,
+          "pnl_pct": 26.1,
+          "is_closed": true,
+          "hold_sec": 411
+        },
+        {
+          "token": "66JLNeS5",
+          "mint": "66JLNeS5bQKCy1pF2Gj1qkwvdQZEwMPkmowbNfvjpump",
+          "buy_sol": 2.032074,
+          "sell_sol": 2.059837,
+          "pnl_sol": 0.027763,
+          "pnl_pct": 1.4,
+          "is_closed": false,
+          "hold_sec": 1118
+        },
+        {
+          "token": "LeqE4gA2",
+          "mint": "LeqE4gA2qVGpUJaH8MiCNajzVQ5oUZJeBE4ghMrpump",
+          "buy_sol": 1.016139,
+          "sell_sol": 1.105645,
+          "pnl_sol": 0.089506,
+          "pnl_pct": 8.8,
+          "is_closed": true,
+          "hold_sec": 62
+        },
+        {
+          "token": "6Xdb17HY",
+          "mint": "6Xdb17HYHy5XeRTg2ChBMXrKfYXfHDg9q4D132Q8pump",
+          "buy_sol": 1.016139,
+          "sell_sol": 1.613706,
+          "pnl_sol": 0.597567,
+          "pnl_pct": 58.8,
+          "is_closed": true,
+          "hold_sec": 16615
+        },
+        {
+          "token": "3AZAjwZZ",
+          "mint": "3AZAjwZZCe8Jf4yccheZ5Z1c2SPEPyoYJHFT3Le2pump",
+          "buy_sol": 1.018213,
+          "sell_sol": 2.75859,
+          "pnl_sol": 1.740377,
+          "pnl_pct": 170.9,
+          "is_closed": true,
+          "hold_sec": 21332
+        }
+      ]
+    },
+    {
+      "label": "whale-12",
+      "wallet": "215nhcAHjQQGgwpQSJQ7zR26etbjjtVdW74NLzwEgQjP",
+      "win_rate": 100.0,
+      "total_trades": 1,
+      "wins": 1,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 2.77202,
+      "total_profit_sol": 2.77202,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 17.1841,
+      "trades": [
+        {
+          "token": "HmV9Y1hr",
+          "mint": "HmV9Y1hr8KrKzJtW44QbgTVSW5XH4cv7gp1VNBzTpump",
+          "buy_sol": 17.184113,
+          "sell_sol": 19.956133,
+          "pnl_sol": 2.77202,
+          "pnl_pct": 16.1,
+          "is_closed": true,
+          "hold_sec": 4464
+        }
+      ]
+    },
+    {
+      "label": "whale-3",
+      "wallet": "4BdKaxN8G6ka4GYtQQWk4G4dZRUTX2vQH9GcXdBREFUk",
+      "win_rate": 40.0,
+      "total_trades": 5,
+      "wins": 2,
+      "losses": 3,
+      "open_positions": 3,
+      "net_pnl_sol": 2.720531,
+      "total_profit_sol": 10.833153,
+      "total_loss_sol": 8.112622,
+      "avg_buy_size_sol": 2.065,
+      "trades": [
+        {
+          "token": "7sYiiaKe",
+          "mint": "7sYiiaKeM395tBFc84SwnyXL59gmbqZ8BntfUjCdpump",
+          "buy_sol": 1.106074,
+          "sell_sol": 5.503106,
+          "pnl_sol": 4.397032,
+          "pnl_pct": 397.5,
+          "is_closed": true,
+          "hold_sec": 99
+        },
+        {
+          "token": "6y9X34YU",
+          "mint": "6y9X34YUHKN19AU8BqBB7eYw9RsL1ZQT1jCEE9dTpump",
+          "buy_sol": 3.003274,
+          "sell_sol": 0,
+          "pnl_sol": -3.003274,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 44712
+        },
+        {
+          "token": "3occKDah",
+          "mint": "3occKDahVDR1EK5kPENuNbiNENCvKhyAzLBQRdwGxxWs",
+          "buy_sol": 1.106074,
+          "sell_sol": 0,
+          "pnl_sol": -1.106074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 45673
+        },
+        {
+          "token": "F5rqDXbg",
+          "mint": "F5rqDXbgArMDaLKagowPAA5yBk7aDi7tG6Nhou88pump",
+          "buy_sol": 1.106547,
+          "sell_sol": 7.542668,
+          "pnl_sol": 6.436121,
+          "pnl_pct": 581.6,
+          "is_closed": true,
+          "hold_sec": 122
+        },
+        {
+          "token": "4HkU4xzZ",
+          "mint": "4HkU4xzZDwoK7442TDVtyshzhbcbXSjQkiSMRRAepump",
+          "buy_sol": 4.003274,
+          "sell_sol": 0,
+          "pnl_sol": -4.003274,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 45763
+        }
+      ]
+    },
+    {
+      "label": "whale-9",
+      "wallet": "cumV7jbJLfwuzknZHNKJFULdBVWsXj1MMgXm4SkpdQr",
+      "win_rate": 0,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 0.0,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 0,
+      "trades": []
+    },
+    {
+      "label": "whale-21",
+      "wallet": "GvAyrpEM88uMYLp8QLUf7SRfqfsLNBEFhLctj2Hn8y9P",
+      "win_rate": 0,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 0.0,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 0,
+      "trades": []
+    },
+    {
+      "label": "whale-22",
+      "wallet": "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm",
+      "win_rate": 0,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 0.0,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 0,
+      "trades": []
+    },
+    {
+      "label": "whale-23",
+      "wallet": "DP7G43VPwR5Ab5rcjrCnvJ8UgvRXRHTWscMjRD1eSdGC",
+      "win_rate": 0,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 0.0,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 0,
+      "trades": []
+    },
+    {
+      "label": "whale-29",
+      "wallet": "9dqU775VmXvFmhcHM2qGmfgaVPF4VhU4vE5LRWsaZhCj",
+      "win_rate": 0,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 0.0,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 0,
+      "trades": []
+    },
+    {
+      "label": "whale-32",
+      "wallet": "BWuoN2e4qaxGyuVsSgSVnREutZjUsck2EXqSsdXgsN5m",
+      "win_rate": 0,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 0.0,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 0,
+      "trades": []
+    },
+    {
+      "label": "whale-37",
+      "wallet": "4Br5iKfRkYMk8WMj6w8YASynuq7Eoas16rkyvWsAdL4P",
+      "win_rate": 0,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "open_positions": 0,
+      "net_pnl_sol": 0.0,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 0.0,
+      "avg_buy_size_sol": 0,
+      "trades": []
+    },
+    {
+      "label": "whale-11",
+      "wallet": "CECN4BW4DKnbyddkd9FhWVR5dotzKhQr5p7DUPhQ55Du",
+      "win_rate": 50.0,
+      "total_trades": 2,
+      "wins": 1,
+      "losses": 1,
+      "open_positions": 1,
+      "net_pnl_sol": -1.344255,
+      "total_profit_sol": 0.657919,
+      "total_loss_sol": 2.002174,
+      "avg_buy_size_sol": 5.5085,
+      "trades": [
+        {
+          "token": "2uBXYNQC",
+          "mint": "2uBXYNQCJp86m2dx6PHScA84sShopuzQXZ1capt7BUcw",
+          "buy_sol": 2.002174,
+          "sell_sol": 0,
+          "pnl_sol": -2.002174,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 6799
+        },
+        {
+          "token": "7cwbokRh",
+          "mint": "7cwbokRhMSKhLiFB4a6F4FAyusADEKK1jULa7Riipump",
+          "buy_sol": 9.01491,
+          "sell_sol": 9.672829,
+          "pnl_sol": 0.657919,
+          "pnl_pct": 7.3,
+          "is_closed": true,
+          "hold_sec": 14224
+        }
+      ]
+    },
+    {
+      "label": "whale-5",
+      "wallet": "suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+      "win_rate": 28.6,
+      "total_trades": 7,
+      "wins": 2,
+      "losses": 5,
+      "open_positions": 5,
+      "net_pnl_sol": -4.032645,
+      "total_profit_sol": 3.947913,
+      "total_loss_sol": 7.980558,
+      "avg_buy_size_sol": 1.4908,
+      "trades": [
+        {
+          "token": "4FNPVWgV",
+          "mint": "4FNPVWgVBF4Dj7ggvY9NwoaDx8fxviTrJWxpyjwYpump",
+          "buy_sol": 1.300554,
+          "sell_sol": 2.350596,
+          "pnl_sol": 1.050042,
+          "pnl_pct": 80.7,
+          "is_closed": true,
+          "hold_sec": 485
+        },
+        {
+          "token": "54KQfgy4",
+          "mint": "54KQfgy4CEHGtF1XSPYfjnPPnokGdRkfiXjyVuxNpump",
+          "buy_sol": 1.154735,
+          "sell_sol": 4.052606,
+          "pnl_sol": 2.897871,
+          "pnl_pct": 251.0,
+          "is_closed": true,
+          "hold_sec": 149
+        },
+        {
+          "token": "84x56GLt",
+          "mint": "84x56GLt7bcA1tdaongEiQFbyCv7ghWBLeqKWUBUpump",
+          "buy_sol": 2.500083,
+          "sell_sol": 0,
+          "pnl_sol": -2.500083,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 12620
+        },
+        {
+          "token": "3zkJFu2Z",
+          "mint": "3zkJFu2Z1JYh6cDRVLuFkR2nE2zEGNxvdPTfFw3dtJqy",
+          "buy_sol": 1.374694,
+          "sell_sol": 0,
+          "pnl_sol": -1.374694,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 12559
+        },
+        {
+          "token": "BB5cbBSF",
+          "mint": "BB5cbBSFenz3JkZPXkG2cVGjueoQqFG5HpFC3br6kpnu",
+          "buy_sol": 1.309734,
+          "sell_sol": 0,
+          "pnl_sol": -1.309734,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 12682
+        },
+        {
+          "token": "A2qPyfNj",
+          "mint": "A2qPyfNjTVBYfC2Vfch3S6S2BGKhSvgK3K8pGaGeJFor",
+          "buy_sol": 1.231868,
+          "sell_sol": 0,
+          "pnl_sol": -1.231868,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 12702
+        },
+        {
+          "token": "5gGMscSK",
+          "mint": "5gGMscSKXgw9eksQhoeGpszE4XuQ2Y6942pcA35CsQaC",
+          "buy_sol": 1.564178,
+          "sell_sol": 0,
+          "pnl_sol": -1.564178,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 12774
+        }
+      ]
+    },
+    {
+      "label": "whale-17",
+      "wallet": "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f",
+      "win_rate": 0.0,
+      "total_trades": 4,
+      "wins": 0,
+      "losses": 4,
+      "open_positions": 3,
+      "net_pnl_sol": -4.940249,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 4.940249,
+      "avg_buy_size_sol": 1.7841,
+      "trades": [
+        {
+          "token": "4FNPVWgV",
+          "mint": "4FNPVWgVBF4Dj7ggvY9NwoaDx8fxviTrJWxpyjwYpump",
+          "buy_sol": 2.570703,
+          "sell_sol": 2.196051,
+          "pnl_sol": -0.374652,
+          "pnl_pct": -14.6,
+          "is_closed": true,
+          "hold_sec": 485
+        },
+        {
+          "token": "8RQciht6",
+          "mint": "8RQciht63KxvyzeZzvXitQZPQb5jH65Degyfzjhopump",
+          "buy_sol": 2.322522,
+          "sell_sol": 0,
+          "pnl_sol": -2.322522,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 11578
+        },
+        {
+          "token": "Bvv3MjmL",
+          "mint": "Bvv3MjmLY61ZKsugVqXuuNXmM9UC6WYWcPgw5mFvcJhH",
+          "buy_sol": 1.100028,
+          "sell_sol": 0,
+          "pnl_sol": -1.100028,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 11797
+        },
+        {
+          "token": "84x56GLt",
+          "mint": "84x56GLt7bcA1tdaongEiQFbyCv7ghWBLeqKWUBUpump",
+          "buy_sol": 1.143047,
+          "sell_sol": 0,
+          "pnl_sol": -1.143047,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 12107
+        }
+      ]
+    },
+    {
+      "label": "whale-39",
+      "wallet": "AcxSZuEJanntTJLKBNWmVrQNVourKhwLHehLbDLdQLUv",
+      "win_rate": 0.0,
+      "total_trades": 4,
+      "wins": 0,
+      "losses": 4,
+      "open_positions": 4,
+      "net_pnl_sol": -5.018302,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 5.018302,
+      "avg_buy_size_sol": 1.2546,
+      "trades": [
+        {
+          "token": "2UmjrhAi",
+          "mint": "2UmjrhAimpwUJNqshstwizdYtNaBUH27NpBrub56pump",
+          "buy_sol": 1.160108,
+          "sell_sol": 0,
+          "pnl_sol": -1.160108,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 39454
+        },
+        {
+          "token": "92bokveF",
+          "mint": "92bokveFbHLvboUpxhcDGRF8vahuH5zkt73tLRnpump",
+          "buy_sol": 1.261675,
+          "sell_sol": 0,
+          "pnl_sol": -1.261675,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 39565
+        },
+        {
+          "token": "BNvzZdTe",
+          "mint": "BNvzZdTeEWFoGdnoXNFEZYQm2Z8RP1EkxFL5hNR8pump",
+          "buy_sol": 1.084445,
+          "sell_sol": 0,
+          "pnl_sol": -1.084445,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 42879
+        },
+        {
+          "token": "98ezWeP2",
+          "mint": "98ezWeP2zrh1aM64SZUuA66tT1qXJ5a3Pc6VypJhpump",
+          "buy_sol": 1.512074,
+          "sell_sol": 0,
+          "pnl_sol": -1.512074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 46160
+        }
+      ]
+    },
+    {
+      "label": "whale-18",
+      "wallet": "EA4MXkyF8C2NzY8fw2acJPuarmoU271KRCCAYpLzMBJr",
+      "win_rate": 14.3,
+      "total_trades": 7,
+      "wins": 1,
+      "losses": 6,
+      "open_positions": 6,
+      "net_pnl_sol": -6.886937,
+      "total_profit_sol": 1.132766,
+      "total_loss_sol": 8.019703,
+      "avg_buy_size_sol": 1.347,
+      "trades": [
+        {
+          "token": "41irjRL9",
+          "mint": "41irjRL9oCqQLJedYTkM3q17RMkK1pZx1563JGsFpump",
+          "buy_sol": 1.051586,
+          "sell_sol": 0,
+          "pnl_sol": -1.051586,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 40204
+        },
+        {
+          "token": "HZBvcL4N",
+          "mint": "HZBvcL4NHuFSTH97QxVhfY4g8DVAu3rgHycpnrJepump",
+          "buy_sol": 1.241938,
+          "sell_sol": 0,
+          "pnl_sol": -1.241938,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 40428
+        },
+        {
+          "token": "2p6YDmwp",
+          "mint": "2p6YDmwpqDi9Qi9B9nvaohuL1CPjoKdH5c7JvjtDpump",
+          "buy_sol": 1.006913,
+          "sell_sol": 0,
+          "pnl_sol": -1.006913,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 40978
+        },
+        {
+          "token": "CmracPf2",
+          "mint": "CmracPf2Ww3YMd9Mb9MToSP28o9iTz8e4WDw1vA8ws8M",
+          "buy_sol": 1.409241,
+          "sell_sol": 2.542007,
+          "pnl_sol": 1.132766,
+          "pnl_pct": 80.4,
+          "is_closed": true,
+          "hold_sec": 11
+        },
+        {
+          "token": "HBiznnrc",
+          "mint": "HBiznnrcbpQz7HjDRYYppx2dBoCLWXCvLsJLC5Whpump",
+          "buy_sol": 1.543159,
+          "sell_sol": 0,
+          "pnl_sol": -1.543159,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 42220
+        },
+        {
+          "token": "3vd2VioV",
+          "mint": "3vd2VioVrJF5MrgnNenpHtmUrrB7vcKweTmMT5rfpump",
+          "buy_sol": 1.043126,
+          "sell_sol": 0,
+          "pnl_sol": -1.043126,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 42709
+        },
+        {
+          "token": "BmhZYDNL",
+          "mint": "BmhZYDNLMFKkMu5qCJjujiqCUFdqV7tHpZB7eAVWpump",
+          "buy_sol": 2.132983,
+          "sell_sol": 0,
+          "pnl_sol": -2.132983,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 43057
+        }
+      ]
+    },
+    {
+      "label": "whale-42",
+      "wallet": "6S8GezkxYUfZy9JPtYnanbcZTMB87Wjt1qx3c6ELajKC",
+      "win_rate": 30.0,
+      "total_trades": 10,
+      "wins": 3,
+      "losses": 7,
+      "open_positions": 5,
+      "net_pnl_sol": -10.054991,
+      "total_profit_sol": 10.361554,
+      "total_loss_sol": 20.416545,
+      "avg_buy_size_sol": 7.2826,
+      "trades": [
+        {
+          "token": "CmracPf2",
+          "mint": "CmracPf2Ww3YMd9Mb9MToSP28o9iTz8e4WDw1vA8ws8M",
+          "buy_sol": 7.518363,
+          "sell_sol": 10.543892,
+          "pnl_sol": 3.025529,
+          "pnl_pct": 40.2,
+          "is_closed": true,
+          "hold_sec": 42
+        },
+        {
+          "token": "9d2P5iv1",
+          "mint": "9d2P5iv1BZsJzLFrwC443hBfvev4VP63iVe6BWGVP3n3",
+          "buy_sol": 2.016565,
+          "sell_sol": 0,
+          "pnl_sol": -2.016565,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 42155
+        },
+        {
+          "token": "EsoN36tC",
+          "mint": "EsoN36tCbJpHoL4J5PCJDr9H18ZSd1RmTQYk2BQdpump",
+          "buy_sol": 1.516692,
+          "sell_sol": 0,
+          "pnl_sol": -1.516692,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 42568
+        },
+        {
+          "token": "41dhqRHq",
+          "mint": "41dhqRHqs6d92kGgXRViaGtct8HWGfFvmWLzfEXmpump",
+          "buy_sol": 3.046605,
+          "sell_sol": 0,
+          "pnl_sol": -3.046605,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 42787
+        },
+        {
+          "token": "2dN3fFqi",
+          "mint": "2dN3fFqi9syfXUeeuvUB1iRrfHe8DQ6MU4Xehqpkpump",
+          "buy_sol": 3.046605,
+          "sell_sol": 0,
+          "pnl_sol": -3.046605,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 43198
+        },
+        {
+          "token": "DdexQwk8",
+          "mint": "DdexQwk8Wp78qZNhuGzqhiPZQhPHyhrJKMrMpiNupump",
+          "buy_sol": 10.133332,
+          "sell_sol": 16.425703,
+          "pnl_sol": 6.292371,
+          "pnl_pct": 62.1,
+          "is_closed": true,
+          "hold_sec": 465
+        },
+        {
+          "token": "At9omZU2",
+          "mint": "At9omZU273Jne8wCw73NcKsBkStBXVqA81ahREr2yHPY",
+          "buy_sol": 25.276153,
+          "sell_sol": 23.968779,
+          "pnl_sol": -1.307373,
+          "pnl_pct": -5.2,
+          "is_closed": true,
+          "hold_sec": 159
+        },
+        {
+          "token": "54oa5Kgb",
+          "mint": "54oa5KgbSkVT29iQjr1T9pn7531zodTtDjjc2Rcvyuv6",
+          "buy_sol": 10.136153,
+          "sell_sol": 5.719741,
+          "pnl_sol": -4.416411,
+          "pnl_pct": -43.6,
+          "is_closed": true,
+          "hold_sec": 50
+        },
+        {
+          "token": "3Gn9Dk6V",
+          "mint": "3Gn9Dk6VcF2i8gXWd3QwwHUWJCsdsenXnXF3r5hBPRXK",
+          "buy_sol": 5.069113,
+          "sell_sol": 6.112768,
+          "pnl_sol": 1.043655,
+          "pnl_pct": 20.6,
+          "is_closed": true,
+          "hold_sec": 5
+        },
+        {
+          "token": "7ZrFtXzm",
+          "mint": "7ZrFtXzm9NDg4DjfYwUi7ErrSqrVvQYqET4ZTN4xpump",
+          "buy_sol": 5.066293,
+          "sell_sol": 0,
+          "pnl_sol": -5.066293,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 50113
+        }
+      ]
+    },
+    {
+      "label": "whale-6",
+      "wallet": "8deJ9xeUvXSJwicYptA9mHsU2rN2pDx37KWzkDkEXhU6",
+      "win_rate": 55.6,
+      "total_trades": 9,
+      "wins": 5,
+      "losses": 4,
+      "open_positions": 4,
+      "net_pnl_sol": -10.298282,
+      "total_profit_sol": 1.82798,
+      "total_loss_sol": 12.126262,
+      "avg_buy_size_sol": 6.5095,
+      "trades": [
+        {
+          "token": "2QKrBtNE",
+          "mint": "2QKrBtNECja4cJygxA7igwqxahs93GNmuQ2We2stpump",
+          "buy_sol": 25.250022,
+          "sell_sol": 25.972003,
+          "pnl_sol": 0.721981,
+          "pnl_pct": 2.9,
+          "is_closed": true,
+          "hold_sec": 40
+        },
+        {
+          "token": "6wsybsgn",
+          "mint": "6wsybsgnLA6gJY6mUNMVEkBWbt6o9whBXiogq2A4pump",
+          "buy_sol": 1.01001,
+          "sell_sol": 0,
+          "pnl_sol": -1.01001,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 30352
+        },
+        {
+          "token": "EvW6JgMv",
+          "mint": "EvW6JgMvi59odGiGqGCscN7RMfWU3ZNRuhmjkErJpump",
+          "buy_sol": 5.049623,
+          "sell_sol": 5.510472,
+          "pnl_sol": 0.460848,
+          "pnl_pct": 9.1,
+          "is_closed": true,
+          "hold_sec": 8
+        },
+        {
+          "token": "D1xpFGFx",
+          "mint": "D1xpFGFxXoPNoNnprqfPZitS6RqpKKR4We85hVknpump",
+          "buy_sol": 5.052084,
+          "sell_sol": 0,
+          "pnl_sol": -5.052084,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 33583
+        },
+        {
+          "token": "66xi6VHy",
+          "mint": "66xi6VHyhfVM5Mnp14hrBoiNrpSC3TiM5oZqcyPrpump",
+          "buy_sol": 5.049623,
+          "sell_sol": 5.109895,
+          "pnl_sol": 0.060271,
+          "pnl_pct": 1.2,
+          "is_closed": true,
+          "hold_sec": 12
+        },
+        {
+          "token": "fZFLeqbN",
+          "mint": "fZFLeqbNVG7wH5qvXjGLDp5ficA9gtVXNWVUWj1pump",
+          "buy_sol": 3.032084,
+          "sell_sol": 0,
+          "pnl_sol": -3.032084,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 51086
+        },
+        {
+          "token": "CW4jDTxQ",
+          "mint": "CW4jDTxQEx2wqmfWdcqPmD9xNP2Tb8SpLoLAhAhRueaS",
+          "buy_sol": 3.032084,
+          "sell_sol": 0,
+          "pnl_sol": -3.032084,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 51110
+        },
+        {
+          "token": "5rFvqUNm",
+          "mint": "5rFvqUNm3o7weGXf9rS5WEym5QDZyBZbLVdZBESypump",
+          "buy_sol": 6.060773,
+          "sell_sol": 6.280891,
+          "pnl_sol": 0.220118,
+          "pnl_pct": 3.6,
+          "is_closed": true,
+          "hold_sec": 10
+        },
+        {
+          "token": "Bhv6zg1q",
+          "mint": "Bhv6zg1qH1YTLtdZqndtGbggWXgFq5NiQHFcbqBmpump",
+          "buy_sol": 5.049623,
+          "sell_sol": 5.414385,
+          "pnl_sol": 0.364761,
+          "pnl_pct": 7.2,
+          "is_closed": true,
+          "hold_sec": 11
+        }
+      ]
+    },
+    {
+      "label": "whale-38",
+      "wallet": "9QfBJk9dV5e8BQHVxBGxvkt212pbpSQi1Bku45ypGhnS",
+      "win_rate": 14.3,
+      "total_trades": 7,
+      "wins": 1,
+      "losses": 6,
+      "open_positions": 2,
+      "net_pnl_sol": -11.685919,
+      "total_profit_sol": 24.224175,
+      "total_loss_sol": 35.910094,
+      "avg_buy_size_sol": 7.9778,
+      "trades": [
+        {
+          "token": "Hs3ZdNyS",
+          "mint": "Hs3ZdNyS3oXRmibftNHBjXEhj1F4DAQ2KYXRhERLpump",
+          "buy_sol": 14.278015,
+          "sell_sol": 0,
+          "pnl_sol": -14.278015,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 5124
+        },
+        {
+          "token": "CgDE1SZa",
+          "mint": "CgDE1SZaZ8micHfNVwGwfcqUzYU144HApAyXoWHXpump",
+          "buy_sol": 11.771394,
+          "sell_sol": 0,
+          "pnl_sol": -11.771394,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 5834
+        },
+        {
+          "token": "8M3XUq2h",
+          "mint": "8M3XUq2hdeqVyrNxMCWE9c3w4UpWZ4X67LjbJhKLpump",
+          "buy_sol": 9.459382,
+          "sell_sol": 6.704381,
+          "pnl_sol": -2.755001,
+          "pnl_pct": -29.1,
+          "is_closed": true,
+          "hold_sec": 215
+        },
+        {
+          "token": "atgHj7yD",
+          "mint": "atgHj7yDwymzDtzMeFQBrYXLNxx3bozXKQgua97pump",
+          "buy_sol": 4.696602,
+          "sell_sol": 28.920777,
+          "pnl_sol": 24.224175,
+          "pnl_pct": 515.8,
+          "is_closed": true,
+          "hold_sec": 10709
+        },
+        {
+          "token": "djCgdiLM",
+          "mint": "djCgdiLMCZEsYSsMtLmfiYfMUCFMVPWsS1oTyAFpump",
+          "buy_sol": 2.963389,
+          "sell_sol": 0.800622,
+          "pnl_sol": -2.162766,
+          "pnl_pct": -73.0,
+          "is_closed": true,
+          "hold_sec": 71
+        },
+        {
+          "token": "5DJQqUpH",
+          "mint": "5DJQqUpHkf43ZEpPKi7Wfx2SC5JqaXnLEaB4nZHFpump",
+          "buy_sol": 3.992594,
+          "sell_sol": 0.487714,
+          "pnl_sol": -3.50488,
+          "pnl_pct": -87.8,
+          "is_closed": true,
+          "hold_sec": 37
+        },
+        {
+          "token": "HasyaDFD",
+          "mint": "HasyaDFD7AVDD38nQfugu8cJhADWk2ohF58f3R6Npump",
+          "buy_sol": 8.683563,
+          "sell_sol": 7.245525,
+          "pnl_sol": -1.438038,
+          "pnl_pct": -16.6,
+          "is_closed": true,
+          "hold_sec": 290
+        }
+      ]
+    },
+    {
+      "label": "whale-13",
+      "wallet": "98T65wcMEjoNLDTJszBHGZEX75QRe8QaANXokv4yw3Mp",
+      "win_rate": 0.0,
+      "total_trades": 8,
+      "wins": 0,
+      "losses": 8,
+      "open_positions": 8,
+      "net_pnl_sol": -16.144541,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 16.144541,
+      "avg_buy_size_sol": 2.0181,
+      "trades": [
+        {
+          "token": "5UUH9RTD",
+          "mint": "5UUH9RTDiSpq6HKS6bp4NdU9PNJpXRXuiw6ShBTBhgH2",
+          "buy_sol": 4.049079,
+          "sell_sol": 0,
+          "pnl_sol": -4.049079,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 66759
+        },
+        {
+          "token": "7JApjoto",
+          "mint": "7JApjotowq6ztnwncDesL94t9ijURquMVzqpZa7Ypump",
+          "buy_sol": 1.513692,
+          "sell_sol": 0,
+          "pnl_sol": -1.513692,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 69524
+        },
+        {
+          "token": "DQt8iaft",
+          "mint": "DQt8iaftGkeMoKyyGSECHSAS6mSpw9sEs6fefC5zpump",
+          "buy_sol": 3.01331,
+          "sell_sol": 0,
+          "pnl_sol": -3.01331,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 69914
+        },
+        {
+          "token": "3shNCsDJ",
+          "mint": "3shNCsDJJ67BM3cshaWs38QXU1Rm2HWKwXSSQmUppump",
+          "buy_sol": 1.513692,
+          "sell_sol": 0,
+          "pnl_sol": -1.513692,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 69919
+        },
+        {
+          "token": "87AEFFqq",
+          "mint": "87AEFFqqyzwzqubRS7a1GDVCYNb5SK95NDUGGxr7pump",
+          "buy_sol": 1.513692,
+          "sell_sol": 0,
+          "pnl_sol": -1.513692,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 81741
+        },
+        {
+          "token": "GeoimxVB",
+          "mint": "GeoimxVBswjPyb3SH9iHLeqUUpd5PswMp1oDrSCSpump",
+          "buy_sol": 1.513692,
+          "sell_sol": 0,
+          "pnl_sol": -1.513692,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 81825
+        },
+        {
+          "token": "CBqPVMUG",
+          "mint": "CBqPVMUG1GUDSVJbnaT8hswa1akTcyb2iVbumjttpump",
+          "buy_sol": 1.513692,
+          "sell_sol": 0,
+          "pnl_sol": -1.513692,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 83381
+        },
+        {
+          "token": "zt6vnhxx",
+          "mint": "zt6vnhxx7sDjcQWV64MQZmDYaGR9gVJ2SMb9yNKpump",
+          "buy_sol": 1.513692,
+          "sell_sol": 0,
+          "pnl_sol": -1.513692,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 83771
+        }
+      ]
+    },
+    {
+      "label": "whale-44",
+      "wallet": "4sAUSQFdvWRBxR8UoLBYbw8CcXuwXWxnN8pXa4mtm5nU",
+      "win_rate": 0.0,
+      "total_trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "open_positions": 1,
+      "net_pnl_sol": -19.566816,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 19.566816,
+      "avg_buy_size_sol": 19.5668,
+      "trades": [
+        {
+          "token": "25E8X8fP",
+          "mint": "25E8X8fPnT9AdU1nA78snybnzVxkDvv5rK663Ngrpump",
+          "buy_sol": 19.566816,
+          "sell_sol": 0,
+          "pnl_sol": -19.566816,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 6979
+        }
+      ]
+    },
+    {
+      "label": "whale-19",
+      "wallet": "FNE8ea9bJd9dihZ9h3EAkn7CSEfFCcKrhkUjjsNCdB3f",
+      "win_rate": 0.0,
+      "total_trades": 4,
+      "wins": 0,
+      "losses": 4,
+      "open_positions": 4,
+      "net_pnl_sol": -22.509921,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 22.509921,
+      "avg_buy_size_sol": 5.628,
+      "trades": [
+        {
+          "token": "BPrnX34Y",
+          "mint": "BPrnX34YH4P6JWc5G99cTwbqvhtNEZNDWns9bcNupump",
+          "buy_sol": 6.015599,
+          "sell_sol": 0,
+          "pnl_sol": -6.015599,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 47805
+        },
+        {
+          "token": "7cwbokRh",
+          "mint": "7cwbokRhMSKhLiFB4a6F4FAyusADEKK1jULa7Riipump",
+          "buy_sol": 6.075996,
+          "sell_sol": 0,
+          "pnl_sol": -6.075996,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 49014
+        },
+        {
+          "token": "5rFvqUNm",
+          "mint": "5rFvqUNm3o7weGXf9rS5WEym5QDZyBZbLVdZBESypump",
+          "buy_sol": 4.190004,
+          "sell_sol": 0,
+          "pnl_sol": -4.190004,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 53281
+        },
+        {
+          "token": "7dhVZd3q",
+          "mint": "7dhVZd3q28j4wVnat8gwJf9jpzJubhw71pzXzQdXvQVx",
+          "buy_sol": 6.230361,
+          "sell_sol": 0.002039,
+          "pnl_sol": -6.228321,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 15
+        }
+      ]
+    },
+    {
+      "label": "whale-8",
+      "wallet": "5B52w1ZW9tuwUduueP5J7HXz5AcGfruGoX6YoAudvyxG",
+      "win_rate": 0.0,
+      "total_trades": 5,
+      "wins": 0,
+      "losses": 5,
+      "open_positions": 4,
+      "net_pnl_sol": -31.072415,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 31.072415,
+      "avg_buy_size_sol": 7.6044,
+      "trades": [
+        {
+          "token": "Bh7Tty6c",
+          "mint": "Bh7Tty6csCwtzv288Lm87CXXyrHUwUNZDiV9HfSofKab",
+          "buy_sol": 5.105785,
+          "sell_sol": 0,
+          "pnl_sol": -5.105785,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 47069
+        },
+        {
+          "token": "Doh9JdBh",
+          "mint": "Doh9JdBh3V5zF7eRgqjjHBDnHWEMPnfbTPQbyi19pump",
+          "buy_sol": 6.065137,
+          "sell_sol": 0,
+          "pnl_sol": -6.065137,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 47840
+        },
+        {
+          "token": "5saDUKEu",
+          "mint": "5saDUKEuX33RQJyUDWnE48xQ5wJ9YhtX9ZNtbZhapump",
+          "buy_sol": 14.160192,
+          "sell_sol": 6.949435,
+          "pnl_sol": -7.210757,
+          "pnl_pct": -50.9,
+          "is_closed": true,
+          "hold_sec": 7049
+        },
+        {
+          "token": "DzydQAjU",
+          "mint": "DzydQAjU7BcWPf8Qzbr66i4Byj6P2UnVdKXtcvwSpump",
+          "buy_sol": 5.615756,
+          "sell_sol": 0,
+          "pnl_sol": -5.615756,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 70518
+        },
+        {
+          "token": "Yc5yZfu5",
+          "mint": "Yc5yZfu51guD9X6WpMoHA9UEgqjVuwrjHkrqh38pump",
+          "buy_sol": 7.07498,
+          "sell_sol": 0,
+          "pnl_sol": -7.07498,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 75986
+        }
+      ]
+    },
+    {
+      "label": "whale-4",
+      "wallet": "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9",
+      "win_rate": 0.0,
+      "total_trades": 17,
+      "wins": 0,
+      "losses": 17,
+      "open_positions": 17,
+      "net_pnl_sol": -37.005309,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 37.005309,
+      "avg_buy_size_sol": 2.1768,
+      "trades": [
+        {
+          "token": "6ko5rFMV",
+          "mint": "6ko5rFMVNsa4vCXuhec1FyxheFRnE6tPEaTCNVZJpump",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 5282
+        },
+        {
+          "token": "FMWndeHu",
+          "mint": "FMWndeHumqs8kyR3pUnvyc8awjfSeW8ZDxLLBFw8pump",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 5861
+        },
+        {
+          "token": "61M527mo",
+          "mint": "61M527moL5b9FsxwPAHb1UeWBM7jHKqKEBi1EBcYWWyQ",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 5993
+        },
+        {
+          "token": "HT3jhfHC",
+          "mint": "HT3jhfHCEp2Qsi39wXPa1ctAfSnmXag5aUn7gJk4pump",
+          "buy_sol": 1.592074,
+          "sell_sol": 0,
+          "pnl_sol": -1.592074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 6210
+        },
+        {
+          "token": "9QjxpY6P",
+          "mint": "9QjxpY6PMvWHsNoN1q4xGtboCTXdcRkePkpuwugrpump",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 6506
+        },
+        {
+          "token": "CgDE1SZa",
+          "mint": "CgDE1SZaZ8micHfNVwGwfcqUzYU144HApAyXoWHXpump",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 6756
+        },
+        {
+          "token": "6UznsBkj",
+          "mint": "6UznsBkjnVP5GAK6RKBnzD2GzL8TnzgYSX57pVj5pump",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 6918
+        },
+        {
+          "token": "89ZeHEkr",
+          "mint": "89ZeHEkrcjRqXs1642z4r5Ga7NLfMFwj2eqjz5uFpump",
+          "buy_sol": 3.012074,
+          "sell_sol": 0,
+          "pnl_sol": -3.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 8211
+        },
+        {
+          "token": "DFEtUxhS",
+          "mint": "DFEtUxhSJ7jxssRXKTHbeWVVyCwKKGya2NHjEdYKpump",
+          "buy_sol": 5.672124,
+          "sell_sol": 0,
+          "pnl_sol": -5.672124,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 8785
+        },
+        {
+          "token": "Dk9v4JwH",
+          "mint": "Dk9v4JwH9dF1teDZik1K5stEnaENfGhf29FhnroJpump",
+          "buy_sol": 1.592074,
+          "sell_sol": 0,
+          "pnl_sol": -1.592074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 9092
+        },
+        {
+          "token": "DVPaqViz",
+          "mint": "DVPaqVizqzC1DKPCEgAB6UDob4dcJWN9ESnfzoaVpump",
+          "buy_sol": 1.592074,
+          "sell_sol": 0,
+          "pnl_sol": -1.592074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 9121
+        },
+        {
+          "token": "Emn6W6kP",
+          "mint": "Emn6W6kPKjnsE2QAUS1phoxrxQug5rvj5ZnunAPBikJ5",
+          "buy_sol": 1.592074,
+          "sell_sol": 0,
+          "pnl_sol": -1.592074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 9698
+        },
+        {
+          "token": "5vbzKWMi",
+          "mint": "5vbzKWMiSBjvZhD3LQ4BGS3utWHuStPzbFVUnchGpump",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 9937
+        },
+        {
+          "token": "HdbAtzzx",
+          "mint": "HdbAtzzxVdj2t7w2wYHLnEVTwnKv2TqmkkGKom4Fpump",
+          "buy_sol": 2.012074,
+          "sell_sol": 0,
+          "pnl_sol": -2.012074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 10042
+        },
+        {
+          "token": "EzEJtkuH",
+          "mint": "EzEJtkuHMCAPt9TEydEWtVfhLAuFoAgqoXc6D5Wapump",
+          "buy_sol": 1.592074,
+          "sell_sol": 0,
+          "pnl_sol": -1.592074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 10256
+        },
+        {
+          "token": "3ikSPXbW",
+          "mint": "3ikSPXbWLTYRao3daeYC7nvWJaoQpR94ogBchvvGpump",
+          "buy_sol": 1.592074,
+          "sell_sol": 0,
+          "pnl_sol": -1.592074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 10599
+        },
+        {
+          "token": "8WEh7EVr",
+          "mint": "8WEh7EVrrDnUU3uyLFoYSiDMnvSvDdcvQKWXMTWKpump",
+          "buy_sol": 2.672074,
+          "sell_sol": 0,
+          "pnl_sol": -2.672074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 10657
+        }
+      ]
+    },
+    {
+      "label": "whale-41",
+      "wallet": "5XVKfruE4Zzeoz3aqBQfFMb5aSscY5nSyc6VwtQwNiid",
+      "win_rate": 0.0,
+      "total_trades": 3,
+      "wins": 0,
+      "losses": 3,
+      "open_positions": 3,
+      "net_pnl_sol": -155.325354,
+      "total_profit_sol": 0.0,
+      "total_loss_sol": 155.325354,
+      "avg_buy_size_sol": 51.7751,
+      "trades": [
+        {
+          "token": "Hh3oTaqD",
+          "mint": "Hh3oTaqDCKKfdBgsQEvxp9sUwyNf8x9qmKqEMLBWpump",
+          "buy_sol": 92.204079,
+          "sell_sol": 0,
+          "pnl_sol": -92.204079,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 26140
+        },
+        {
+          "token": "8yyyWZio",
+          "mint": "8yyyWZioe5xioYqwZiPGE6Q3RkJss5ijit4ueSsbpump",
+          "buy_sol": 30.006079,
+          "sell_sol": 0,
+          "pnl_sol": -30.006079,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 41394
+        },
+        {
+          "token": "NV2RYH95",
+          "mint": "NV2RYH954cTJ3ckFUpvfqaQXU4ARqqDH3562nFSpump",
+          "buy_sol": 33.115196,
+          "sell_sol": 0,
+          "pnl_sol": -33.115196,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 44069
+        }
+      ]
+    },
+    {
+      "label": "whale-40",
+      "wallet": "HYSq1KBAvqWpEv1pCbV31muKM1za5A1WSHGdiVLUoNhb",
+      "win_rate": 10.0,
+      "total_trades": 10,
+      "wins": 1,
+      "losses": 9,
+      "open_positions": 4,
+      "net_pnl_sol": -162.232054,
+      "total_profit_sol": 32.424495,
+      "total_loss_sol": 194.656548,
+      "avg_buy_size_sol": 30.3611,
+      "trades": [
+        {
+          "token": "Hs3ZdNyS",
+          "mint": "Hs3ZdNyS3oXRmibftNHBjXEhj1F4DAQ2KYXRhERLpump",
+          "buy_sol": 2.005113,
+          "sell_sol": 0,
+          "pnl_sol": -2.005113,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 1415
+        },
+        {
+          "token": "NV2RYH95",
+          "mint": "NV2RYH954cTJ3ckFUpvfqaQXU4ARqqDH3562nFSpump",
+          "buy_sol": 100.009118,
+          "sell_sol": 0,
+          "pnl_sol": -100.009118,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 21818
+        },
+        {
+          "token": "Cm6fNnMk",
+          "mint": "Cm6fNnMk7NfzStP9CZpsQA2v3jjzbcYGAxdJySmHpump",
+          "buy_sol": 25.003039,
+          "sell_sol": 0,
+          "pnl_sol": -25.003039,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 18307
+        },
+        {
+          "token": "8QH9scze",
+          "mint": "8QH9scze2hPJjbVmQEnVuV1r59DDcUvQSRQ9ybagpump",
+          "buy_sol": 8.003039,
+          "sell_sol": 40.427534,
+          "pnl_sol": 32.424495,
+          "pnl_pct": 405.2,
+          "is_closed": true,
+          "hold_sec": 62
+        },
+        {
+          "token": "4xLk2JHc",
+          "mint": "4xLk2JHcQQES3D1QrE8tLaKnAxq3zMVmh3YdCSL7pump",
+          "buy_sol": 96.044624,
+          "sell_sol": 64.119476,
+          "pnl_sol": -31.925148,
+          "pnl_pct": -33.2,
+          "is_closed": true,
+          "hold_sec": 5944
+        },
+        {
+          "token": "771XRYqW",
+          "mint": "771XRYqWBKDegUmv9McuG5WxCGZBZTXZ56tRqJWsU8Js",
+          "buy_sol": 30.014231,
+          "sell_sol": 12.472341,
+          "pnl_sol": -17.54189,
+          "pnl_pct": -58.4,
+          "is_closed": true,
+          "hold_sec": 279
+        },
+        {
+          "token": "4rMFgmR6",
+          "mint": "4rMFgmR67XsDhaicF6n7ChQCsnMQz24metsTmntupump",
+          "buy_sol": 4.504074,
+          "sell_sol": 0,
+          "pnl_sol": -4.504074,
+          "pnl_pct": -100.0,
+          "is_closed": false,
+          "hold_sec": 23900
+        },
+        {
+          "token": "8M29wiC3",
+          "mint": "8M29wiC3fjdX8DQDsndWU6SWRj31cityE8L9RETgEHPm",
+          "buy_sol": 10.008153,
+          "sell_sol": 6.249136,
+          "pnl_sol": -3.759017,
+          "pnl_pct": -37.6,
+          "is_closed": true,
+          "hold_sec": 18
+        },
+        {
+          "token": "H9zUgmRG",
+          "mint": "H9zUgmRGkdCfQE4yxw44fsokVAkAjJeAVX6EkBcbpump",
+          "buy_sol": 13.011192,
+          "sell_sol": 8.688501,
+          "pnl_sol": -4.322691,
+          "pnl_pct": -33.2,
+          "is_closed": true,
+          "hold_sec": 86
+        },
+        {
+          "token": "8yrJ6tTZ",
+          "mint": "8yrJ6tTZ6uV65jgr4Q2tpMQPK7g7L74SAEeiUP6xpump",
+          "buy_sol": 15.008153,
+          "sell_sol": 9.421695,
+          "pnl_sol": -5.586458,
+          "pnl_pct": -37.2,
+          "is_closed": true,
+          "hold_sec": 1054
+        }
+      ]
+    }
+  ]
+}
