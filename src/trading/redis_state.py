@@ -313,6 +313,7 @@ async def init_redis_state() -> bool:
 
 
 # === SOLD MINTS TRACKING ===
+import time
 SOLD_MINTS_KEY = "sold_mints"
 
 class RedisState:
@@ -324,7 +325,7 @@ async def add_sold_mint(mint: str) -> bool:
     try:
         state = await get_redis_state()
         if state and state._connected:
-            await state._redis.sadd(SOLD_MINTS_KEY, mint)
+            await state._redis.zadd(SOLD_MINTS_KEY, {mint: time.time()})
             return True
     except:
         pass
@@ -335,7 +336,7 @@ async def is_sold_mint(mint: str) -> bool:
     try:
         state = await get_redis_state()
         if state and state._connected:
-            return await state._redis.sismember(SOLD_MINTS_KEY, mint)
+            return (await state._redis.zscore(SOLD_MINTS_KEY, mint)) is not None
     except:
         pass
     return False
@@ -345,7 +346,7 @@ async def get_all_sold_mints() -> set:
     try:
         state = await get_redis_state()
         if state and state._connected:
-            return await state._redis.smembers(SOLD_MINTS_KEY)
+            return set(await state._redis.zrange(SOLD_MINTS_KEY, 0, -1))
     except:
         pass
     return set()
@@ -405,7 +406,7 @@ async def forget_position_forever(mint: str, reason: str = "sold") -> bool:
             return True
 
         # 2. Add to sold_mints (permanent) — only for real sells
-        await state._redis.sadd(SOLD_MINTS_KEY, mint)
+        await state._redis.zadd(SOLD_MINTS_KEY, {mint: time.time()})
 
         logger.warning(f"[FORGET] Position forgotten forever: {mint[:16]}... (reason: {reason})")
         return True

@@ -3995,7 +3995,7 @@ class UniversalTrader:
                             try:
                                 import redis as _redis_sync
                                 _r = _redis_sync.Redis()
-                                _r.srem("sold_mints", mint_str_check)
+                                _r.zrem("sold_mints", mint_str_check)
                                 _r.close()
                             except Exception:
                                 pass
@@ -5717,7 +5717,7 @@ class UniversalTrader:
         try:
             import redis.asyncio as redis
             r = redis.Redis(host='localhost', port=6379, db=0)
-            removed = await r.srem("sold_mints", mint_str)
+            removed = await r.zrem("sold_mints", mint_str)
             await r.aclose()
             if removed:
                 logger.info(f"[VERIFY] {symbol}: Removed from sold_mints")
@@ -5809,7 +5809,7 @@ class UniversalTrader:
                     try:
                         import redis.asyncio as _r114
                         _rc = _r114.Redis(host='localhost', port=6379, db=0)
-                        await _rc.srem("sold_mints", mint_str)
+                        await _rc.zrem("sold_mints", mint_str)
                         await _rc.aclose()
                         logger.warning(f"[RESTORE] {position.symbol}: ACTIVE in Redis but in sold_mints — REMOVED from sold_mints (FIX 11-4)")
                     except Exception as _e114:

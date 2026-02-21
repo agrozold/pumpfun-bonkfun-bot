@@ -43,6 +43,7 @@ from trading.universal_trader import UniversalTrader
 from trading.wallet_sync import sync_wallet
 from trading.periodic_sync import start_periodic_sync
 from trading.periodic_dust import start_periodic_dust
+from trading.periodic_sold_cleanup import start_periodic_sold_cleanup
 from trading.deployer_blacklist import start_deployer_blacklist, is_mint_blacklisted
 from trading.trader_registry import register_trader
 
@@ -367,6 +368,9 @@ async def start_bot(config_path: str):
         start_periodic_dust()
         logger.warning("[STARTUP] Periodic dust scheduled (60 min, first run in 5 min)")
         
+        # === PERIODIC SOLD_MINTS CLEANUP ===
+        start_periodic_sold_cleanup()
+        logger.warning("[STARTUP] Periodic sold_mints cleanup scheduled (24h)")
         # === DEPLOYER BLACKLIST ===
         start_deployer_blacklist()
         logger.warning("[STARTUP] Deployer blacklist scheduled (refresh every 5 min)")
