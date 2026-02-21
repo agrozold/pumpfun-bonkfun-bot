@@ -44,6 +44,7 @@ from trading.wallet_sync import sync_wallet
 from trading.periodic_sync import start_periodic_sync
 from trading.periodic_dust import start_periodic_dust
 from trading.periodic_sold_cleanup import start_periodic_sold_cleanup
+from trading.periodic_purchase_cleanup import start_periodic_purchase_cleanup
 from trading.deployer_blacklist import start_deployer_blacklist, is_mint_blacklisted
 from trading.trader_registry import register_trader
 
@@ -370,6 +371,8 @@ async def start_bot(config_path: str):
         
         # === PERIODIC SOLD_MINTS CLEANUP ===
         start_periodic_sold_cleanup()
+        start_periodic_purchase_cleanup()
+        logger.warning("[STARTUP] Periodic purchase_history cleanup scheduled (24h)")
         logger.warning("[STARTUP] Periodic sold_mints cleanup scheduled (24h)")
         # === DEPLOYER BLACKLIST ===
         start_deployer_blacklist()

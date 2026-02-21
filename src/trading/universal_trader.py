@@ -4803,12 +4803,13 @@ class UniversalTrader:
                                 position.tsl_trail_pct = self.tsl_trail_pct
                                 position.tsl_sell_pct = self.tsl_sell_pct
                                 position.stop_loss_price = position.entry_price * 0.80  # FIX S20: moonbag SL -20% from entry (matches config)
-                                # Force-activate TSL for remaining position if not already active
-                                if not position.tsl_active and self.tsl_enabled:
-                                    position.tsl_active = True
-                                    position.high_water_mark = current_price
-                                    position.tsl_trigger_price = current_price * (1 - position.tsl_trail_pct)
-                                    logger.warning(f"[TSL] {token_info.symbol}: FORCE-ACTIVATED after partial TP. HWM={current_price:.10f}, trigger={position.tsl_trigger_price:.10f}")
+                                # S22: Do NOT force-activate TSL — let monitor loop activate at tsl_activation_pct
+                                # Moonbag starts with tsl_active=False, protected by SL=entry*0.80
+                                position.tsl_active = False
+                                position.tsl_enabled = True
+                                position.high_water_mark = 0
+                                position.tsl_trigger_price = 0
+                                logger.warning(f"[TSL] {token_info.symbol}: moonbag TSL DEFERRED — will activate at +{self.tsl_activation_pct*100:.0f}% from entry")
                                 self._save_position(position)
                                 # Unsubscribe gRPC curve+ATA — moonbag uses batch price
                                 try:

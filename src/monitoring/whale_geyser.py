@@ -1713,12 +1713,12 @@ class WhaleGeyserReceiver:
                     position.tsl_trail_pct = getattr(trader, 'tsl_trail_pct', 0.30)
                     position.tsl_sell_pct = getattr(trader, 'tsl_sell_pct', 0.50)
                     position.stop_loss_price = position.entry_price * 0.80  # FIX S20: moonbag SL -20% from entry (matches config)
-                    # Force-activate TSL with wide trail for remaining tokens
-                    if not position.tsl_active and trader.tsl_enabled:
-                        position.tsl_active = True
+                    # S22: Do NOT force-activate TSL — let monitor loop activate at tsl_activation_pct
+                    # Moonbag starts with tsl_active=False, protected by SL=entry*0.80
+                    position.tsl_active = False
                     position.tsl_enabled = True
-                    position.high_water_mark = max(price, position.high_water_mark or 0)
-                    position.tsl_trigger_price = position.high_water_mark * (1 - position.tsl_trail_pct)
+                    position.high_water_mark = 0
+                    position.tsl_trigger_price = 0
                     # Re-register reactive SL (no TP) as safety net
                     self._sl_tp_triggers[mint] = {
                         'triggered': False,
