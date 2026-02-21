@@ -96,21 +96,14 @@ def setup_file_logging(
     
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
 
-    # Create SINGLE file handler
-    if use_rotation:
-        file_handler = logging.handlers.RotatingFileHandler(
-            str(log_path),
-            maxBytes=MAX_LOG_SIZE_MB * 1024 * 1024,
-            backupCount=BACKUP_COUNT,
-            encoding='utf-8'
-        )
-    else:
-        file_handler = logging.FileHandler(str(log_path), encoding='utf-8')
-
-    file_handler.setLevel(level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(_trace_filter)
-    root_logger.addHandler(file_handler)
+    # FIX S19-4v2: Write to STDOUT only — systemd captures to log file via StandardOutput=append
+    # Single write path: Python -> stdout -> systemd -> file. Zero duplicates.
+    # Rotation handled by logrotate (/etc/logrotate.d/whale-bot)
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(level)
+    stdout_handler.setFormatter(formatter)
+    stdout_handler.addFilter(_trace_filter)
+    root_logger.addHandler(stdout_handler)
     
     _file_handler_added = True
 

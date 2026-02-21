@@ -402,10 +402,25 @@ async def on_buy_failure(tx: "PendingTransaction"):
                 logger.warning(f"[TX_CALLBACK] Redis cleanup failed: {re}")
 
             # S13: Cleanup monitors to prevent error spam from dead positions
+            # FIX S19-1: Check if mint is an active moonbag before unwatching
             try:
-                from utils.batch_price_service import unwatch_token
-                unwatch_token(mint)
-                logger.info(f"[TX_CALLBACK] Unwatched batch price for {symbol}")
+                _is_mb_cb = False
+                try:
+                    from trading.trader_registry import get_trader
+                    _tr = get_trader()
+                    if _tr:
+                        _is_mb_cb = any(
+                            (getattr(p, 'is_moonbag', False) or getattr(p, 'tp_partial_done', False))
+                            for p in getattr(_tr, 'active_positions', []) if str(p.mint) == mint
+                        )
+                except Exception:
+                    pass
+                if not _is_mb_cb:
+                    from utils.batch_price_service import unwatch_token
+                    unwatch_token(mint)
+                    logger.info(f"[TX_CALLBACK] Unwatched batch price for {symbol}")
+                else:
+                    logger.warning(f"[TX_CALLBACK] SKIP unwatch for {symbol} — is MOONBAG (FIX S19-1)")
             except Exception as bpe:
                 logger.debug(f"[TX_CALLBACK] Batch unwatch failed: {bpe}")
 

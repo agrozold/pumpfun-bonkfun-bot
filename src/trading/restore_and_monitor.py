@@ -63,6 +63,14 @@ async def restore_and_monitor_positions(
 
         logger.warning(f"[RESTORE MONITOR] Starting monitor for {position.symbol} (SL: {position.stop_loss_price:.2e})")
 
+        # FIX S19-1: Ensure all restored positions are in batch price watch
+        try:
+            from utils.batch_price_service import watch_token
+            watch_token(str(position.mint))
+            logger.info(f"[RESTORE MONITOR] {position.symbol}: batch price WATCH ensured")
+        except Exception as _we:
+            logger.warning(f"[RESTORE MONITOR] {position.symbol}: watch_token failed: {_we}")
+
         # Start monitoring task
         task = asyncio.create_task(
             universal_trader._monitor_position_until_exit(token_info, position)

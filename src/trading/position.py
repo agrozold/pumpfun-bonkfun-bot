@@ -288,6 +288,13 @@ class Position:
                     return True, ExitReason.STOP_LOSS
 
         # TSL check BEFORE moonbag SL — TSL partial sell takes priority
+        if self.tsl_active:
+            # FIX S19-3: Throttle TSL DEBUG log — max once per 5 seconds per position
+            _now_tsl = datetime.utcnow()
+            _last_tsl_log = getattr(self, '_last_tsl_debug_log', None)
+            if not _last_tsl_log or (_now_tsl - _last_tsl_log).total_seconds() >= 5.0:
+                logger.warning(f"[TSL DEBUG] {self.symbol}: tsl_active={self.tsl_active} price={current_price:.10f} trigger={self.tsl_trigger_price:.10f} triggered={self.tsl_triggered} selling={getattr(self, 'is_selling', False)}")
+                self._last_tsl_debug_log = _now_tsl
         if self.tsl_active and (current_price <= self.tsl_trigger_price or self.tsl_triggered):
             # Grace period after restore: update HWM but don't trigger TSL for 15s
             # FIX 7-1: Start grace period at first monitor tick, not at RESTORE

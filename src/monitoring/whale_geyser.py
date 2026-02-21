@@ -565,6 +565,19 @@ class WhaleGeyserReceiver:
                 stub = await self._create_channel_for(inst)
                 request = self._create_subscribe_request()
 
+                # FIX S19-6b: Re-enable BlockhashCache gRPC after channel reconnect
+                if inst.name == 'chainstack':
+                    try:
+                        from core.blockhash_cache import BlockhashCache
+                        _bh = BlockhashCache._instance
+                        if _bh:
+                            _bh.enable_grpc(stub)
+                            if hasattr(_bh, '_metrics'):
+                                _bh._metrics['grpc_consecutive_fails'] = 0
+                            logger.warning(f'[GEYSER-{inst.name.upper()}] BlockhashCache re-enabled on reconnect')
+                    except Exception as _bhe:
+                        logger.debug(f'[GEYSER] BlockhashCache re-enable failed: {_bhe}')
+
                 # Create fresh ping queue and counter for this connection
                 inst.ping_queue = asyncio.Queue(maxsize=100)
                 inst.ping_counter = 0
@@ -1345,7 +1358,7 @@ class WhaleGeyserReceiver:
             return False
 
     def get_curve_price(self, mint: str, max_age: float = 120.0) -> float | None:
-        """Get current bonding curve-derived price. Returns None if no data or stale."""
+        """Get current bonding curve-derived price. Returns None if no data, stale, or unsubscribed."""
         sub = self._curve_subscriptions.get(mint)
         if not sub or sub.price <= 0:
             return None
@@ -1849,7 +1862,7 @@ class WhaleGeyserReceiver:
             _logging.getLogger(__name__).error(f"[ENTRY_SYNC] Failed for {mint[:8]}: {e}")
 
     def get_vault_price(self, mint: str, max_age: float = 120.0) -> float | None:
-        """Get current vault-derived price. Returns None if no data or stale."""
+        """Get current vault-derived price. Returns None if no data, stale, or unsubscribed."""
         price_data = self._vault_prices.get(mint)
         if not price_data:
             return None

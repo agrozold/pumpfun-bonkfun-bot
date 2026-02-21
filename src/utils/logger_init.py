@@ -5,7 +5,7 @@ Import this at application startup
 import logging
 import sys
 from pathlib import Path
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
 from .logger_trace_patch import patch_all_loggers, TRACE_LOG_FORMAT
 
@@ -38,24 +38,30 @@ def setup_logging(
     console_handler.setFormatter(logging.Formatter(TRACE_LOG_FORMAT))
     root_logger.addHandler(console_handler)
 
-    # File handler with rotation
-    file_handler = RotatingFileHandler(
+    # File handler with rotation — FIX S19-4: daily rotation, append on restart
+    file_handler = TimedRotatingFileHandler(
         log_path / 'bot.log',
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding='utf-8'
+        when='midnight',
+        interval=1,
+        backupCount=14,
+        encoding='utf-8',
+        utc=True,
     )
+    file_handler.suffix = '%Y-%m-%d' 
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(TRACE_LOG_FORMAT))
     root_logger.addHandler(file_handler)
 
-    # Error file handler
-    error_handler = RotatingFileHandler(
+    # Error file handler — FIX S19-4: daily rotation
+    error_handler = TimedRotatingFileHandler(
         log_path / 'error.log',
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding='utf-8'
+        when='midnight',
+        interval=1,
+        backupCount=14,
+        encoding='utf-8',
+        utc=True,
     )
+    error_handler.suffix = '%Y-%m-%d' 
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(logging.Formatter(TRACE_LOG_FORMAT))
     root_logger.addHandler(error_handler)

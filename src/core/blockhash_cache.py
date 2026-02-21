@@ -182,7 +182,15 @@ class BlockhashCache:
                 self._metrics["update_errors"] += 1
                 # If gRPC fails, fall back to HTTP
                 if self._grpc_mode:
-                    logger.warning(f"[BlockhashCache] gRPC failed, trying HTTP: {e}")
+                    # FIX S19-6: Auto-disable gRPC after 3 consecutive failures (channel likely dead)
+                    self._metrics['grpc_consecutive_fails'] = self._metrics.get('grpc_consecutive_fails', 0) + 1
+                    _gfails = self._metrics['grpc_consecutive_fails']
+                    if _gfails <= 3:
+                        logger.warning(f"[BlockhashCache] gRPC failed ({_gfails}/3), trying HTTP: {e}")
+                    elif _gfails == 4:
+                        logger.warning(f"[BlockhashCache] gRPC failed 4x — switching to HTTP-only (channel dead)")
+                        self.disable_grpc()
+                    # else: silently use HTTP (already switched)
                     try:
                         await self._fetch_http()
                         interval = self.HTTP_POLL_INTERVAL

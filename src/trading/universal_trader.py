@@ -4726,7 +4726,10 @@ class UniversalTrader:
                                 position.tsl_enabled = False
                                 position.tsl_active = False
                                 position.tsl_trail_pct = 0
-                                position.tsl_sell_pct = 0
+                                # FIX S19-2: Do NOT zero tsl_sell_pct — it's used by _is_partial check
+                                # tsl_sell_pct stays at yaml value (e.g. 0.5) for correct sell_quantity calc
+                                # TSL won't re-trigger because tsl_enabled=False and tsl_active=False
+                                # position.tsl_sell_pct = 0  # REMOVED — caused sell_quantity = qty * 0 = 0
                                 position.tsl_trigger_price = 0
                                 position.high_water_mark = 0
                                 position.stop_loss_price = position.original_entry_price * (1 - self.stop_loss_percentage) if position.original_entry_price > 0 else _orig_entry * (1 - self.stop_loss_percentage)
@@ -4766,6 +4769,12 @@ class UniversalTrader:
                                         logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Curve+ATA UNSUBSCRIBED — moonbag on batch price")
                                 except Exception as _ue:
                                     logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Unsubscribe failed: {_ue}")
+                                # FIX S19-1: Ensure moonbag is watched in batch price after gRPC unsubscribe
+                                try:
+                                    watch_token(_mint_str)
+                                    logger.warning(f"[MOONBAG TSL] {token_info.symbol}: batch price WATCH ensured (FIX S19-1)")
+                                except Exception:
+                                    pass
                                 # FIX S18-11: was break — killed monitor! moonbag had NO monitoring
                                 # Must continue loop so SL/TSL keeps checking price
                                 continue
@@ -4809,6 +4818,13 @@ class UniversalTrader:
                                         logger.warning(f"[TP MOONBAG] {token_info.symbol}: Curve+ATA UNSUBSCRIBED — moonbag on batch price")
                                 except Exception as _ue:
                                     logger.warning(f"[TP MOONBAG] {token_info.symbol}: Unsubscribe failed: {_ue}")
+                                # FIX S19-1: Ensure moonbag is watched in batch price after gRPC unsubscribe
+                                try:
+                                    _mint_str_tp = str(token_info.mint)
+                                    watch_token(_mint_str_tp)
+                                    logger.warning(f"[TP MOONBAG] {token_info.symbol}: batch price WATCH ensured (FIX S19-1)")
+                                except Exception:
+                                    pass
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
                                 continue
                             else:
@@ -5710,10 +5726,17 @@ class UniversalTrader:
         for p in self.active_positions:
             if str(p.mint) == mint:
                 p.is_active = False
+        # FIX S19-1: Check moonbag BEFORE removing from list (after removal we lose the reference)
+        _is_moonbag_rm = any(
+            (getattr(p, 'is_moonbag', False) or getattr(p, 'tp_partial_done', False))
+            for p in self.active_positions if str(p.mint) == mint
+        )
         self.active_positions = [p for p in self.active_positions if str(p.mint) != mint]
         save_positions(self.active_positions)
-        # Remove from batch price monitoring
-        unwatch_token(mint)
+        if not _is_moonbag_rm:
+            unwatch_token(mint)
+        else:
+            logger.warning(f"[UNWATCH SKIP] {mint[:16]}... is MOONBAG — keeping batch price watch (FIX S19-1)")
         # Phase 4b/4c: Unsubscribe vault/curve tracking via whale_geyser
         if self.whale_tracker and hasattr(self.whale_tracker, 'unsubscribe_vault_accounts'):
             asyncio.create_task(self.whale_tracker.unsubscribe_vault_accounts(mint))
@@ -6149,6 +6172,12 @@ class UniversalTrader:
             # Phase 4b/4c: Subscribe restored position to price tracking via whale_geyser
             # Moonbags use batch price — no gRPC subscription needed
             if position.is_moonbag or getattr(position, 'tp_partial_done', False):
+                # FIX S19-1: Moonbags MUST be watched in batch price on restore
+                try:
+                    watch_token(mint_str)
+                    logger.warning(f"[RESTORE] {position.symbol}: MOONBAG — batch price WATCH ensured (FIX S19-1)")
+                except Exception as _we:
+                    logger.warning(f"[RESTORE] {position.symbol}: watch_token failed: {_we}")
                 logger.info(f"[RESTORE] {position.symbol}: MOONBAG — skipping gRPC subscribe, using batch price")
             elif self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_vault_accounts') and position.pool_base_vault and position.pool_quote_vault:
                 await self.whale_tracker.subscribe_vault_accounts(
