@@ -60,6 +60,7 @@ class VaultSubscription:
     quote_reserve: float = 0.0
     price: float = 0.0
     last_update: float = 0.0
+    last_slot: int = 0
 
 
 @dataclass
@@ -85,6 +86,7 @@ class CurveSubscription:
     complete: bool = False
     price: float = 0.0
     last_update: float = 0.0
+    last_slot: int = 0
 
 
 
@@ -641,9 +643,9 @@ class WhaleGeyserReceiver:
                                 pk_bytes = bytes(acct.pubkey)
                                 pk_str = base58.b58encode(pk_bytes).decode()
                                 if pk_str in self._vault_address_map:
-                                    self._handle_vault_account_update(update.account)
+                                    self._handle_vault_account_update(update.account, source=inst.name, slot=update.account.slot)
                                 elif pk_str in self._curve_address_map:
-                                    self._handle_curve_account_update(update.account)
+                                    self._handle_curve_account_update(update.account, source=inst.name, slot=update.account.slot)
                                 elif pk_str in self._ata_address_map:
                                     self._handle_ata_account_update(update.account)
                             continue
@@ -839,8 +841,18 @@ class WhaleGeyserReceiver:
                                             _pos.original_entry_price = _real_entry
                                         _pos.entry_price_source = 'grpc_execution'
                                         _pos.entry_price_provisional = False
-                                        # FIX S18-5: quantity NOT overwritten from CPI
-                                        # _pos.quantity = parsed.token_amount  # DISABLED
+                                        # FIX S23-4: Correct quantity if CPI shows FEWER tokens than predicted
+                                        # S18-5 disabled qty fix for Jupiter (CPI != final). But for pumpfun_direct,
+                                        # predicted qty from stale reserves > real qty. Without fix, TP sell_quantity
+                                        # exceeds wallet balance and sells 100% instead of 90%.
+                                        if parsed.token_amount > 0 and parsed.token_amount < _pos.quantity * 0.95:
+                                            _old_qty = _pos.quantity
+                                            _pos.quantity = parsed.token_amount
+                                            logger.warning(
+                                                f"[GEYSER-SELF] QTY FIXED: {_pos.symbol} "
+                                                f"{_old_qty:.2f} -> {parsed.token_amount:.2f} "
+                                                f"({(parsed.token_amount/_old_qty*100):.1f}% of predicted)"
+                                            )
                                         if hasattr(_trader, 'take_profit_percentage') and _trader.take_profit_percentage and _pos.take_profit_price:
                                             _pos.take_profit_price = _real_entry * (1 + _trader.take_profit_percentage)
                                         if hasattr(_trader, 'stop_loss_percentage') and _trader.stop_loss_percentage and _pos.stop_loss_price:
@@ -889,6 +901,11 @@ class WhaleGeyserReceiver:
                                         except Exception:
                                             pass
                                         logger.info(f"[GEYSER-SELF] {_pos.symbol}: entry ok ({_corr:+.1f}%), provisional=False, REACTIVE registered")
+                                    # FIX S25-1: Set tokens_arrived + buy_confirmed in GEYSER-SELF (not just blacklist)
+                                    # This unblocks REACTIVE SL/TP ~5s earlier than tx_callbacks
+                                    _pos.tokens_arrived = True
+                                    _pos.buy_confirmed = True
+                                    logger.info(f"[GEYSER-SELF] {_pos.symbol}: tokens_arrived=True, buy_confirmed=True (FIX S25-1)")
                                     # FIX S14-1: Check blacklist_sell_pending
                                     if getattr(_pos, 'blacklist_sell_pending', False):
                                         logger.warning(
@@ -1366,7 +1383,7 @@ class WhaleGeyserReceiver:
             return None
         return sub.price
 
-    def _handle_curve_account_update(self, account_update) -> None:
+    def _handle_curve_account_update(self, account_update, source: str = "unknown", slot: int = 0) -> None:
         """Process bonding curve account update from gRPC stream.
         Decodes virtualTokenReserves and virtualSolReserves, calculates price.
         Uses EXACT same formula as pumpfun/curve_manager.py:
@@ -1388,6 +1405,14 @@ class WhaleGeyserReceiver:
             sub = self._curve_subscriptions.get(mint)
             if not sub:
                 return
+
+            # FIX S25-2: Slot-based filtering — reject stale updates from secondary gRPC
+            # Both gRPC instances subscribe to same accounts. Without filtering,
+            # different slots cause price to jump ±100%. Only accept newer slots.
+            if slot > 0 and sub.last_slot > 0 and slot < sub.last_slot:
+                return
+            if slot > 0:
+                sub.last_slot = slot
 
             data = bytes(acct.data)
             # Minimum size: 8 (discriminator) + 5*8 (reserves) + 1 (complete) = 49 bytes
@@ -1435,6 +1460,17 @@ class WhaleGeyserReceiver:
 
             # === REACTIVE SL/TP — check at every gRPC tick ===
             _trigger = self._sl_tp_triggers.get(mint)
+            # FIX S23-2: Skip reactive SL/TP if position no longer exists
+            if _trigger:
+                try:
+                    from trading.trader_registry import get_trader
+                    _tr = get_trader()
+                    if _tr and not any(str(p.mint) == mint for p in _tr.active_positions):
+                        logger.warning(f"[REACTIVE SKIP] {mint[:8]}: position gone — cleaning zombie trigger")
+                        self._sl_tp_triggers.pop(mint, None)
+                        _trigger = None
+                except Exception:
+                    pass
             if _trigger and not _trigger["triggered"]:
                 _sl = _trigger.get("sl_price", 0)
                 _tp = _trigger.get("tp_price", 0)
@@ -1860,7 +1896,7 @@ class WhaleGeyserReceiver:
             return None
         return price
 
-    def _handle_vault_account_update(self, account_update) -> None:
+    def _handle_vault_account_update(self, account_update, source: str = "unknown", slot: int = 0) -> None:
         """Process vault account update from gRPC stream.
         Decodes SPL Token Account balance and recalculates price."""
         try:
@@ -1878,6 +1914,12 @@ class WhaleGeyserReceiver:
             sub = self._vault_subscriptions.get(mint)
             if not sub:
                 return
+
+            # FIX S25-2: Slot-based filtering — reject stale updates from secondary gRPC
+            if slot > 0 and sub.last_slot > 0 and slot < sub.last_slot:
+                return
+            if slot > 0:
+                sub.last_slot = slot
 
             data = bytes(acct.data)
             if len(data) < 72:
