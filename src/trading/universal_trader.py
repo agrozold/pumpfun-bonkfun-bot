@@ -4767,7 +4767,9 @@ class UniversalTrader:
                                             asyncio.create_task(self.whale_tracker.unsubscribe_bonding_curve(_mint_str))
                                         if hasattr(self.whale_tracker, 'unsubscribe_ata'):
                                             asyncio.create_task(self.whale_tracker.unsubscribe_ata(_mint_str))
-                                        logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Curve+ATA UNSUBSCRIBED — moonbag on batch price")
+                                        if hasattr(self.whale_tracker, 'unsubscribe_vault_accounts'):
+                                            asyncio.create_task(self.whale_tracker.unsubscribe_vault_accounts(_mint_str))
+                                        logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Curve+ATA+Vault UNSUBSCRIBED — moonbag on batch price")
                                 except Exception as _ue:
                                     logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Unsubscribe failed: {_ue}")
                                 # FIX S19-1: Ensure moonbag is watched in batch price after gRPC unsubscribe
@@ -4816,7 +4818,9 @@ class UniversalTrader:
                                             asyncio.create_task(self.whale_tracker.unsubscribe_bonding_curve(_mint_str))
                                         if hasattr(self.whale_tracker, 'unsubscribe_ata'):
                                             asyncio.create_task(self.whale_tracker.unsubscribe_ata(_mint_str))
-                                        logger.warning(f"[TP MOONBAG] {token_info.symbol}: Curve+ATA UNSUBSCRIBED — moonbag on batch price")
+                                        if hasattr(self.whale_tracker, 'unsubscribe_vault_accounts'):
+                                            asyncio.create_task(self.whale_tracker.unsubscribe_vault_accounts(_mint_str))
+                                        logger.warning(f"[TP MOONBAG] {token_info.symbol}: Curve+ATA+Vault UNSUBSCRIBED — moonbag on batch price")
                                 except Exception as _ue:
                                     logger.warning(f"[TP MOONBAG] {token_info.symbol}: Unsubscribe failed: {_ue}")
                                 # FIX S19-1: Ensure moonbag is watched in batch price after gRPC unsubscribe

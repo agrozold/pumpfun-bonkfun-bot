@@ -1748,7 +1748,8 @@ class WhaleGeyserReceiver:
                     try:
                         await self.unsubscribe_bonding_curve(mint)
                         await self.unsubscribe_ata(mint)
-                        logger.warning(f"[REACTIVE TP] {symbol}: Curve+ATA UNSUBSCRIBED — moonbag now on batch price monitor")
+                        await self.unsubscribe_vault_accounts(mint)
+                        logger.warning(f"[REACTIVE TP] {symbol}: Curve+ATA+Vault UNSUBSCRIBED — moonbag now on batch price monitor")
                     except Exception as _unsub_err:
                         logger.warning(f"[REACTIVE TP] Curve unsubscribe failed: {_unsub_err}")
             # FIX S17-2: Reset is_selling after BOTH success and failure
