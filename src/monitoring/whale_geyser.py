@@ -1724,7 +1724,7 @@ class WhaleGeyserReceiver:
                     _sl_from_r = price * (1 - _sl_pct_r)
                     position.tsl_trail_pct = getattr(trader, 'tsl_trail_pct', 0.30)
                     position.tsl_sell_pct = getattr(trader, 'tsl_sell_pct', 0.50)
-                    position.stop_loss_price = position.entry_price * 0.70  # FIX S18-11: moonbag SL -30% from entry (after partial TP)
+                    position.stop_loss_price = position.entry_price * 0.80  # FIX S20: moonbag SL -20% from entry (matches config)
                     # Force-activate TSL with wide trail for remaining tokens
                     if not position.tsl_active and trader.tsl_enabled:
                         position.tsl_active = True

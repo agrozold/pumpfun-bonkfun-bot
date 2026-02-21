@@ -4800,7 +4800,7 @@ class UniversalTrader:
                                 _sl_from_tp = current_price * (1 - _sl_pct_tp)
                                 position.tsl_trail_pct = self.tsl_trail_pct
                                 position.tsl_sell_pct = self.tsl_sell_pct
-                                position.stop_loss_price = position.entry_price * 0.70  # FIX S18-11: moonbag SL -30% from entry
+                                position.stop_loss_price = position.entry_price * 0.80  # FIX S20: moonbag SL -20% from entry (matches config)
                                 # Force-activate TSL for remaining position if not already active
                                 if not position.tsl_active and self.tsl_enabled:
                                     position.tsl_active = True
@@ -5857,9 +5857,12 @@ class UniversalTrader:
                 elif position.tsl_active:
                     # Ensure moonbag trail is wide (50%) not default
                     pass  # trail already set from yaml
-                # Keep a safety SL at -80% from entry as absolute floor
+                # FIX S20: Safety SL fallback — dust=entry, moonbag=entry*0.80 (-20%)
                 if not position.stop_loss_price or position.stop_loss_price <= 0:
-                    position.stop_loss_price = position.entry_price  # FIX S18-10: moonbag SL = entry (break-even)
+                    if getattr(position, "is_dust", False):
+                        position.stop_loss_price = position.entry_price  # FIX S20: dust SL = entry (break-even)
+                    else:
+                        position.stop_loss_price = position.entry_price * 0.80  # FIX S20: moonbag SL -20% from entry
                 logger.info(f"[RESTORE] {position.symbol}: MOONBAG — TSL active={position.tsl_active}, SL={position.stop_loss_price:.10f}")
             else:
                 if position.take_profit_price is None and self.take_profit_percentage:
@@ -5915,7 +5918,7 @@ class UniversalTrader:
                     position.is_moonbag = True
                     position.tsl_sell_pct = 1.0
                     if not position.stop_loss_price or position.stop_loss_price > position.entry_price * 0.25:
-                        position.stop_loss_price = position.entry_price  # FIX S18-10: moonbag SL = entry (break-even)
+                        position.stop_loss_price = position.entry_price * 0.80  # FIX S20: moonbag SL -20% from entry
                     logger.warning(
                         f"[RESTORE] {position.symbol}: tp_partial_done=True, FORCED is_moonbag=True, trail=50%, SL={position.stop_loss_price:.10f}"
                     )
