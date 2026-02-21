@@ -1403,6 +1403,16 @@ class UniversalTrader:
                 position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
                 position.buy_tx_sig = tx_sig  # FIX 10-3: save for on-chain entry verification
                 self.active_positions.append(position)
+                # FIX S23-6: Remove from sold_mints on new buy (prevent ZOMBIE KILL on re-bought tokens)
+                try:
+                    import redis as _redis_sync
+                    _r = _redis_sync.Redis()
+                    _removed = _r.zrem("sold_mints", str(position.mint))
+                    _r.close()
+                    if _removed:
+                        logger.warning(f"[BUY] Cleared stale sold_mint for {whale_buy.token_symbol}")
+                except Exception:
+                    pass
                 _save_pos(self.active_positions)
                 _watch(str(position.mint))
                 logger.warning(f"[WHALE] ⚡ INSTANT Position created for {whale_buy.token_symbol}")
@@ -3833,8 +3843,13 @@ class UniversalTrader:
         # === END POST-BUY PRICE VALIDATION ===
 
         # Monitor position in parallel (don't block)
-        logger.warning(f"[MONITOR] Starting async monitor for {token_info.symbol}")
-        asyncio.create_task(self._monitor_position_wrapper(token_info, position))
+        # FIX S26-4: Guard against duplicate monitors
+        _mint_str_mon = str(token_info.mint)
+        if register_monitor(_mint_str_mon):
+            logger.warning(f"[MONITOR] Starting async monitor for {token_info.symbol}")
+            asyncio.create_task(self._monitor_position_wrapper(token_info, position))
+        else:
+            logger.warning(f"[MONITOR] {token_info.symbol}: monitor already running, SKIPPING duplicate")
 
     async def _monitor_position_wrapper(
         self, token_info: TokenInfo, position: Position
@@ -4000,10 +4015,22 @@ class UniversalTrader:
                             except Exception:
                                 pass
                         else:
-                            logger.warning(f"[ZOMBIE KILL] {token_info.symbol}: found in sold_mints — stopping monitor")
-                            position.is_active = False
-                            self._remove_position(mint_str_check)
-                            break
+                            # FIX S23-5: Dont kill fresh positions — sold_mints may be stale
+                            _pos_age = (time.time() - position.entry_time.timestamp()) if hasattr(position.entry_time, "timestamp") else 999
+                            if _pos_age < 120:
+                                logger.warning(f"[ZOMBIE SKIP] {token_info.symbol}: in sold_mints but age={_pos_age:.0f}s < 120s — removing stale sold_mint, keeping alive")
+                                try:
+                                    import redis as _redis_sync
+                                    _r = _redis_sync.Redis()
+                                    _r.zrem("sold_mints", mint_str_check)
+                                    _r.close()
+                                except Exception:
+                                    pass
+                            else:
+                                logger.warning(f"[ZOMBIE KILL] {token_info.symbol}: found in sold_mints (age={_pos_age:.0f}s) — stopping monitor")
+                                position.is_active = False
+                                self._remove_position(mint_str_check)
+                                break
                 except Exception:
                     pass  # Redis error — continue monitoring
 
@@ -4081,13 +4108,14 @@ class UniversalTrader:
                 if check_count == 1:
                     logger.info(f"[PRICE] {token_info.symbol}: {current_price:.10f} SOL (source: {price_source})")
                 
-                # DUST FILTER: Skip monitoring if position value < $0.2
-                # SOL price ~$200, so $0.2 = 0.001 SOL
+                # DUST FILTER: Skip monitoring if position value tiny AND not a moonbag/tp_partial
+                # FIX S26-5: Moonbag/tp_partial positions survived TP — they are NOT dust.
+                # Dust = remnant after TSL sell on moonbag. Only kill unknown tiny positions.
                 position_value_sol = position.quantity * current_price
-                if position_value_sol < 0.002 and check_count == 1:
+                _is_confirmed_position = getattr(position, 'is_moonbag', False) or getattr(position, 'tp_partial_done', False) or getattr(position, 'is_dust', False)
+                if position_value_sol < 0.002 and check_count == 1 and not _is_confirmed_position:
                     logger.info(f"[DUST] {token_info.symbol}: Value {position_value_sol:.6f} SOL < 0.002 SOL, skipping monitor")
                     position.is_active = False
-                    # Remove from positions
                     try:
                         from trading.position import remove_position
                         remove_position(str(token_info.mint))
@@ -4497,7 +4525,6 @@ class UniversalTrader:
                     # HWM changed - save to file (every update to prevent loss on restart)
                     save_positions(self.active_positions)
                 should_exit, exit_reason = position.should_exit(current_price)
-
                 # ============================================
                 # NO_SL MASTER BLOCK - BLOCKS ALL SELL PATHS
                 # If token is in NO_SL list, NEVER sell for ANY reason except manual
@@ -4772,6 +4799,9 @@ class UniversalTrader:
                                         logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Curve+ATA+Vault UNSUBSCRIBED — moonbag on batch price")
                                 except Exception as _ue:
                                     logger.warning(f"[MOONBAG TSL] {token_info.symbol}: Unsubscribe failed: {_ue}")
+                                # FIX S23-3: Clean reactive triggers for moonbag (no more curve ticks)
+                                if self.whale_tracker and hasattr(self.whale_tracker, 'unregister_sl_tp'):
+                                    self.whale_tracker.unregister_sl_tp(str(token_info.mint))
                                 # FIX S19-1: Ensure moonbag is watched in batch price after gRPC unsubscribe
                                 try:
                                     watch_token(_mint_str)
@@ -4824,6 +4854,9 @@ class UniversalTrader:
                                         logger.warning(f"[TP MOONBAG] {token_info.symbol}: Curve+ATA+Vault UNSUBSCRIBED — moonbag on batch price")
                                 except Exception as _ue:
                                     logger.warning(f"[TP MOONBAG] {token_info.symbol}: Unsubscribe failed: {_ue}")
+                                # FIX S23-3: Clean reactive triggers for moonbag (no more curve ticks)
+                                if self.whale_tracker and hasattr(self.whale_tracker, 'unregister_sl_tp'):
+                                    self.whale_tracker.unregister_sl_tp(str(token_info.mint))
                                 # FIX S19-1: Ensure moonbag is watched in batch price after gRPC unsubscribe
                                 try:
                                     _mint_str_tp = str(token_info.mint)
@@ -5754,6 +5787,10 @@ class UniversalTrader:
             asyncio.create_task(self.whale_tracker.unsubscribe_bonding_curve(mint))
         if self.whale_tracker and hasattr(self.whale_tracker, 'unsubscribe_ata'):
             asyncio.create_task(self.whale_tracker.unsubscribe_ata(mint))
+        # FIX S23-1: Clean up reactive SL/TP triggers to prevent zombie triggers
+        if self.whale_tracker and hasattr(self.whale_tracker, 'unregister_sl_tp'):
+            self.whale_tracker.unregister_sl_tp(mint)
+            logger.info(f"[REMOVE] Cleaned _sl_tp_triggers for {mint[:16]}")
         # FORGET FOREVER - add to sold_mints so never restored
         asyncio.create_task(self._forget_position_async(mint))
     

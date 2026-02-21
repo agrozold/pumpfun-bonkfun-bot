@@ -460,8 +460,64 @@ class WhaleGeyserReceiver:
             self._channel = inst.channel
         return geyser_pb2_grpc.GeyserStub(inst.channel)
 
+    def _cleanup_dead_subscriptions(self):
+        """FIX S26-3: Remove curve/vault/ATA for sold, moonbag, dust positions.
+        Moonbag/dust use batch price (Jupiter HTTP) — they must NOT occupy gRPC slots.
+        Called before every _create_subscribe_request to keep Chainstack stream clean."""
+        try:
+            from trading.trader_registry import get_trader
+            trader = get_trader()
+            if not trader:
+                return
+
+            # Mints that NEED gRPC = active AND not moonbag AND not dust
+            needs_grpc = set()
+            for p in trader.active_positions:
+                if not p.is_active:
+                    continue
+                if getattr(p, 'is_moonbag', False) or getattr(p, 'tp_partial_done', False) or getattr(p, 'is_dust', False):
+                    continue
+                needs_grpc.add(str(p.mint))
+
+            # Clean curves
+            dead_curves = [m for m in list(self._curve_subscriptions) if m not in needs_grpc]
+            for mint in dead_curves:
+                sub = self._curve_subscriptions.pop(mint, None)
+                if sub:
+                    self._curve_address_map.pop(sub.curve_address, None)
+                    self._vault_prices.pop(mint, None)
+                    logger.warning(f'[GEYSER] CLEANUP curve: {sub.symbol} ({mint[:12]}...)')
+
+            # Clean vaults
+            dead_vaults = [m for m in list(self._vault_subscriptions) if m not in needs_grpc]
+            for mint in dead_vaults:
+                sub = self._vault_subscriptions.pop(mint, None)
+                if sub:
+                    self._vault_address_map.pop(sub.base_vault, None)
+                    self._vault_address_map.pop(sub.quote_vault, None)
+                    self._vault_prices.pop(mint, None)
+                    logger.warning(f'[GEYSER] CLEANUP vault: {sub.symbol} ({mint[:12]}...)')
+
+            # Clean ATAs
+            dead_ata_addrs = [addr for addr, m in list(self._ata_address_map.items()) if m not in needs_grpc]
+            for addr in dead_ata_addrs:
+                mint = self._ata_address_map.pop(addr, None)
+                if mint:
+                    logger.warning(f'[GEYSER] CLEANUP ATA: {mint[:12]}...')
+
+            total = len(dead_curves) + len(dead_vaults) + len(dead_ata_addrs)
+            if total > 0:
+                logger.warning(
+                    f'[GEYSER] CLEANUP: removed {len(dead_curves)}C/{len(dead_vaults)}V/{len(dead_ata_addrs)}A. '
+                    f'Remaining: {len(self._curve_subscriptions)}C/{len(self._vault_subscriptions)}V/{len(self._ata_address_map)}A'
+                )
+        except Exception as e:
+            logger.error(f'[GEYSER] CLEANUP error: {e}')
+
     def _create_subscribe_request(self):
         """Create gRPC subscribe request for whale wallets + vault accounts."""
+        # FIX S26-3: Clean dead subscriptions before building request
+        self._cleanup_dead_subscriptions()
         request = geyser_pb2.SubscribeRequest()
 
         # Subscribe to transactions involving ANY of the whale wallets
@@ -1425,13 +1481,25 @@ class WhaleGeyserReceiver:
             virtual_sol_reserves = struct.unpack('<Q', data[16:24])[0]
             complete = bool(data[48])
 
-            # If curve completed (migrated), log and stop tracking
+            # If curve completed (migrated), auto-unsubscribe to free gRPC slot
             if complete and not sub.complete:
                 sub.complete = True
-                logger.warning(f'[GEYSER] Curve COMPLETE (migrated): {sub.symbol} — will need vault tracking')
+                logger.warning(f'[GEYSER] Curve COMPLETE (migrated): {sub.symbol} — AUTO-UNSUBSCRIBE to free gRPC slot')
+                # FIX S26-1: Remove from maps immediately — no point tracking dead curve
+                self._curve_subscriptions.pop(mint, None)
+                self._curve_address_map.pop(pubkey_str, None)
+                self._vault_prices.pop(mint, None)
+                # Push updated request without this curve
+                try:
+                    new_request = self._create_subscribe_request()
+                    self._push_to_all_queues(new_request)
+                    logger.warning(f'[GEYSER] Curve UNSUBSCRIBED on migration: {sub.symbol} — freed 1 gRPC slot')
+                except Exception as _e:
+                    logger.error(f'[GEYSER] Failed to push unsubscribe after migration: {_e}')
                 return
 
             if complete:
+                # Already cleaned up above on first detection, but safety return
                 return
 
             if virtual_token_reserves <= 0 or virtual_sol_reserves <= 0:
