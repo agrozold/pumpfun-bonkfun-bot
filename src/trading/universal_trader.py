@@ -5495,6 +5495,10 @@ class UniversalTrader:
         # Add to batch price monitoring
         watch_token(str(position.mint))
         # Phase 4b/4c: Subscribe to price tracking via whale_geyser (shared gRPC stream)
+        # S22: Guard — moonbag positions use batch price, skip gRPC subscribe
+        if getattr(position, "is_moonbag", False) or getattr(position, "tp_partial_done", False):
+            logger.info(f"[MONITOR] {position.symbol}: moonbag/tp_done — skip gRPC subscribe, using batch price")
+            return
         if self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_vault_accounts') and position.pool_base_vault and position.pool_quote_vault:
             asyncio.create_task(self.whale_tracker.subscribe_vault_accounts(
                 mint=str(position.mint),

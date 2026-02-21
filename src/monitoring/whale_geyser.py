@@ -1464,37 +1464,22 @@ class WhaleGeyserReceiver:
                     _effective_label = "NORMAL -20%"
 
                     # Thresholds MUST match position.py exactly:
-                    #   0-15s:   -45% (whale impact absorption)
-                    #   15-60s:  -35% (settling period)
-                    #   60-120s: -30% (stabilization)
-                    #   120s+:   -20% (config SL)
-                    if _p_age < 15.0:
-                        if _pnl > -35.0:
+                    #   0-60s:  -40% (whale impact absorption)
+                    #   60s+:   -20% (config SL)
+                    if _p_age < 60.0:
+                        if _pnl > -40.0:
                             _do_sl = False
-                            _effective_label = "WIDENED -35%"
-                        elif sub.price <= _ep * 0.65:
+                            _effective_label = "WIDENED -40%"
+                        elif sub.price <= _ep * 0.60:
                             _do_sl = True  # absolute floor
-                    elif _p_age < 60.0:
-                        if _pnl > -35.0:
-                            _do_sl = False
-                            _effective_label = "WIDENED -35%"
-                        elif sub.price <= _ep * 0.65:
-                            _do_sl = True
-                    elif _p_age < 120.0:
-                        if _pnl > -30.0:
-                            _do_sl = False
-                            _effective_label = "WIDENED -30%"
-                        elif sub.price <= _ep * 0.70:
-                            _do_sl = True
-
                     if _do_sl:
-                        _trigger['triggered'] = True
-                        logger.warning(
-                            f'[REACTIVE SL] {sub.symbol or mint[:8]}: {sub.price:.10f} <= SL {_sl:.10f} '
-                            f'(PnL: {_pnl:.1f}%, age: {_p_age:.0f}s, threshold: {_effective_label}) '
-                            f'— INSTANT SELL!'
-                        )
-                        asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, 'stop_loss', _pnl))
+                        if not _trigger.get("triggered"):
+                            _trigger["triggered"] = True
+                            logger.warning(
+                                f'[REACTIVE SL] {sub.symbol or mint[:8]}: {sub.price:.10f} <= SL {_sl:.10f} '
+                                f'(PnL: {_pnl:.1f}%, age: {_p_age:.0f}s, threshold: {_effective_label}) '
+                                f'— INSTANT SELL!')
+                            asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, 'stop_loss', _pnl))
                     else:
                         # S18-6: Log when SL is widened (throttled)
                         _last_dsl = _trigger.get('_last_dsl_log', 0)
@@ -1508,13 +1493,16 @@ class WhaleGeyserReceiver:
                 elif _tp and _tp > 0 and sub.price >= _tp:
                     _entry_t_tp = _trigger.get('entry_time')
                     _tp_age = (time.time() - _entry_t_tp) if _entry_t_tp else 999
-                    if _tp_age < 0.3:
-                        logger.info(f'[REACTIVE TP] {sub.symbol or mint[:8]}: price >= TP but age={_tp_age:.2f}s < 0.3s — COOLDOWN')
+                    if _tp_age < 2.0:
+                        logger.info(f'[REACTIVE TP] {sub.symbol or mint[:8]}: price >= TP but age={_tp_age:.2f}s < 2.0s — COOLDOWN')
                     else:
-                        _trigger["triggered"] = True
-                        _pnl = (sub.price - _trigger["entry_price"]) / max(_trigger["entry_price"], 1e-15) * 100
-                        logger.warning(f'[REACTIVE TP] {sub.symbol or mint[:8]}: {sub.price:.10f} >= TP {_tp:.10f} (PnL: {_pnl:.1f}%) — INSTANT SELL!')
-                        asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, "take_profit", _pnl))
+                        if _trigger.get("triggered"):
+                            pass  # S22: already triggered, skip duplicate ensure_future
+                        else:
+                            _trigger["triggered"] = True
+                            _pnl = (sub.price - _trigger["entry_price"]) / max(_trigger["entry_price"], 1e-15) * 100
+                            logger.warning(f'[REACTIVE TP] {sub.symbol or mint[:8]}: {sub.price:.10f} >= TP {_tp:.10f} (PnL: {_pnl:.1f}%) — INSTANT SELL!')
+                            asyncio.ensure_future(self._reactive_sell(mint, sub.symbol, sub.price, "take_profit", _pnl))
 
             if old_price <= 0:
                 logger.warning(

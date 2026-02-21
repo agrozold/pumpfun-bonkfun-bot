@@ -294,8 +294,20 @@ async def on_buy_success(tx: "PendingTransaction"):
             except Exception as vault_err:
                 logger.warning(f"[TX_CALLBACK] Vault resolve error for {symbol}: {vault_err}")
 
+        # S22: Guard — skip gRPC subscribe for moonbag/dust positions (they use batch price)
+        _skip_grpc = False
+        try:
+            from trading.position import load_positions as _load_pos
+            for _p in _load_pos():
+                if str(_p.mint) == mint:
+                    if getattr(_p, "is_moonbag", False) or getattr(_p, "tp_partial_done", False) or getattr(_p, "is_dust", False):
+                        _skip_grpc = True
+                        logger.info(f"[TX_CALLBACK] {symbol}: moonbag/dust — skip gRPC subscribe")
+                    break
+        except Exception:
+            pass
         # === Phase 4c: Subscribe to bonding curve if no vaults found ===
-        if not pool_base_vault and not pool_quote_vault and bonding_curve:
+        if not _skip_grpc and not pool_base_vault and not pool_quote_vault and bonding_curve:
             try:
                 from trading.trader_registry import get_trader
                 _trader = get_trader()
@@ -312,7 +324,7 @@ async def on_buy_success(tx: "PendingTransaction"):
                 logger.warning(f"[TX_CALLBACK] Curve subscribe error: {curve_err}")
 
         # === Subscribe to gRPC price stream (vault tracking) ===
-        if pool_base_vault and pool_quote_vault:
+        if not _skip_grpc and pool_base_vault and pool_quote_vault:
             try:
                 from trading.trader_registry import get_trader
                 _trader = get_trader()
