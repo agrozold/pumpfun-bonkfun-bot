@@ -172,3 +172,4 @@ def load_purchase_history_full() -> dict:
     except Exception as e:
         logger.error(f"[HISTORY] Failed to load full purchase history: {e}")
         return {}
+

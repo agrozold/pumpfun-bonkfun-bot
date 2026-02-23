@@ -22,7 +22,7 @@ HISTORY_FILE = Path("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json
 async def run_periodic_purchase_cleanup():
     """Main purchase_history cleanup loop. Removes entries older than 24h."""
     logger.warning(f"[PURCHASE_CLEANUP] Periodic purchase_history cleanup scheduled (every {CLEANUP_INTERVAL // 3600}h, max age {MAX_AGE_SECONDS // 3600}h)")
-    await asyncio.sleep(CLEANUP_INTERVAL)
+    # FIX S28-5: Run first cleanup immediately on startup (was delayed 24h)
 
     while True:
         try:

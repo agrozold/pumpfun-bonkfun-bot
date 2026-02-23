@@ -842,7 +842,7 @@ class UniversalTrader:
                             return 0.0
                         else:
                             got_empty_accounts = True
-                            return None  # token account genuinely not found
+                            continue  # FIX S28-1: try other RPCs before giving up
             except Exception as e:
                 logger.warning(f"[BALANCE] {rpc_name} failed for {mint[:8]}...: {type(e).__name__}: {e}")
                 continue
@@ -3975,7 +3975,7 @@ class UniversalTrader:
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
         HARD_STOP_LOSS_PCT = 35.0  # 35% убыток = matches position.py 15-60s window (FIX S18-7)
-        EMERGENCY_STOP_LOSS_PCT = 35.0  # 35% = matches unified table 0-15s (FIX S18-9b)
+        EMERGENCY_STOP_LOSS_PCT = 45.0  # FIX S28-3: 45% (15-30s window), HARD 35% (30s+). Dynamic SL is 40% (0-60s)
 
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
@@ -5834,6 +5834,8 @@ class UniversalTrader:
     async def _restore_positions(self) -> None:
         """Restore and resume monitoring of saved positions on startup."""
         logger.info("[RESTORE] Checking for saved positions to restore...")
+        # FIX S28-2: Clear positions loaded by __init__ to prevent duplicates
+        self.active_positions.clear()
         positions = await load_positions_async()
 
         if not positions:

@@ -994,11 +994,13 @@ class WhaleGeyserReceiver:
 
             sol_spent = parsed.sol_amount
 
-            if sol_spent < self.min_buy_amount:
+            # FIX S28-6: 5% tolerance for CPI sol_amount vs actual (fees/rounding difference)
+            _min_with_tolerance = self.min_buy_amount * 0.95
+            if sol_spent < _min_with_tolerance:
                 self._stats["below_min"] += 1
                 logger.info(
                     f"[GEYSER-LOCAL] Below min: {sol_spent:.4f} < "
-                    f"{self.min_buy_amount} SOL"
+                    f"{_min_with_tolerance:.4f} SOL (min={self.min_buy_amount} * 0.95)"
                 )
                 return
 

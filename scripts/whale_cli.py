@@ -110,7 +110,7 @@ def cmd_list(search=None):
         addr = w.get('wallet', '')
         notes = w.get('notes', '')
         extra = f" | {notes}" if notes else ""
-        print(f"  {label:<25} {addr[:35]}...{extra}")
+        print(f"  {label:<25} {addr}{extra}")
 
 def cmd_info(query):
     """Подробная информация о ките"""
