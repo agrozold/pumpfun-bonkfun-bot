@@ -70,8 +70,10 @@ async def run_periodic_purchase_cleanup():
                     from trading.trader_registry import get_trader
                     trader = get_trader()
                     if trader and hasattr(trader, '_bought_tokens'):
-                        trader._bought_tokens = set(fresh.keys())
-                        logger.info(f"[PURCHASE_CLEANUP] Synced _bought_tokens in-memory: {len(fresh)} tokens")
+                        expired_mints = set(tokens.keys()) - set(fresh.keys())
+                        trader._bought_tokens -= expired_mints  # FIX S30-F: remove only expired, keep in-memory additions
+                        trader._bought_tokens |= set(fresh.keys())  # ensure file entries are present
+                        logger.info(f"[PURCHASE_CLEANUP] Synced _bought_tokens: removed {len(expired_mints)} expired, total {len(trader._bought_tokens)}")
                 except Exception as sync_err:
                     logger.warning(f"[PURCHASE_CLEANUP] Could not sync _bought_tokens: {sync_err}")
 

@@ -158,7 +158,7 @@ class Position:
             tsl_trigger_price=data.get("tsl_trigger_price", 0.0),
             tsl_triggered=data.get("tsl_triggered", False),
             tsl_sell_pct=data.get("tsl_sell_pct", 1.0),
-        tp_sell_pct=data.get("tp_sell_pct", 0.80),
+        tp_sell_pct=data.get("tp_sell_pct", 0.90),
             is_active=data.get("is_active", True),
             is_moonbag=data.get("is_moonbag", False),
             is_dust=data.get("is_dust", False),

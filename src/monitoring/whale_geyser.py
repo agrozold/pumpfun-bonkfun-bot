@@ -1467,7 +1467,7 @@ class WhaleGeyserReceiver:
             # FIX S25-2: Slot-based filtering — reject stale updates from secondary gRPC
             # Both gRPC instances subscribe to same accounts. Without filtering,
             # different slots cause price to jump ±100%. Only accept newer slots.
-            if slot > 0 and sub.last_slot > 0 and slot < sub.last_slot:
+            if slot > 0 and sub.last_slot > 0 and slot <= sub.last_slot:
                 return
             if slot > 0:
                 sub.last_slot = slot
@@ -1578,6 +1578,7 @@ class WhaleGeyserReceiver:
                             _effective_label = "WIDENED -40%"
                         elif sub.price <= _ep * 0.60:
                             _do_sl = True  # absolute floor
+                            _effective_label = "FLOOR -40%"
                     if _do_sl:
                         if not _trigger.get("triggered"):
                             _trigger["triggered"] = True
@@ -1986,7 +1987,7 @@ class WhaleGeyserReceiver:
                 return
 
             # FIX S25-2: Slot-based filtering — reject stale updates from secondary gRPC
-            if slot > 0 and sub.last_slot > 0 and slot < sub.last_slot:
+            if slot > 0 and sub.last_slot > 0 and slot <= sub.last_slot:
                 return
             if slot > 0:
                 sub.last_slot = slot

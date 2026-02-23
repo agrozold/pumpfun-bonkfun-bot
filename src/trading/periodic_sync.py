@@ -239,12 +239,8 @@ async def run_periodic_sync():
             logger.info(f"[SYNC] Done: {len(valid)} valid, {len(phantoms)} phantoms removed, "
                         f"{fixed_confirmed} buy_confirmed fixed")
 
-            # Export Redis to JSON backup
-            if state and use_redis:
-                try:
-                    await state.export_to_json(str(POSITIONS_FILE))
-                except Exception:
-                    pass
+            # FIX S30-E: REMOVED export_to_json — it overwrites clean JSON with stale Redis data
+            # (was: state.export_to_json which could reintroduce phantom positions)
 
         except Exception as e:
             logger.error(f"[SYNC] Periodic sync error: {e}", exc_info=True)
