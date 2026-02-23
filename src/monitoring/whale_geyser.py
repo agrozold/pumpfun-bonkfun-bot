@@ -256,6 +256,8 @@ class WhaleGeyserReceiver:
         # Dedup
         self._processed_sigs: set[str] = set()
         self._emitted_tokens: set[str] = set()
+        self._emit_lock = asyncio.Lock()  # S32: Prevent parallel emit for same TX
+        self._processed_sigs_emit: set[str] = set()  # S32: Sig dedup inside emit tasks
 
         # State
         self._channel = None  # Legacy — kept for compatibility, points to first instance channel
@@ -981,6 +983,12 @@ class WhaleGeyserReceiver:
                     except Exception as _self_err:
                         logger.warning(f"[GEYSER-SELF] Entry fix error: {_self_err}")
                 return
+
+            # S32 FIX: Signature-based dedup inside emit (catches gRPC same-stream duplicates)
+            if signature in self._processed_sigs_emit:
+                logger.info(f"[GEYSER-LOCAL] EMIT DEDUP: {signature[:20]}... already emitted")
+                return
+            self._processed_sigs_emit.add(signature)
 
             # Only process BUY signals
             if not parsed.is_buy:

@@ -11,8 +11,8 @@ alias blacklist='cd $BOT_DIR && ./venv/bin/python3 scripts/blacklist_cli.py'
 # 🤖 BOT CONTROL
 # ─────────────────────────────────────────────────────────────
 alias bot-start='sudo systemctl start whale-bot && echo "✅ Started"'
-alias bot-stop='sudo systemctl stop whale-bot && echo "⛔ Stopped"'
-alias bot-restart='sudo systemctl restart whale-bot && echo "✅ Restarted"'
+alias bot-stop='sudo systemctl stop whale-bot 2>/dev/null; pkill -9 -f bot_runner.py 2>/dev/null; sleep 1; echo "⛔ Stopped"'
+alias bot-restart='sudo systemctl stop whale-bot 2>/dev/null; pkill -9 -f bot_runner.py 2>/dev/null; sleep 2; sudo systemctl start whale-bot; sleep 1; echo "✅ restarted (PID: $(systemctl show whale-bot -p MainPID --value))"'
 alias bot-status='sudo systemctl status whale-bot --no-pager | head -40; echo ""; curl -s http://localhost:8000/health 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "(webhook offline)"'
 
 alias bot-mode='if grep -q "^GEYSER_API_KEY=" $BOT_DIR/.env; then echo "🟢 gRPC + Webhook"; else echo "🟡 Webhook only"; fi'
@@ -49,35 +49,32 @@ alias no-sl='cd $BOT_DIR && ./venv/bin/python3 scripts/no_sl.py'
 alias buy='cd $BOT_DIR && ./venv/bin/python3 buy.py'
 alias sell='cd $BOT_DIR && ./venv/bin/python3 sell.py'
 alias wsync='cd $BOT_DIR && ./venv/bin/python3 wsync.py'
-buysync() { cd "$BOT_DIR" && ./venv/bin/python3 buy.py "$1" "$2" && sleep 3 && ./venv/bin/python3 wsync.py && echo "✅ Bought + synced"; }
+alias buysync='cd $BOT_DIR && ./venv/bin/python3 buy.py "$1" "$2" && sleep 3 && ./venv/bin/python3 wsync.py && echo "✅ Bought + synced"'
 
 # ⚡ QUICK SELL
-sell10()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 10; }
-sell20()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 20; }
-sell30()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 30; }
-sell40()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 40; }
-sell50()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 50; }
-sell60()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 60; }
-sell70()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 70; }
-sell80()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 80; }
-sell90()  { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 90; }
-sell100() { cd "$BOT_DIR" && ./venv/bin/python3 sell.py "$1" 100; }
+alias sell10='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 10'
+alias sell20='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 20'
+alias sell30='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 30'
+alias sell40='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 40'
+alias sell50='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 50'
+alias sell60='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 60'
+alias sell70='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 70'
+alias sell80='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 80'
+alias sell90='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 90'
+alias sell100='cd $BOT_DIR && ./venv/bin/python3 sell.py "$1" 100'
 
 # ─────────────────────────────────────────────────────────────
 # 🗑️ DUST
 # ─────────────────────────────────────────────────────────────
-dust()     { cd "$BOT_DIR" && ./venv/bin/python3 cleanup_dust.py "${1:-0.40}" "${@:2}"; }
-dust_dry() { cd "$BOT_DIR" && ./venv/bin/python3 cleanup_dust.py "${1:-0.40}" --dry; }
-alias dust-dry='dust_dry'
+alias dust='cd $BOT_DIR && ./venv/bin/python3 scripts/dust_cleaner.py'
+alias dust-dry='cd $BOT_DIR && ./venv/bin/python3 scripts/dust_cleaner.py --dry'
 
 # ─────────────────────────────────────────────────────────────
 # 🐋 WHALE
 # ─────────────────────────────────────────────────────────────
 alias whale='cd $BOT_DIR && ./venv/bin/python3 scripts/whale_cli.py'
 
-echo "🐋 Whale Bot aliases loaded"
-
 # Session 4: Cleaners
-alias zombies='cd /opt/pumpfun-bonkfun-bot && ./venv/bin/python3 scripts/zombie_cleaner.py'
-alias dust='cd /opt/pumpfun-bonkfun-bot && ./venv/bin/python3 scripts/dust_cleaner.py'
-alias dust-dry='cd /opt/pumpfun-bonkfun-bot && ./venv/bin/python3 scripts/dust_cleaner.py --dry'
+alias zombies='cd $BOT_DIR && ./venv/bin/python3 scripts/zombie_cleaner.py'
+
+echo "🐋 Whale Bot aliases loaded"
