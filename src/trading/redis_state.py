@@ -154,21 +154,30 @@ class RedisStateManager:
     # ==================== IDEMPOTENCY (TX DEDUP) ====================
     
     async def is_tx_processed(self, tx_signature: str) -> bool:
-        """Check if transaction was already processed."""
+        """Check if transaction was already processed (ZSET with timestamp score)."""
         if not self._connected:
             return False
         try:
-            return await self._redis.sismember(PROCESSED_TX_KEY, tx_signature)
+            score = await self._redis.zscore(PROCESSED_TX_KEY, tx_signature)
+            return score is not None
         except:
             return False
     
     async def mark_tx_processed(self, tx_signature: str) -> bool:
-        """Mark transaction as processed (with TTL)."""
+        """Mark transaction as processed (ZSET: score=timestamp, auto-cleanup >1h)."""
         if not self._connected:
             return False
         try:
-            await self._redis.sadd(PROCESSED_TX_KEY, tx_signature)
-            await self._redis.expire(PROCESSED_TX_KEY, TX_TTL_SECONDS)
+            import time
+            now = time.time()
+            await self._redis.zadd(PROCESSED_TX_KEY, {tx_signature: now})
+            # Cleanup entries older than TX_TTL_SECONDS (every 100th call)
+            count = await self._redis.zcard(PROCESSED_TX_KEY)
+            if count > 5000:
+                cutoff = now - TX_TTL_SECONDS
+                removed = await self._redis.zremrangebyscore(PROCESSED_TX_KEY, "-inf", cutoff)
+                if removed:
+                    logger.info(f"[REDIS] Cleaned {removed} old processed_tx entries (>{TX_TTL_SECONDS}s)")
             return True
         except Exception as e:
             logger.error(f"[REDIS] mark_tx_processed failed: {e}")

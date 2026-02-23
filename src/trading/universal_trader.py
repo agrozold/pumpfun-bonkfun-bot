@@ -4613,7 +4613,7 @@ class UniversalTrader:
                 # Проверка 1: Обычный HARD STOP LOSS (25%)
                 # PATCHED Session 3: HARD SL skips first 30s (Dynamic SL covers this window)
                 _pos_age_hs = (datetime.utcnow() - position.entry_time).total_seconds() if position.entry_time else 999
-                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not getattr(position, "tp_partial_done", False) and not skip_sl and _pos_age_hs >= 30:
+                if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not getattr(position, "tp_partial_done", False) and not skip_sl and _pos_age_hs >= 15:
                     logger.error(
                         f"[HARD SL] {token_info.symbol}: LOSS {pnl_pct:.1f}%! "
                         f"HARD STOP LOSS triggered (threshold: -{HARD_STOP_LOSS_PCT:.0f}%)"

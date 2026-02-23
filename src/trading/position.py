@@ -5,6 +5,7 @@ UPGRADED: Redis as primary storage, JSON as backup.
 
 import asyncio
 import json
+import os
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -471,10 +472,12 @@ def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -
             unique_positions[str(p.mint)] = p
     active = [p.to_dict() for p in unique_positions.values()]
     
-    # Always save JSON as backup
+    # Always save JSON as backup (atomic: write tmp -> rename)
     try:
-        with open(filepath, 'w') as f:
+        tmp_path = str(filepath) + ".tmp"
+        with open(tmp_path, 'w') as f:
             json.dump(active, f, indent=2)
+        os.replace(tmp_path, filepath)
         logger.info(f"[SAVE] Saved {len(active)} positions to {filepath}")
     except Exception as e:
         logger.error(f"[SAVE] JSON save failed: {e}")
