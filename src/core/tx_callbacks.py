@@ -294,16 +294,31 @@ async def on_buy_success(tx: "PendingTransaction"):
             except Exception as vault_err:
                 logger.warning(f"[TX_CALLBACK] Vault resolve error for {symbol}: {vault_err}")
 
-        # S22: Guard — skip gRPC subscribe for moonbag/dust positions (they use batch price)
+        # S35-A: Guard — skip gRPC subscribe if position already closed, moonbag/dust, or already subscribed
         _skip_grpc = False
         try:
-            from trading.position import load_positions as _load_pos
-            for _p in _load_pos():
-                if str(_p.mint) == mint:
-                    if getattr(_p, "is_moonbag", False) or getattr(_p, "tp_partial_done", False) or getattr(_p, "is_dust", False):
+            from trading.trader_registry import get_trader as _get_trader
+            _tr = _get_trader()
+            if _tr:
+                # Check 1: Position still active?
+                _pos_found = False
+                for _p in _tr.active_positions:
+                    if str(_p.mint) == mint:
+                        _pos_found = True
+                        # Check 2: Moonbag/dust use batch price, not gRPC
+                        if getattr(_p, "is_moonbag", False) or getattr(_p, "tp_partial_done", False) or getattr(_p, "is_dust", False):
+                            _skip_grpc = True
+                            logger.info(f"[TX_CALLBACK] {symbol}: moonbag/dust — skip gRPC subscribe")
+                        break
+                if not _pos_found:
+                    _skip_grpc = True
+                    logger.info(f"[TX_CALLBACK] {symbol}: position already closed — skip gRPC subscribe")
+                # Check 3: Curve/vault already subscribed?
+                elif not _skip_grpc and _tr.whale_tracker:
+                    _wt = _tr.whale_tracker
+                    if mint in getattr(_wt, '_curve_subscriptions', {}) or mint in getattr(_wt, '_vault_subscriptions', {}):
                         _skip_grpc = True
-                        logger.info(f"[TX_CALLBACK] {symbol}: moonbag/dust — skip gRPC subscribe")
-                    break
+                        logger.info(f"[TX_CALLBACK] {symbol}: already subscribed — skip gRPC subscribe")
         except Exception:
             pass
         # === Phase 4c: Subscribe to bonding curve if no vaults found ===
