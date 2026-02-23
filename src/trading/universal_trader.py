@@ -4640,6 +4640,20 @@ class UniversalTrader:
                         if check_count == 1:
                             logger.warning(f"[NO_SL] {token_info.symbol}: SL BLOCKED by NO_SL list!")
 
+
+                # FIX S27-4: HARD SL for moonbag/dust — emergency exit at -50% from entry
+                if (position.is_moonbag or getattr(position, "tp_partial_done", False)) and not skip_sl:
+                    _mb_entry = position.original_entry_price if position.original_entry_price > 0 else position.entry_price
+                    if _mb_entry > 0:
+                        _mb_pnl = ((current_price - _mb_entry) / _mb_entry) * 100
+                        if _mb_pnl <= -50.0:
+                            logger.error(
+                                f"[MOONBAG HARD SL] {token_info.symbol}: {_mb_pnl:.1f}% from entry! "
+                                f"price={current_price:.10f} entry={_mb_entry:.10f} — EMERGENCY EXIT"
+                            )
+                            should_exit = True
+                            exit_reason = ExitReason.STOP_LOSS
+                            pending_stop_loss = True
                 # Log ALL positions as WARNING every check
                 if check_count % 10 == 0:  # Log every ~10s
                     logger.warning(
@@ -4719,6 +4733,7 @@ class UniversalTrader:
                     # ============================================
                     # --- PATCH 6: Double-sell race condition guard ---
                     position.is_selling = True
+                    position._is_selling_since = datetime.utcnow()  # FIX S27-2: watchdog timestamp
                     logger.error(f"[SELL] {token_info.symbol}: PnL {pnl_pct:.1f}% - FAST SELL MODE")
                     
                     # skip_cleanup for partial sells (TP partial, TSL moonbag)
@@ -4864,6 +4879,7 @@ class UniversalTrader:
                                     logger.warning(f"[TP MOONBAG] {token_info.symbol}: batch price WATCH ensured (FIX S19-1)")
                                 except Exception:
                                     pass
+                                position.is_selling = False  # FIX S27-1: reset guard (was missing — moonbag stuck forever with is_selling=True)
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
                                 continue
                             else:
@@ -5898,7 +5914,7 @@ class UniversalTrader:
                     position.tsl_enabled = True
                 if not getattr(position, "is_dust", False) and not position.tsl_active and position.high_water_mark and position.high_water_mark > 0:
                     position.tsl_active = True
-                    position.tsl_trigger_price = position.high_water_mark * 0.50  # 50% trail for moonbag
+                    position.tsl_trigger_price = position.high_water_mark * (1 - (position.tsl_trail_pct or 0.30))  # FIX S25-3: use config trail (was hardcoded 0.50)
                     logger.warning(f"[RESTORE] {position.symbol}: MOONBAG TSL reactivated: HWM={position.high_water_mark:.10f}, trigger={position.tsl_trigger_price:.10f}")
                 elif position.tsl_active:
                     # Ensure moonbag trail is wide (50%) not default
@@ -5962,7 +5978,7 @@ class UniversalTrader:
                     position.take_profit_price = None
                 if not position.is_moonbag:
                     position.is_moonbag = True
-                    position.tsl_sell_pct = 1.0
+                    position.tsl_sell_pct = getattr(self, "tsl_sell_pct", 0.5)  # FIX S25-1: use yaml (was 1.0, killed moonbag→dust flow)
                     if not position.stop_loss_price or position.stop_loss_price > position.entry_price * 0.25:
                         position.stop_loss_price = position.entry_price * 0.80  # FIX S20: moonbag SL -20% from entry
                     logger.warning(
@@ -6098,7 +6114,7 @@ class UniversalTrader:
                     position.is_moonbag = True
                     logger.warning(f"[RESTORE] {position.symbol}: FINAL GUARD — forced is_moonbag=True (FIX S15-1)")
                 # Moonbag must sell 100% on TSL, trail 50%
-                position.tsl_sell_pct = 1.0
+                position.tsl_sell_pct = getattr(self, "tsl_sell_pct", 0.5)  # FIX S25-2: use yaml (was 1.0, killed moonbag→dust flow)
                 position.tp_sell_pct = 1.0
             # === END FIX S15-1 ===
 

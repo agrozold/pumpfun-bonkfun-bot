@@ -270,9 +270,19 @@ class Position:
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
         if not self.is_active:
             return False, None
-
+        # FIX S27-2: is_selling watchdog — auto-reset after 120s to prevent stuck moonbags
         if getattr(self, "is_selling", False):
-            return False, None
+            _selling_since = getattr(self, "_is_selling_since", None)
+            if _selling_since:
+                _stuck_seconds = (datetime.utcnow() - _selling_since).total_seconds()
+                if _stuck_seconds > 120:
+                    logger.error(f"[WATCHDOG] {self.symbol}: is_selling=True for {_stuck_seconds:.0f}s — FORCE RESET (FIX S27-2)")
+                    self.is_selling = False
+                    self._is_selling_since = None
+                else:
+                    return False, None
+            else:
+                return False, None
 
         # DYNAMIC SL: wider SL in first 60s to survive impact dip from whale buy
         # Whale copy: bot buys AFTER whale, price naturally retraces 15-30%
@@ -329,6 +339,13 @@ class Position:
         if self.is_moonbag and self.stop_loss_price and current_price <= self.stop_loss_price:
             logger.warning(f"[MOONBAG SL] {self.symbol}: price {current_price:.10f} <= safety SL {self.stop_loss_price:.10f}")
             return True, ExitReason.STOP_LOSS
+
+        # FIX S27-3: Moonbag max hold time — force exit after 2 hours
+        if (self.is_moonbag or self.is_dust) and self.entry_time:
+            _moonbag_age = (datetime.utcnow() - self.entry_time).total_seconds()
+            if _moonbag_age > 7200:  # 2 hours
+                logger.warning(f"[MOONBAG TIMEOUT] {self.symbol}: held {_moonbag_age:.0f}s (>2h) — force exit")
+                return True, ExitReason.MAX_HOLD_TIME
 
         if self.take_profit_price and current_price >= self.take_profit_price and not self.is_moonbag:
             # FIX 10-4: Block TP while entry is provisional (may be 3-18x wrong)

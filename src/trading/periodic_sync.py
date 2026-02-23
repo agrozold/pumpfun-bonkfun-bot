@@ -204,9 +204,15 @@ async def run_periodic_sync():
                         logger.info(f"[SYNC] {sym} is new ({age_seconds:.0f}s), keeping despite 0 balance")
                         valid.append(pos)
                     else:
-                        logger.warning(f"[SYNC] PHANTOM detected: {sym} ({mint[:16]}...) "
-                                       f"- 0 balance on wallet, age={age_seconds:.0f}s")
-                        phantoms.append(pos)
+                        # FIX S27-5: moonbag/tp_partial may show 0 balance (batch price, dust amounts)
+                        _is_moonbag_pos = pos.get("is_moonbag", False) or pos.get("tp_partial_done", False) or pos.get("is_dust", False)
+                        if _is_moonbag_pos:
+                            logger.info(f"[SYNC] {sym}: moonbag/dust with 0 balance — keeping (FIX S27-5)")
+                            valid.append(pos)
+                        else:
+                            logger.warning(f"[SYNC] PHANTOM detected: {sym} ({mint[:16]}...) "
+                                           f"- 0 balance on wallet, age={age_seconds:.0f}s")
+                            phantoms.append(pos)
 
             if fixed_confirmed:
                 logger.warning(f"[SYNC] Fixed buy_confirmed on {fixed_confirmed} positions")
