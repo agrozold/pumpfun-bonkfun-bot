@@ -377,6 +377,7 @@ class UniversalTrader:
         self.whale_webhook_port = whale_webhook_port
         self.whale_tracker: WhalePoller | None = None
         self.whale_tracker_secondary = None  # Secondary receiver for dual mode
+        self._moonbag_monitor = None  # S38: PublicNode gRPC for moonbag/dust price
         self._signal_dedup = None  # Dedup for dual-receiver mode
         self._watchdog = None  # Dual-channel watchdog (Phase 5.3)
         self._price_stream = None  # Phase 4: Real-time gRPC price stream
@@ -2976,6 +2977,45 @@ class UniversalTrader:
                 else:
                     logger.info("Whale tracker not enabled, skipping...")
 
+
+            # S38: Start moonbag gRPC monitor (PublicNode) for moonbag/dust price tracking
+            try:
+                from monitoring.moonbag_grpc_monitor import get_moonbag_monitor
+                self._moonbag_monitor = get_moonbag_monitor()
+                await self._moonbag_monitor.start()
+                # Subscribe all moonbag/dust positions with known vaults
+                for _pos in self.active_positions:
+                    if (getattr(_pos, 'is_moonbag', False) or getattr(_pos, 'is_dust', False)):
+                        _bv = getattr(_pos, 'pool_base_vault', None)
+                        _qv = getattr(_pos, 'pool_quote_vault', None)
+                        if _bv and _qv:
+                            self._moonbag_monitor.subscribe(
+                                str(_pos.mint), _bv, _qv,
+                                decimals=6, symbol=_pos.symbol
+                            )
+                        else:
+                            # Try resolve vaults
+                            try:
+                                from trading.vault_resolver import resolve_vaults
+                                _vaults = await resolve_vaults(str(_pos.mint))
+                                if _vaults:
+                                    _pos.pool_base_vault = _vaults[0]
+                                    _pos.pool_quote_vault = _vaults[1]
+                                    _pos.pool_address = _vaults[2]
+                                    self._moonbag_monitor.subscribe(
+                                        str(_pos.mint), _vaults[0], _vaults[1],
+                                        decimals=6, symbol=_pos.symbol
+                                    )
+                                    logger.warning(f"[MOONBAG-GRPC] {_pos.symbol}: vaults resolved and subscribed")
+                                else:
+                                    logger.info(f"[MOONBAG-GRPC] {_pos.symbol}: no vaults found, using batch price only")
+                            except Exception as _ve:
+                                logger.info(f"[MOONBAG-GRPC] {_pos.symbol}: vault resolve failed: {_ve}")
+                logger.warning(f"[MOONBAG-GRPC] Initialized: {self._moonbag_monitor.subscription_count} moonbag subscriptions")
+            except Exception as _mge:
+                logger.warning(f"[MOONBAG-GRPC] Init failed (non-critical): {_mge}")
+                self._moonbag_monitor = None
+
             # Choose operating mode based on yolo_mode
             if not self.yolo_mode:
                 # Single token mode: process one token and exit
@@ -3976,7 +4016,7 @@ class UniversalTrader:
         # HARD STOP LOSS - ЖЁСТКИЙ стоп-лосс, продаём НЕМЕДЛЕННО при любом убытке > порога
         # Это ДОПОЛНИТЕЛЬНАЯ защита поверх обычного stop_loss_price
         HARD_STOP_LOSS_PCT = 35.0  # 35% убыток = matches position.py 15-60s window (FIX S18-7)
-        EMERGENCY_STOP_LOSS_PCT = 45.0  # FIX S28-3: 45% (15-30s window), HARD 35% (30s+). Dynamic SL is 40% (0-60s)
+        EMERGENCY_STOP_LOSS_PCT = 45.0  # FIX S28-3: 45% (15-30s window), HARD 35% (15s+). Dynamic SL is 30% (0-60s)
 
         # Счётчик неудачных попыток продажи для агрессивного retry
         sell_retry_count = 0
@@ -4061,6 +4101,12 @@ class UniversalTrader:
                     if grpc_price and grpc_price > 0:
                         current_price = grpc_price
                         price_source = "grpc_stream"
+                # S38: Try moonbag gRPC price (PublicNode) for moonbag/dust positions
+                if (not current_price or current_price <= 0) and getattr(self, '_moonbag_monitor', None):
+                    _mb_price = self._moonbag_monitor.get_price(mint_str)
+                    if _mb_price and _mb_price > 0:
+                        current_price = _mb_price
+                        price_source = "moonbag_grpc"
                 # Fallback: Get price from batch cache (instant, no API call!)
                 if not current_price or current_price <= 0:
                     current_price = get_cached_price(mint_str)
@@ -4610,7 +4656,7 @@ class UniversalTrader:
                 if skip_sl and check_count == 1:
                     logger.warning(f"[NO_SL] {token_info.symbol}: SL DISABLED for this token!")
                 
-                # Проверка 1: Обычный HARD STOP LOSS (25%)
+                # Проверка 1: Обычный HARD STOP LOSS (35%)
                 # PATCHED Session 3: HARD SL skips first 30s (Dynamic SL covers this window)
                 _pos_age_hs = (datetime.utcnow() - position.entry_time).total_seconds() if position.entry_time else 999
                 if pnl_pct <= -HARD_STOP_LOSS_PCT and not position.is_moonbag and not getattr(position, "tp_partial_done", False) and not skip_sl and _pos_age_hs >= 15:
@@ -4622,7 +4668,7 @@ class UniversalTrader:
                     exit_reason = ExitReason.STOP_LOSS
                     pending_stop_loss = True
 
-                # Проверка 2: EMERGENCY STOP LOSS (40%) - максимальный приоритет
+                # Проверка 2: EMERGENCY STOP LOSS (45%) - максимальный приоритет
                 # PATCHED Session 3: EMERGENCY SL skips first 15s (Dynamic SL -45% covers)
                 if pnl_pct <= -EMERGENCY_STOP_LOSS_PCT and not position.is_moonbag and not getattr(position, "tp_partial_done", False) and not skip_sl and _pos_age_hs >= 15:
                     logger.error(
@@ -4813,6 +4859,24 @@ class UniversalTrader:
                                     logger.warning(f"[MOONBAG TSL] {token_info.symbol}: batch price WATCH ensured (FIX S19-1)")
                                 except Exception:
                                     pass
+                                # S38: Subscribe moonbag to PublicNode gRPC for real-time price
+                                try:
+                                    if getattr(self, '_moonbag_monitor', None):
+                                        _bv = getattr(position, 'pool_base_vault', None)
+                                        _qv = getattr(position, 'pool_quote_vault', None)
+                                        if not _bv or not _qv:
+                                            from trading.vault_resolver import resolve_vaults
+                                            _vr = await resolve_vaults(_mint_str)
+                                            if _vr:
+                                                _bv, _qv = _vr[0], _vr[1]
+                                                position.pool_base_vault = _bv
+                                                position.pool_quote_vault = _qv
+                                                position.pool_address = _vr[2]
+                                        if _bv and _qv:
+                                            self._moonbag_monitor.subscribe(_mint_str, _bv, _qv, decimals=6, symbol=token_info.symbol)
+                                            logger.warning(f"[MOONBAG TSL] {token_info.symbol}: PublicNode gRPC subscribed")
+                                except Exception as _mge:
+                                    logger.info(f"[MOONBAG TSL] {token_info.symbol}: moonbag gRPC subscribe failed: {_mge}")
                                 # FIX S18-11: was break — killed monitor! moonbag had NO monitoring
                                 # Must continue loop so SL/TSL keeps checking price
                                 continue
@@ -4869,6 +4933,24 @@ class UniversalTrader:
                                     logger.warning(f"[TP MOONBAG] {token_info.symbol}: batch price WATCH ensured (FIX S19-1)")
                                 except Exception:
                                     pass
+                                # S38: Subscribe moonbag to PublicNode gRPC for real-time price
+                                try:
+                                    if getattr(self, '_moonbag_monitor', None):
+                                        _bv_tp = getattr(position, 'pool_base_vault', None)
+                                        _qv_tp = getattr(position, 'pool_quote_vault', None)
+                                        if not _bv_tp or not _qv_tp:
+                                            from trading.vault_resolver import resolve_vaults
+                                            _vr_tp = await resolve_vaults(_mint_str_tp)
+                                            if _vr_tp:
+                                                _bv_tp, _qv_tp = _vr_tp[0], _vr_tp[1]
+                                                position.pool_base_vault = _bv_tp
+                                                position.pool_quote_vault = _qv_tp
+                                                position.pool_address = _vr_tp[2]
+                                        if _bv_tp and _qv_tp:
+                                            self._moonbag_monitor.subscribe(_mint_str_tp, _bv_tp, _qv_tp, decimals=6, symbol=token_info.symbol)
+                                            logger.warning(f"[TP MOONBAG] {token_info.symbol}: PublicNode gRPC subscribed")
+                                except Exception as _mge:
+                                    logger.info(f"[TP MOONBAG] {token_info.symbol}: moonbag gRPC subscribe failed: {_mge}")
                                 position.is_selling = False  # FIX S27-1: reset guard (was missing — moonbag stuck forever with is_selling=True)
                                 logger.warning(f"[TP] Partial TP done. Keeping {remaining_quantity:.2f} tokens, TP disabled; continue with TSL/SL.")
                                 continue
@@ -5797,6 +5879,9 @@ class UniversalTrader:
         if self.whale_tracker and hasattr(self.whale_tracker, 'unregister_sl_tp'):
             self.whale_tracker.unregister_sl_tp(mint)
             logger.info(f"[REMOVE] Cleaned _sl_tp_triggers for {mint[:16]}")
+        # S38: Unsubscribe moonbag gRPC monitor
+        if getattr(self, '_moonbag_monitor', None):
+            self._moonbag_monitor.unsubscribe(mint)
         # FORGET FOREVER - add to sold_mints so never restored
         asyncio.create_task(self._forget_position_async(mint))
     

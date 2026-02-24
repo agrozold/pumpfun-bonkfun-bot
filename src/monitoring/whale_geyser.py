@@ -989,6 +989,8 @@ class WhaleGeyserReceiver:
                 logger.info(f"[GEYSER-LOCAL] EMIT DEDUP: {signature[:20]}... already emitted")
                 return
             self._processed_sigs_emit.add(signature)
+            if len(self._processed_sigs_emit) > 10000:
+                self._processed_sigs_emit = set(list(self._processed_sigs_emit)[-5000:])
 
             # Only process BUY signals
             if not parsed.is_buy:
