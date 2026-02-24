@@ -342,12 +342,12 @@ class Position:
             logger.warning(f"[MOONBAG SL] {self.symbol}: price {current_price:.10f} <= safety SL {self.stop_loss_price:.10f}")
             return True, ExitReason.STOP_LOSS
 
-        # FIX S27-3: Moonbag max hold time — force exit after 2 hours
-        if (self.is_moonbag or self.is_dust) and self.entry_time:
-            _moonbag_age = (datetime.utcnow() - self.entry_time).total_seconds()
-            if _moonbag_age > 7200:  # 2 hours
-                logger.warning(f"[MOONBAG TIMEOUT] {self.symbol}: held {_moonbag_age:.0f}s (>2h) — force exit")
-                return True, ExitReason.MAX_HOLD_TIME
+        # S37: REMOVED S27-3 — no time-based forced exits for moonbag
+#        if (self.is_moonbag or self.is_dust) and self.entry_time:
+#            _moonbag_age = (datetime.utcnow() - self.entry_time).total_seconds()
+#            if _moonbag_age > 7200:  # 2 hours
+#                logger.warning(f"[MOONBAG TIMEOUT] {self.symbol}: held {_moonbag_age:.0f}s (>2h) — force exit")
+#                return True, ExitReason.MAX_HOLD_TIME
 
         if self.take_profit_price and current_price >= self.take_profit_price and not self.is_moonbag:
             # FIX 10-4: Block TP while entry is provisional (may be 3-18x wrong)

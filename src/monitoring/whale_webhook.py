@@ -441,12 +441,12 @@ class WhaleWebhookReceiver:
         self._stats["buys_emitted"] += 1
         logger.warning(f"[EMIT] Whale BUY signal! {whale_buy.token_symbol} | {whale_buy.token_mint} | {whale_buy.amount_sol:.2f} SOL | whale={whale_buy.whale_label}")
         
+        # S37-1: Webhook signals DISABLED — gRPC only mode
+        # Webhook stays for monitoring/health/stats, but does NOT trigger buys
+        # Root cause: webhook double-counts SOL for PumpSwap/Jupiter (native + wSOL)
         if self.on_whale_buy:
-            try:
-                logger.warning(f"[CALLBACK] Calling on_whale_buy callback for {whale_buy.token_symbol}")
-                asyncio.create_task(self.on_whale_buy(whale_buy))
-            except Exception as e:
-                logger.error(f"[WEBHOOK] Callback error: {e}")
+            logger.info(f"[WEBHOOK] Signal logged but NOT emitted (gRPC-only mode): {whale_buy.token_symbol} {whale_buy.amount_sol:.2f} SOL")
+            # asyncio.create_task(self.on_whale_buy(whale_buy))
         else:
             logger.error(f"[WEBHOOK] NO CALLBACK SET! Cannot process whale buy for {whale_buy.token_mint}")
 

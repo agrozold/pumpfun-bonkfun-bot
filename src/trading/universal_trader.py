@@ -4642,12 +4642,12 @@ class UniversalTrader:
                             logger.warning(f"[NO_SL] {token_info.symbol}: SL BLOCKED by NO_SL list!")
 
 
-                # FIX S27-4: HARD SL for moonbag/dust — emergency exit at -50% from entry
+                # FIX S27-4: HARD SL for moonbag/dust — emergency exit at -25% from entry (S37)
                 if (position.is_moonbag or getattr(position, "tp_partial_done", False)) and not skip_sl:
                     _mb_entry = position.original_entry_price if position.original_entry_price > 0 else position.entry_price
                     if _mb_entry > 0:
                         _mb_pnl = ((current_price - _mb_entry) / _mb_entry) * 100
-                        if _mb_pnl <= -50.0:
+                        if _mb_pnl <= -25.0:
                             logger.error(
                                 f"[MOONBAG HARD SL] {token_info.symbol}: {_mb_pnl:.1f}% from entry! "
                                 f"price={current_price:.10f} entry={_mb_entry:.10f} — EMERGENCY EXIT"
@@ -4764,9 +4764,6 @@ class UniversalTrader:
                                 position.is_dust = True  # FIX S20: TSL partial sell remnant — only entry SL, no TSL
                                 # FIX S18-10: all moonbag params from yaml (self)
                                 _orig_entry = position.entry_price
-                                _sl_pct = self.stop_loss_percentage or 0.20
-                                _sl_from_fix = current_price * (1 - _sl_pct)
-                                _mb_sl = max(_sl_from_fix, _orig_entry)
                                 position.tsl_enabled = False
                                 position.tsl_active = False
                                 position.tsl_trail_pct = 0
@@ -4778,18 +4775,10 @@ class UniversalTrader:
                                 position.high_water_mark = 0
                                 position.stop_loss_price = position.original_entry_price if position.original_entry_price > 0 else _orig_entry  # FIX S20: dust SL = entry (break-even)
 
-
-
-
-
-
-
-
                                 logger.warning(
-                                    f"[MOONBAG TSL] {token_info.symbol}: SL={_mb_sl:.10f} "
-                                    f"(fix={current_price:.10f} -{_sl_pct*100:.0f}%={_sl_from_fix:.10f} "
-                                    f"entry={_orig_entry:.10f}) trail={self.tsl_trail_pct} sell={self.tsl_sell_pct}"
-                                )
+                                    f"[MOONBAG TSL] {token_info.symbol}: SL={position.stop_loss_price:.10f} (=entry) "
+                                    f"price={current_price:.10f} entry={_orig_entry:.10f} "
+                                    f"is_dust=True tsl=OFF")
 
                                 # Save updated position
                                 self._save_position(position)
