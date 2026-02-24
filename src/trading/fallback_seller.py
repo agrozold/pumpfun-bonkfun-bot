@@ -1986,82 +1986,56 @@ class FallbackSeller:
         token_amount: float,
         symbol: str = "TOKEN",
     ) -> tuple[bool, str | None, str | None]:
-        """Sell via PumpPortal trade-local API (works for Token-2022 pump.fun tokens)."""
-        import requests
-        from solders.keypair import Keypair
-        from solders.commitment_config import CommitmentLevel
-        from solders.rpc.requests import SendVersionedTransaction
-        from solders.rpc.config import RpcSendTransactionConfig
-
+        """Sell via PumpPortal trade-local API (works for Token-2022 pump.fun tokens).
+        
+        FIX S42: Rewritten from sync requests to async aiohttp.
+        Used as fallback when Jupiter returns TOKEN_NOT_TRADABLE (bonding curve tokens).
+        PumpPortal auto-detects pool (bonding curve / PumpSwap / Raydium).
+        Fee: 0.5% per trade.
+        """
         logger.info(f"[PUMPPORTAL] Attempting PumpPortal sell for {symbol} ({mint})")
 
         try:
-            # Get unsigned TX from PumpPortal
-            response = requests.post(
-                url="https://pumpportal.fun/api/trade-local",
-                data={
-                    "publicKey": str(self.wallet.pubkey),
-                    "action": "sell",
-                    "mint": str(mint),
-                    "amount": str(int(token_amount)),  # Exact amount, not 100%,
-                    "denominatedInSol": "false",
-                    "slippage": int(self.slippage * 100),  # From config (sell_slippage)
-                    "priorityFee": 0.0005,
-                    "pool": "auto"
-                },
-                timeout=30
-            )
+            # Step 1: Get unsigned TX from PumpPortal API (async)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url="https://pumpportal.fun/api/trade-local",
+                    data={
+                        "publicKey": str(self.wallet.pubkey),
+                        "action": "sell",
+                        "mint": str(mint),
+                        "amount": str(int(token_amount)),
+                        "denominatedInSol": "false",
+                        "slippage": int(self.slippage * 100),
+                        "priorityFee": 0.0005,
+                        "pool": "auto"
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status != 200:
+                        _err_text = await resp.text()
+                        return False, None, f"PumpPortal HTTP {resp.status}: {_err_text[:200]}"
+                    _tx_bytes = await resp.read()
 
-            if response.status_code != 200:
-                return False, None, f"PumpPortal error: {response.text}"
-
-            # Sign TX
+            # Step 2: Deserialize and sign TX locally
             tx = VersionedTransaction(
-                VersionedTransaction.from_bytes(response.content).message,
+                VersionedTransaction.from_bytes(_tx_bytes).message,
                 [self.wallet.keypair]
             )
 
-            # Send via RPC
-            rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT")
-            commitment = CommitmentLevel.Confirmed
-            config = RpcSendTransactionConfig(preflight_commitment=commitment)
+            # Step 3: Send via Jito + RPC in parallel (reuse existing infra)
+            rpc_client = await self._get_rpc_client()
+            sig = await self._send_tx_parallel(tx, rpc_client)
+            logger.info(f"[PUMPPORTAL] Sell TX sent: {sig}")
 
-            send_response = requests.post(
-                url=rpc_endpoint,
-                headers={"Content-Type": "application/json"},
-                data=SendVersionedTransaction(tx, config).to_json(),
-                timeout=30
-            )
-
-            result = send_response.json()
-
-            if "result" in result:
-                sig = result["result"]
-                logger.info(f"[PUMPPORTAL] Sell TX: {sig} — confirming on-chain...")
-
-                # Confirm on-chain before reporting success
-                try:
-                    from solana.rpc.async_api import AsyncClient
-                    rpc_endpoint = os.getenv("SOLANA_NODE_RPC_ENDPOINT") or os.getenv("DRPC_RPC_ENDPOINT")
-                    async_client = AsyncClient(rpc_endpoint)
-                    try:
-                        confirmed = await self._confirm_transaction(sig, async_client, timeout=15)
-                    finally:
-                        await async_client.close()
-
-                    if confirmed:
-                        logger.info(f"[PUMPPORTAL] SELL CONFIRMED on-chain: {sig}")
-                        return True, sig, None
-                    else:
-                        logger.warning(f"[PUMPPORTAL] SELL NOT CONFIRMED on-chain: {sig}")
-                        return False, sig, "TX sent but not confirmed on-chain"
-                except Exception as confirm_err:
-                    logger.warning(f"[PUMPPORTAL] Confirm error: {confirm_err}, treating as unconfirmed")
-                    return False, sig, f"Confirm failed: {confirm_err}"
-            elif "error" in result:
-                return False, None, str(result["error"])
+            # Step 4: Verify on-chain confirmation
+            _verified, _verify_err = await verify_transaction_success(rpc_client, sig, max_wait=12.0)
+            if _verified:
+                logger.info(f"[PUMPPORTAL] SELL CONFIRMED on-chain: {sig}")
+                return True, sig, None
             else:
-                return False, None, str(result)
+                logger.warning(f"[PUMPPORTAL] SELL NOT CONFIRMED: {sig} — {_verify_err}")
+                return False, sig, f"TX sent but not confirmed: {_verify_err}"
 
         except Exception as e:
             return False, None, str(e)

@@ -5505,6 +5505,48 @@ class UniversalTrader:
                 return True
 
             logger.error(f"[FAST SELL] Jupiter FAILED: {error} [{_elapsed:.0f}ms]")
+
+            # FIX S42-1: PumpPortal fallback for bonding curve tokens
+            # Jupiter returns TOKEN_NOT_TRADABLE for tokens still on pump.fun bonding curve
+            # PumpPortal handles bonding curve + PumpSwap + Raydium via pool=auto
+            if error and "TOKEN_NOT_TRADABLE" in str(error) and mint_str.endswith("pump"):
+                logger.warning(f"[FAST SELL] Jupiter TOKEN_NOT_TRADABLE — trying PumpPortal for {token_info.symbol}")
+                try:
+                    success, sig, error = await self._fallback_seller._sell_via_pumpportal(
+                        token_info.mint, sell_quantity, token_info.symbol
+                    )
+                except Exception as _pp_e:
+                    logger.error(f"[FAST SELL] PumpPortal exception: {_pp_e}")
+                    return False
+
+                _elapsed = (_time.monotonic() - _t0) * 1000
+                if success:
+                    logger.warning(f"[FAST SELL] PumpPortal SUCCESS: {sig} [{_elapsed:.0f}ms]")
+                    asyncio.create_task(self._update_balance_after_trade())
+                    original_qty = (
+                        actual_balance
+                        if (actual_balance is not None and actual_balance >= 0)
+                        else getattr(position, "quantity", sell_quantity)
+                    )
+                    _exit_reason_str = exit_reason.value if isinstance(exit_reason, ExitReason) else (str(exit_reason) if exit_reason else "")
+                    asyncio.create_task(self._verify_sell_in_background(mint_str, original_qty, token_info.symbol, sell_quantity, exit_reason=_exit_reason_str, tx_sig=sig))
+                    if not skip_cleanup:
+                        position.close_position(current_price, ExitReason.STOP_LOSS)
+                        self._remove_position(mint_str)
+                        try:
+                            from trading.redis_state import forget_position_forever
+                            await forget_position_forever(mint_str, reason="sl_sell")
+                        except Exception as e:
+                            logger.warning(f"[FAST SELL] Redis cleanup failed: {e}")
+                    logger.warning(
+                        f"[FAST SELL] COMPLETE (PumpPortal): {token_info.symbol} "
+                        f"exit={exit_reason} qty_sold={sell_quantity:.2f} "
+                        f"price={current_price:.10f} sig={sig}"
+                    )
+                    return True
+
+                logger.error(f"[FAST SELL] PumpPortal also FAILED: {error} [{_elapsed:.0f}ms]")
+
             return False
 
     async def _save_token_info(self, token_info: TokenInfo) -> None:
