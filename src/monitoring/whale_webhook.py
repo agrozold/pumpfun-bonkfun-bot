@@ -295,7 +295,7 @@ class WhaleWebhookReceiver:
             token_transfers = tx.get("tokenTransfers", [])
             native_transfers = tx.get("nativeTransfers", [])
             
-            sol_spent = 0.0
+            wsol_spent = 0.0
             token_received = None
             token_amount = 0.0
             
@@ -307,19 +307,24 @@ class WhaleWebhookReceiver:
                 
                 if mint == SOL_MINT:
                     if from_addr == fee_payer:
-                        sol_spent += amount
+                        wsol_spent += amount
                     continue
                 
                 if to_addr == fee_payer and mint not in self.token_blacklist:
                     token_received = mint
                     token_amount = amount
             
+            native_spent = 0.0
             for nt in native_transfers:
                 from_addr = nt.get("fromUserAccount", "")
                 amount = float(nt.get("amount", 0)) / 1e9
                 if from_addr == fee_payer:
-                    sol_spent += amount
+                    native_spent += amount
             
+            # FIX S41: Prevent double counting wSOL + native SOL.
+            # PumpSwap: native SOL wraps to wSOL in same TX — same money counted twice.
+            sol_spent = max(wsol_spent, native_spent)
+
             if not token_received:
                 self._stats["sells_skipped"] += 1
                 logger.warning(f"[SKIP] SELL detected (whale selling, not buying), whale={whale_info.get('label','?')}, tx={signature[:16]}...")

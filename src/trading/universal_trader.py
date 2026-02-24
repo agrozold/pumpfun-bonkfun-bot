@@ -1371,9 +1371,10 @@ class UniversalTrader:
                 # INSTANT Position creation — monitor starts NOW, not after TX callback (12s delay)
                 from trading.position import Position as PositionCls, save_positions as _save_pos, register_monitor as _reg_mon
                 from utils.batch_price_service import watch_token as _watch
+                _pos_symbol = whale_buy.token_symbol or mint_str[:8]
                 position = PositionCls.create_from_buy_result(
                     mint=mint,
-                    symbol=whale_buy.token_symbol,
+                    symbol=_pos_symbol,
                     entry_price=entry_price,
                     quantity=token_amount,
                     take_profit_percentage=self.take_profit_percentage,
@@ -1417,7 +1418,8 @@ class UniversalTrader:
                     pass
                 _save_pos(self.active_positions)
                 _watch(str(position.mint))
-                logger.warning(f"[WHALE] ⚡ INSTANT Position created for {whale_buy.token_symbol}")
+                _display_symbol = whale_buy.token_symbol or mint_str[:8]
+                logger.warning(f"[WHALE] ⚡ INSTANT Position created for {_display_symbol}")
                 # Register reactive SL/TP for instant gRPC-driven sells
                 # Session 3: DEFER for pumpfun — GEYSER-SELF will register with correct entry
                 # Session 3 fix: Only defer for pumpfun_curve (Jupiter entry is accurate)
@@ -1490,7 +1492,7 @@ class UniversalTrader:
                     _mint_str = str(mint)
                     if _reg_mon(_mint_str):
                         asyncio.create_task(self._monitor_position_until_exit(token_info, position))
-                        logger.warning(f"[WHALE] ⚡ MONITOR STARTED INSTANTLY for {whale_buy.token_symbol}")
+                        logger.warning(f"[WHALE] ⚡ MONITOR STARTED INSTANTLY for {_display_symbol}")
                     else:
                         logger.warning(f"[WHALE] Monitor already running for {whale_buy.token_symbol}")
             else:

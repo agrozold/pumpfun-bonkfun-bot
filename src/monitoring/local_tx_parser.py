@@ -654,21 +654,10 @@ class LocalTxParser:
             sol_change_lamports = (post_balances[0] - pre_balances[0]) + fee
             # Positive = SOL received, Negative = SOL spent
 
-            # FIX S40-2: Include wSOL (wrapped SOL) change in sol_change_lamports
-            # Whales buy via wSOL on PumpSwap/Jupiter — native SOL shows only TX fee
-            # wSOL mint = SOL_MINT, decimals=9 (same as lamports), 1:1 with SOL
-            for _tb in meta.pre_token_balances:
-                if _tb.owner == fee_payer and _tb.mint == SOL_MINT:
-                    _wsol_pre = int(_tb.ui_token_amount.amount) if _tb.ui_token_amount.amount else 0
-                    _wsol_post = 0
-                    for _tb2 in meta.post_token_balances:
-                        if _tb2.owner == fee_payer and _tb2.mint == SOL_MINT:
-                            _wsol_post = int(_tb2.ui_token_amount.amount) if _tb2.ui_token_amount.amount else 0
-                            break
-                    _wsol_diff = _wsol_post - _wsol_pre
-                    if _wsol_diff != 0:
-                        sol_change_lamports += _wsol_diff
-                    break
+            # NOTE S41: wSOL fix S40-2 REMOVED — it caused double counting.
+            # Native SOL balance (pre/post_balances[0]) already includes wSOL wrapping.
+            # When whale wraps SOL→wSOL in same TX, native balance decreases by full amount.
+            # Adding wSOL diff on top would double-count (same as webhook bug).
 
 
 
