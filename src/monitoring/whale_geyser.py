@@ -1578,15 +1578,15 @@ class WhaleGeyserReceiver:
                     _effective_label = "NORMAL -20%"
 
                     # Thresholds MUST match position.py exactly:
-                    #   0-60s:  -40% (whale impact absorption)
+                    #   S36-1: 0-60s: -30% floor (was -40%, too wide — KASH/Silent lost extra 10-15%)
                     #   60s+:   -20% (config SL)
                     if _p_age < 60.0:
-                        if _pnl > -40.0:
+                        if _pnl > -30.0:
                             _do_sl = False
-                            _effective_label = "WIDENED -40%"
-                        elif sub.price <= _ep * 0.60:
+                            _effective_label = "WIDENED -30%"
+                        elif sub.price <= _ep * 0.70:
                             _do_sl = True  # absolute floor
-                            _effective_label = "FLOOR -40%"
+                            _effective_label = "FLOOR -30%"
                     if _do_sl:
                         if not _trigger.get("triggered"):
                             _trigger["triggered"] = True

@@ -4215,24 +4215,24 @@ class UniversalTrader:
                 _prev_price = current_price
                 # === END PATCH 9A ===
 
-                # Session 9: BATCH PRICE GUARD — reject anomalous batch prices
-                # If batch price shows >50% drop, skip first 5 ticks (stale data), then accept as real
-                # Session 4: moonbag bypass + separate counter (was shared with anomaly detection)
+                # S36-2: BATCH PRICE GUARD — reject anomalous batch prices
+                # Skip first 2 ticks only (was 5 — Ashen lost 5s on real rug pull)
+                # Session 4: moonbag bypass + separate counter
                 if price_source in ("batch_cache", "batch_retry") and position.entry_price > 0 and not position.is_moonbag:
                     _batch_pnl = (current_price - position.entry_price) / position.entry_price
                     if _batch_pnl < -0.50:
                         _batch_anomaly_count += 1
-                        if _batch_anomaly_count <= 5:
+                        if _batch_anomaly_count <= 2:
                             logger.warning(
                                 f"[PRICE GUARD] {token_info.symbol}: batch price {current_price:.10f} "
-                                f"looks anomalous ({_batch_pnl*100:+.1f}% vs entry), skipping tick #{_batch_anomaly_count}/5"
+                                f"looks anomalous ({_batch_pnl*100:+.1f}% vs entry), skipping tick #{_batch_anomaly_count}/2"
                             )
                             await asyncio.sleep(self.price_check_interval)
                             continue
-                        elif _batch_anomaly_count == 6:
+                        elif _batch_anomaly_count == 3:
                             logger.warning(
                                 f"[PRICE GUARD] {token_info.symbol}: price {current_price:.10f} "
-                                f"confirmed real after 5 ticks ({_batch_pnl*100:+.1f}%), proceeding with SL check"
+                                f"confirmed real after 2 ticks ({_batch_pnl*100:+.1f}%), proceeding with SL check"
                             )
                     else:
                         _batch_anomaly_count = 0

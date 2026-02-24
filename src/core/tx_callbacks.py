@@ -313,12 +313,22 @@ async def on_buy_success(tx: "PendingTransaction"):
                 if not _pos_found:
                     _skip_grpc = True
                     logger.info(f"[TX_CALLBACK] {symbol}: position already closed — skip gRPC subscribe")
-                # Check 3: Curve/vault already subscribed?
+                # Check 3: Already subscribed? Allow vault upgrade if curve-only but vaults resolved
+                # S36-3: Grapekun bug — curve subscribed (dead/migrated) blocked vault subscribe
                 elif not _skip_grpc and _tr.whale_tracker:
                     _wt = _tr.whale_tracker
-                    if mint in getattr(_wt, '_curve_subscriptions', {}) or mint in getattr(_wt, '_vault_subscriptions', {}):
+                    _has_curve = mint in getattr(_wt, '_curve_subscriptions', {})
+                    _has_vault = mint in getattr(_wt, '_vault_subscriptions', {})
+                    if _has_vault:
                         _skip_grpc = True
-                        logger.info(f"[TX_CALLBACK] {symbol}: already subscribed — skip gRPC subscribe")
+                        logger.info(f"[TX_CALLBACK] {symbol}: vault already subscribed — skip gRPC subscribe")
+                    elif _has_curve and pool_base_vault and pool_quote_vault:
+                        # Curve subscribed but vaults resolved — upgrade to vault (curve may be dead/migrated)
+                        _skip_grpc = False
+                        logger.info(f"[TX_CALLBACK] {symbol}: curve subscribed but vaults available — upgrading to vault")
+                    elif _has_curve:
+                        _skip_grpc = True
+                        logger.info(f"[TX_CALLBACK] {symbol}: curve already subscribed — skip gRPC subscribe")
         except Exception:
             pass
         # === Phase 4c: Subscribe to bonding curve if no vaults found ===

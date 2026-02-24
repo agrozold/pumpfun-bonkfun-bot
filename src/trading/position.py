@@ -287,14 +287,15 @@ class Position:
 
         # DYNAMIC SL: wider SL in first 60s to survive impact dip from whale buy
         # Whale copy: bot buys AFTER whale, price naturally retraces 15-30%
-        # 0-60s: -40% (whale impact absorption), 60s+: config SL (-20%)
+        # S36-1: 0-60s: -30% floor (was -40%, too wide — KASH/Silent lost extra 10-15%)
+        # 60s+: config SL (-20%)
         if self.stop_loss_price and not self.is_moonbag:
             _pos_age = (datetime.utcnow() - self.entry_time).total_seconds() if self.entry_time else 999
             if _pos_age < 60.0:
-                # First 60s: whale impact absorption — SL at -40%
-                _dynamic_sl = self.entry_price * (1 - 0.40)
+                # First 60s: whale impact absorption — SL at -30%
+                _dynamic_sl = self.entry_price * (1 - 0.30)
                 if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 60s, price hit -40% SL")
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 60s, price hit -30% SL")
                     return True, ExitReason.STOP_LOSS
             else:
                 # After 60s: normal config SL (-20%)
