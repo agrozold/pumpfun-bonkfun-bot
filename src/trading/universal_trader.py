@@ -2052,6 +2052,11 @@ class UniversalTrader:
         # Falls through to Jupiter if BC not found / complete / error
         # ============================================
         try:
+            # FIX S40-1: Skip direct if no reserves from whale TX (saves 70-150ms)
+            # reserves=0 = whale traded via PumpSwap/Jupiter = token migrated
+            if virtual_sol_reserves == 0 or virtual_token_reserves == 0:
+                logger.info(f"[SKIP] [2.5/4] No reserves — skip direct, go Jupiter ({symbol})")
+                raise Exception("no_reserves_skip")
             fallback_direct = self._fallback_buyer
             logger.info(f"[CHECK] [2.5/4] Trying pump.fun DIRECT bonding curve for {symbol}...")
             
@@ -4703,9 +4708,10 @@ class UniversalTrader:
                             pending_stop_loss = True
                 # Log ALL positions as WARNING every check
                 if check_count % 10 == 0:  # Log every ~10s
+                    _tp_str = f"{position.take_profit_price:.10f}" if position.take_profit_price else "OFF"
                     logger.warning(
                         f"[MONITOR] {token_info.symbol}: {current_price:.10f} SOL "
-                        f"({pnl_pct:+.2f}%) | TP: {(position.take_profit_price or 0):.10f} | "
+                        f"({pnl_pct:+.2f}%) | TP: {_tp_str} | "
                         f"SL: {(position.stop_loss_price or 0):.10f} | "
                         f"HARD_SL: -{HARD_STOP_LOSS_PCT:.0f}%"
                     )

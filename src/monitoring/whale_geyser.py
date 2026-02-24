@@ -964,6 +964,14 @@ class WhaleGeyserReceiver:
                                     _pos.tokens_arrived = True
                                     _pos.buy_confirmed = True
                                     logger.info(f"[GEYSER-SELF] {_pos.symbol}: tokens_arrived=True, buy_confirmed=True (FIX S25-1)")
+                                    # FIX S39-1: Save to Redis (JSON already saved above, but Redis was stale)
+                                    try:
+                                        import asyncio as _aio_s39
+                                        from trading.position import save_position_redis as _save_redis_s39
+                                        _aio_s39.ensure_future(_save_redis_s39(_pos))
+                                        logger.info(f"[GEYSER-SELF] {_pos.symbol}: saved to Redis (FIX S39-1)")
+                                    except Exception as _redis_err_s39:
+                                        logger.warning(f"[GEYSER-SELF] Redis save failed: {_redis_err_s39}")
                                     # FIX S14-1: Check blacklist_sell_pending
                                     if getattr(_pos, 'blacklist_sell_pending', False):
                                         logger.warning(

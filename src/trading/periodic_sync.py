@@ -239,6 +239,25 @@ async def run_periodic_sync():
             logger.info(f"[SYNC] Done: {len(valid)} valid, {len(phantoms)} phantoms removed, "
                         f"{fixed_confirmed} buy_confirmed fixed")
 
+
+            # FIX S39-2: Sync in-memory active_positions -> Redis (preserves HWM, TSL trigger, entry_price)
+            # Memory has latest values (updated by monitor loop), Redis may be stale
+            try:
+                from trading.trader_registry import get_trader as _get_trader_s39
+                _trader_s39 = _get_trader_s39()
+                if _trader_s39 and hasattr(_trader_s39, "active_positions") and _trader_s39.active_positions:
+                    from trading.position import save_position_redis as _save_redis_s39
+                    _synced = 0
+                    for _p in _trader_s39.active_positions:
+                        try:
+                            await _save_redis_s39(_p)
+                            _synced += 1
+                        except Exception:
+                            pass
+                    if _synced > 0:
+                        logger.info(f"[SYNC] FIX S39-2: Synced {_synced} positions memory -> Redis (HWM/TSL/entry)")
+            except Exception as _e_s39:
+                logger.warning(f"[SYNC] Redis sync failed: {_e_s39}")
             # FIX S30-E: REMOVED export_to_json — it overwrites clean JSON with stale Redis data
             # (was: state.export_to_json which could reintroduce phantom positions)
 
