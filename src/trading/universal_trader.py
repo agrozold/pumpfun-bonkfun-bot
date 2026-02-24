@@ -4836,6 +4836,13 @@ class UniversalTrader:
 
                                 # Save updated position
                                 self._save_position(position)
+                                # FIX S43-2: Explicit Redis save for TSL moonbag transition
+                                try:
+                                    from trading.position import save_position_redis as _save_redis_s43b
+                                    await _save_redis_s43b(position)
+                                    logger.warning(f"[FIX S43-2] {token_info.symbol}: TSL moonbag EXPLICIT Redis save OK (dust={position.is_dust}, moonbag={position.is_moonbag})")
+                                except Exception as _s43eb:
+                                    logger.error(f"[FIX S43-2] {token_info.symbol}: TSL explicit Redis save FAILED: {_s43eb}")
                                 
                                 logger.warning(
                                     f"[MOONBAG] {token_info.symbol}: Converted to moonbag! "
@@ -4893,6 +4900,33 @@ class UniversalTrader:
                         
                         # ========== PARTIAL TP (disable TP) ==========
                         if exit_reason == ExitReason.TAKE_PROFIT and (position.tp_sell_pct < 1.0 or self.moon_bag_percentage > 0):
+                            # FIX S43-4: Balance guard — prevent double TP sell on stale data
+                            try:
+                                _bal_s43 = await asyncio.wait_for(self._get_token_balance(str(token_info.mint)), timeout=2.0)
+                                if _bal_s43 is not None and _bal_s43 >= 0:
+                                    _expected_sell = position.quantity * position.tp_sell_pct
+                                    if _bal_s43 < _expected_sell * 0.5:
+                                        logger.error(
+                                            f"[FIX S43-4] {token_info.symbol}: TP BLOCKED — wallet={_bal_s43:.2f} < expected_sell={_expected_sell:.2f}*0.5. "
+                                            f"TP partial sell likely already happened! Forcing moonbag."
+                                        )
+                                        position.tp_partial_done = True
+                                        position.is_moonbag = True
+                                        position.take_profit_price = None
+                                        position.quantity = _bal_s43 if _bal_s43 > 0 else position.quantity
+                                        position.stop_loss_price = position.entry_price * 0.80
+                                        position.tsl_enabled = True
+                                        position.tsl_active = False
+                                        self._save_position(position)
+                                        try:
+                                            from trading.position import save_position_redis as _sr43
+                                            await _sr43(position)
+                                        except Exception:
+                                            pass
+                                        position.is_selling = False
+                                        continue
+                            except (asyncio.TimeoutError, Exception) as _s43_be:
+                                logger.warning(f"[FIX S43-4] {token_info.symbol}: balance check failed: {_s43_be}, proceeding with TP")
                             remaining_quantity = position.quantity * (1 - position.tp_sell_pct)
 
                             if remaining_quantity > 1.0:
@@ -4918,6 +4952,13 @@ class UniversalTrader:
                                 position.tsl_trigger_price = 0
                                 logger.warning(f"[TSL] {token_info.symbol}: moonbag TSL DEFERRED — will activate at +{self.tsl_activation_pct*100:.0f}% from entry")
                                 self._save_position(position)
+                                # FIX S43-2: Explicit Redis save for moonbag transition (fire-and-forget race fix)
+                                try:
+                                    from trading.position import save_position_redis as _save_redis_s43
+                                    await _save_redis_s43(position)
+                                    logger.warning(f"[FIX S43-2] {token_info.symbol}: moonbag EXPLICIT Redis save OK (tp_partial={position.tp_partial_done}, moonbag={position.is_moonbag})")
+                                except Exception as _s43e:
+                                    logger.error(f"[FIX S43-2] {token_info.symbol}: explicit Redis save FAILED: {_s43e}")
                                 # Unsubscribe gRPC curve+ATA — moonbag uses batch price
                                 try:
                                     _mint_str = str(token_info.mint)
@@ -6157,6 +6198,45 @@ class UniversalTrader:
             except Exception as _be:
                 logger.warning(f"[RESTORE] Balance check failed for {position.symbol}: {type(_be).__name__}: {_be}")
 
+            # === FIX S43-3: STALE MOONBAG DETECTION ===
+            # If Redis returned tp_partial_done=False but wallet balance is much less than
+            # expected (TP partial sell already happened), force moonbag transition.
+            # This catches stale Redis data from race conditions.
+            if not getattr(position, 'tp_partial_done', False) and not position.is_moonbag:
+                _tp_sell_pct_s43 = getattr(self, 'tp_sell_pct', 0.9)
+                _expected_after_tp = position.quantity * (1 - _tp_sell_pct_s43)
+                try:
+                    _wallet_bal_s43 = await self._get_token_balance(mint_str)
+                    if _wallet_bal_s43 is not None and _wallet_bal_s43 > 0 and position.quantity > 0:
+                        _bal_ratio = _wallet_bal_s43 / position.quantity
+                        # If wallet has ~10% of position qty, TP partial sell already happened
+                        if _bal_ratio < 0.5 and _wallet_bal_s43 > 1.0:
+                            logger.error(
+                                f"[FIX S43-3] {position.symbol}: STALE DATA DETECTED! "
+                                f"wallet={_wallet_bal_s43:.2f} vs position.qty={position.quantity:.2f} "
+                                f"(ratio={_bal_ratio:.2f}) — TP partial sell already happened! "
+                                f"FORCING moonbag transition"
+                            )
+                            position.quantity = _wallet_bal_s43
+                            position.tp_partial_done = True
+                            position.is_moonbag = True
+                            position.take_profit_price = None
+                            position.tsl_active = False
+                            position.tsl_enabled = True
+                            position.high_water_mark = 0
+                            position.tsl_trigger_price = 0
+                            position.stop_loss_price = position.entry_price * 0.80
+                            # Save corrected data to Redis immediately
+                            try:
+                                from trading.position import save_position_redis as _save_redis_s43c
+                                await _save_redis_s43c(position)
+                                logger.warning(f"[FIX S43-3] {position.symbol}: corrected data saved to Redis")
+                            except Exception:
+                                pass
+                except Exception as _s43_bal_err:
+                    logger.warning(f"[FIX S43-3] {position.symbol}: balance check failed: {_s43_bal_err}")
+            # === END FIX S43-3 ===
+
             # === SMART RESTORE: Check current price vs TP/DCA ===
             # Prevent instant TP trigger or DCA buy when price already moved
             try:
@@ -6378,7 +6458,28 @@ class UniversalTrader:
                     logger.warning(f"[RESTORE] {position.symbol}: MOONBAG — batch price WATCH ensured (FIX S19-1)")
                 except Exception as _we:
                     logger.warning(f"[RESTORE] {position.symbol}: watch_token failed: {_we}")
-                logger.info(f"[RESTORE] {position.symbol}: MOONBAG — skipping gRPC subscribe, using batch price")
+                # FIX S43-5: Subscribe moonbag to PublicNode gRPC (NOT Chainstack!)
+                # Chainstack is for active positions only — moonbag/dust must use PublicNode
+                try:
+                    if getattr(self, '_moonbag_monitor', None):
+                        _bv_r = getattr(position, 'pool_base_vault', None)
+                        _qv_r = getattr(position, 'pool_quote_vault', None)
+                        if not _bv_r or not _qv_r:
+                            from trading.vault_resolver import resolve_vaults
+                            _vr_r = await resolve_vaults(mint_str)
+                            if _vr_r:
+                                _bv_r, _qv_r = _vr_r[0], _vr_r[1]
+                                position.pool_base_vault = _bv_r
+                                position.pool_quote_vault = _qv_r
+                                position.pool_address = _vr_r[2]
+                        if _bv_r and _qv_r:
+                            self._moonbag_monitor.subscribe(mint_str, _bv_r, _qv_r, decimals=6, symbol=position.symbol)
+                            logger.warning(f"[RESTORE] {position.symbol}: MOONBAG — PublicNode gRPC subscribed (FIX S43-5)")
+                        else:
+                            logger.info(f"[RESTORE] {position.symbol}: MOONBAG — no vaults, batch price only")
+                except Exception as _mge_r:
+                    logger.info(f"[RESTORE] {position.symbol}: moonbag gRPC subscribe failed: {_mge_r}")
+                logger.info(f"[RESTORE] {position.symbol}: MOONBAG — skipping Chainstack gRPC, using PublicNode + batch price")
             elif self.whale_tracker and hasattr(self.whale_tracker, 'subscribe_vault_accounts') and position.pool_base_vault and position.pool_quote_vault:
                 await self.whale_tracker.subscribe_vault_accounts(
                     mint=mint_str,
