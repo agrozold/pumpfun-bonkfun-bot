@@ -131,6 +131,11 @@ class UniversalTrader:
         buy_amount: float,
         buy_slippage: float,
         sell_slippage: float,
+        # S44: Priority fees for FallbackSeller
+        buy_priority_fee: int = 20_000_000,
+        buy_jupiter_priority_fee: int = 2_000_000,
+        sell_priority_fee: int = 2_000_000,
+        sell_jupiter_priority_fee: int = 200_000,
         # Platform configuration
         platform: Platform | str = Platform.PUMP_FUN,
         # ========== CODE VERSION MARKER ==========
@@ -588,8 +593,8 @@ class UniversalTrader:
             client=self.solana_client,
             wallet=self.wallet,
             slippage=sell_slippage,
-            priority_fee=6_500_000,         # microlamports/CU for pumpfun (~650K lamports at ~100K CU)
-            jupiter_priority_fee=650_000,   # lamports total for Jupiter (~0.00065 SOL)
+            priority_fee=sell_priority_fee,
+            jupiter_priority_fee=sell_jupiter_priority_fee,
             max_retries=1,
             jupiter_api_key=self.jupiter_api_key,
         )
@@ -598,12 +603,13 @@ class UniversalTrader:
             client=self.solana_client,
             wallet=self.wallet,
             slippage=buy_slippage,
-            priority_fee=6_500_000,         # microlamports/CU for pumpfun (~650K lamports at ~100K CU)
-            jupiter_priority_fee=650_000,   # lamports total for Jupiter (~0.00065 SOL)
+            priority_fee=buy_priority_fee,
+            jupiter_priority_fee=buy_jupiter_priority_fee,
             max_retries=1,
             jupiter_api_key=self.jupiter_api_key,
         )
         logger.warning(f"[INIT] _fallback_seller slippage={sell_slippage} (sells), _fallback_buyer slippage={buy_slippage} (buys)")
+        logger.warning(f"[INIT] S44 fees: BUY pf={buy_priority_fee:,} jup={buy_jupiter_priority_fee:,} | SELL pf={sell_priority_fee:,} jup={sell_jupiter_priority_fee:,}")
         # Initialize the appropriate listener with platform filtering
         self.token_listener = ListenerFactory.create_listener(
             listener_type=listener_type,

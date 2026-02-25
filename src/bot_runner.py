@@ -149,6 +149,11 @@ async def start_bot(config_path: str):
             # Trade parameters
             buy_amount=cfg["trade"]["buy_amount"],
             buy_slippage=cfg["trade"]["buy_slippage"],
+            # S44: Priority fees for FallbackSeller (buy/sell)
+            buy_priority_fee=cfg.get("priority_fees", {}).get("buy_priority_fee", 20_000_000),
+            buy_jupiter_priority_fee=cfg.get("priority_fees", {}).get("buy_jupiter_priority_fee", 2_000_000),
+            sell_priority_fee=cfg.get("priority_fees", {}).get("sell_priority_fee", 2_000_000),
+            sell_jupiter_priority_fee=cfg.get("priority_fees", {}).get("sell_jupiter_priority_fee", 200_000),
             sell_slippage=cfg["trade"]["sell_slippage"],
             # Balance protection
             min_sol_balance=cfg["trade"].get("min_sol_balance", 0.03),

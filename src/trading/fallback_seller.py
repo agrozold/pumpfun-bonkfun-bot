@@ -267,43 +267,162 @@ class FallbackSeller:
         return self._alt_client
 
     async def _send_tx_parallel(self, signed_tx, rpc_client):
-        """Send TX via Jito + RPC in parallel. Returns first successful signature."""
+        """S44-1: Send TX via ALL Jito endpoints + ALL RPC endpoints in parallel.
+        
+        Sends the same signed TX to 7-8 places simultaneously.
+        First successful signature wins. Solana deduplicates by signature.
+        More endpoints = higher chance of reaching current leader faster.
+        """
+        import time as _time
+        _t0 = _time.monotonic()
+        
         jito = get_jito_sender()
+        import base64
+        tx_bytes = bytes(signed_tx)
+        tx_base64 = base64.b64encode(tx_bytes).decode('utf-8')
 
-        async def _jito_send():
-            if not jito.enabled:
-                return None
-            return await jito.send_transaction(signed_tx)
+        # === S44-1: Collect ALL RPC endpoints ===
+        extra_rpc_urls = []
+        for env_key in (
+            "CHAINSTACK_RPC_ENDPOINT",
+            "DRPC_RPC_ENDPOINT",
+            "ALCHEMY_RPC_ENDPOINT",
+            "SOLANA_PUBLIC_RPC_ENDPOINT",
+        ):
+            url = os.getenv(env_key)
+            if url:
+                extra_rpc_urls.append((env_key.split("_")[0], url))
+        # Helius RPC from API key
+        _helius_key = os.getenv("HELIUS_API_KEY")
+        if _helius_key:
+            extra_rpc_urls.append(("Helius", f"https://mainnet.helius-rpc.com/?api-key={_helius_key}"))
 
-        async def _rpc_send():
+        # === S44-2: Multiple Jito block engines ===
+        jito_endpoints = []
+        if jito.enabled:
+            # Primary from .env
+            primary_jito = jito.block_engine_url
+            jito_endpoints.append(primary_jito)
+            # Add other regions (deduplicated)
+            for url in (
+                "https://frankfurt.mainnet.block-engine.jito.wtf",
+                "https://amsterdam.mainnet.block-engine.jito.wtf",
+                "https://ny.mainnet.block-engine.jito.wtf",
+                "https://tokyo.mainnet.block-engine.jito.wtf",
+            ):
+                if url != primary_jito:
+                    jito_endpoints.append(url)
+
+        # === Build tasks ===
+        async def _rpc_send_primary():
+            """Primary RPC client (already connected)."""
             result = await rpc_client.send_transaction(
                 signed_tx,
                 opts=TxOpts(skip_preflight=True, preflight_commitment=Confirmed)
             )
             return str(result.value)
 
-        tasks = [asyncio.create_task(_rpc_send())]
-        if jito.enabled:
-            tasks.insert(0, asyncio.create_task(_jito_send()))
+        async def _rpc_send_raw(name: str, url: str):
+            """Send via raw HTTP POST to additional RPC endpoints."""
+            payload = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "sendTransaction",
+                "params": [tx_base64, {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "preflightCommitment": "processed",
+                    "maxRetries": 0
+                }]
+            }
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
+                async with sess.post(url, json=payload) as resp:
+                    data = await resp.json()
+                    if "result" in data:
+                        return data["result"]
+                    err = data.get("error", {})
+                    raise RuntimeError(f"{name}: {err}")
 
+        async def _jito_send_to(url: str):
+            """Send via specific Jito block engine."""
+            payload = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "sendTransaction",
+                "params": [tx_base64, {"encoding": "base64"}]
+            }
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
+                async with sess.post(f"{url}/api/v1/transactions", json=payload) as resp:
+                    data = await resp.json()
+                    if "result" in data:
+                        return data["result"]
+                    err = data.get("error", {})
+                    raise RuntimeError(f"Jito {url.split('.')[0].split('//')[1]}: {err}")
+
+        # Primary RPC (already-connected client)
+        tasks = [asyncio.create_task(_rpc_send_primary())]
+        
+        # Extra RPC endpoints
+        for name, url in extra_rpc_urls:
+            tasks.append(asyncio.create_task(_rpc_send_raw(name, url)))
+        
+        # Jito endpoints
+        for jito_url in jito_endpoints:
+            tasks.append(asyncio.create_task(_jito_send_to(jito_url)))
+
+        # === S44-3: bloXroute swQoS (staked connections, FREE tier) ===
+        _bloxroute_auth = os.getenv("BLOXROUTE_AUTH_HEADER")
+        if _bloxroute_auth:
+            async def _bloxroute_send(region_url: str):
+                """Send via bloXroute Trader API with swQoS staked connections."""
+                payload = {
+                    "transaction": {"content": tx_base64},
+                    "frontRunningProtection": False,
+                    "useStakedRPCs": True,
+                }
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
+                    async with sess.post(
+                        region_url,
+                        json=payload,
+                        headers={"Authorization": _bloxroute_auth, "Content-Type": "application/json"}
+                    ) as resp:
+                        data = await resp.json()
+                        sig = data.get("signature")
+                        if sig:
+                            return sig
+                        raise RuntimeError(f"bloXroute: {str(data)[:100]}")
+
+            for bx_url in (
+                "https://ny.solana.dex.blxrbdn.com/api/v2/submit",
+                "https://uk.solana.dex.blxrbdn.com/api/v2/submit",
+            ):
+                tasks.append(asyncio.create_task(_bloxroute_send(bx_url)))
+
+        total_tasks = len(tasks)
+
+        # Race — first successful signature wins
         sig = None
+        errors = []
         for coro in asyncio.as_completed(tasks):
             try:
                 result = await coro
                 if result:
                     sig = result
+                    _elapsed = (_time.monotonic() - _t0) * 1000
+                    logger.info(
+                        f"[TX] S44 parallel send: {sig[:20]}... "
+                        f"({_elapsed:.0f}ms, {total_tasks} endpoints)"
+                    )
                     break
             except Exception as e:
-                logger.warning(f'[TX] Parallel send error: {e}')
+                errors.append(str(e)[:60])
                 continue
 
-        # Cancel remaining tasks
+        # Cancel remaining tasks (fire-and-forget — let them finish in background)
         for t in tasks:
             if not t.done():
                 t.cancel()
 
         if not sig:
-            raise RuntimeError('Both Jito and RPC send failed')
+            raise RuntimeError(f'All {total_tasks} send endpoints failed: {errors[:3]}')
         return sig
 
 
