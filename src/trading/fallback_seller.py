@@ -396,6 +396,47 @@ class FallbackSeller:
             ):
                 tasks.append(asyncio.create_task(_bloxroute_send(bx_url)))
 
+        # === S44-5: Circular Fast (swQoS + Jito, free 25 RPS) ===
+        _circular_key = os.getenv("CIRCULAR_FAST_API_KEY")
+        if _circular_key:
+            async def _circular_send():
+                payload = {
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "sendTransaction",
+                    "params": [tx_base64, {"frontRunningProtection": False}]
+                }
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
+                    async with sess.post(
+                        "https://fast.circular.bot/transactions",
+                        json=payload,
+                        headers={"Content-Type": "application/json", "x-api-key": _circular_key}
+                    ) as resp:
+                        data = await resp.json()
+                        result = data.get("result")
+                        if result:
+                            sig = result.get("signature") if isinstance(result, dict) else result
+                            if sig:
+                                return sig
+                        raise RuntimeError(f"Circular: {str(data.get('error',''))[:80]}")
+            tasks.append(asyncio.create_task(_circular_send()))
+
+        # === S44-4: TPU Penetrator (direct TPU access via swQoS, Frankfurt) ===
+        _tpu_endpoint = os.getenv("TPU_PENETRATOR_URL")
+        if _tpu_endpoint:
+            async def _tpu_send():
+                payload = {
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "sendTransaction",
+                    "params": [tx_base64, {"encoding": "base64", "skipPreflight": True}]
+                }
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
+                    async with sess.post(_tpu_endpoint, json=payload) as resp:
+                        data = await resp.json()
+                        if "result" in data:
+                            return data["result"]
+                        raise RuntimeError(f"TPU: {str(data.get('error',''))[:80]}")
+            tasks.append(asyncio.create_task(_tpu_send()))
+
         total_tasks = len(tasks)
 
         # Race — first successful signature wins
