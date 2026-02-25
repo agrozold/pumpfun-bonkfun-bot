@@ -181,3 +181,7 @@ data/
 whale_activity_helius.json
 htmlcov/
 logs/
+
+# Blacklist data (personal, generated at runtime)
+blacklisted_deployers.json
+*.bak*
