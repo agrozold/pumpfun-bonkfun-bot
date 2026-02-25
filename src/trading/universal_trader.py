@@ -131,6 +131,8 @@ class UniversalTrader:
         buy_amount: float,
         buy_slippage: float,
         sell_slippage: float,
+        # Deployer blacklist
+        deployer_blacklist_enabled: bool = True,
         # S44: Priority fees for FallbackSeller
         buy_priority_fee: int = 20_000_000,
         buy_jupiter_priority_fee: int = 2_000_000,
@@ -625,6 +627,7 @@ class UniversalTrader:
 
         # Trading parameters
         self.buy_amount = buy_amount
+        self.deployer_blacklist_enabled = deployer_blacklist_enabled
         self.buy_slippage = buy_slippage
         self.sell_slippage = sell_slippage
         self.max_retries = max_retries
@@ -1117,10 +1120,13 @@ class UniversalTrader:
         # ============================================
         # DEPLOYER BLACKLIST CHECK (instant O(1))
         # ============================================
-        from trading.deployer_blacklist import is_mint_blacklisted
-        if is_mint_blacklisted(mint_str):
-            logger.warning(f"[WHALE] ⛔ BLACKLISTED deployer token: {whale_buy.token_symbol} ({mint_str[:12]}...) — skipping")
-            return
+        if self.deployer_blacklist_enabled:
+            from trading.deployer_blacklist import is_mint_blacklisted
+            if is_mint_blacklisted(mint_str):
+                logger.warning(f"[WHALE] ⛔ BLACKLISTED deployer token: {whale_buy.token_symbol} ({mint_str[:12]}...) — skipping")
+                return
+        else:
+            logger.debug(f"[WHALE] Blacklist check DISABLED for {mint_str[:12]}...")
 
         # ============================================
         # ============================================
@@ -1640,7 +1646,7 @@ class UniversalTrader:
                 if _creator:
                     _cstr = str(_creator)[:44]
                     from trading.deployer_blacklist import is_deployer_blacklisted, get_deployer_label
-                    if is_deployer_blacklisted(_cstr):
+                    if self.deployer_blacklist_enabled and is_deployer_blacklisted(_cstr):
                         _label = get_deployer_label(_cstr)
                         logger.warning(
                             f"[BLACKLIST] \u26d4 ASYNC deployer block: {whale_buy.token_symbol} "
