@@ -18,6 +18,10 @@ priority_fees:
   enable_fixed: true
   fixed_amount: 500000
   max_fee: 5000000
+  buy_priority_fee: 20000000
+  buy_jupiter_priority_fee: 2000000
+  sell_priority_fee: 2000000
+  sell_jupiter_priority_fee: 200000
 pumpportal:
   url: wss://pumpportal.fun/api/data
 trade:
