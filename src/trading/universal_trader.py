@@ -49,13 +49,6 @@ try:
 except ImportError:
     WHALE_GEYSER_AVAILABLE = False
 
-# SpyDefi Telegram listener (Achievement x2 signals)
-try:
-    from monitoring.spydefi_listener import SpyDefiListener
-    SPYDEFI_AVAILABLE = True
-except ImportError:
-    SPYDEFI_AVAILABLE = False
-
 # Signal deduplication for dual-receiver mode (gRPC + Webhook)
 try:
     from monitoring.signal_dedup import SignalDedup
@@ -269,20 +262,6 @@ class UniversalTrader:
         volume_pattern_max_tokens: int = 50,
         volume_pattern_min_health: int = 70,
         volume_pattern_min_opportunity: int = 70,
-        # SpyDefi Telegram listener
-        enable_spydefi: bool = False,
-        spydefi_api_id: int = 0,
-        spydefi_api_hash: str = "",
-        spydefi_min_multiplier: int = 2,
-        spydefi_max_multiplier: int = 2,
-        spydefi_max_mcap: float = 1_000_000,
-        spydefi_min_mcap: float = 10_000,
-        spydefi_channels: list | None = None,
-        spydefi_kolscope_skip_dip: bool = False,
-        spydefi_callanalyser_min_cpw: float = 490,
-        spydefi_callanalyser_mcap_max: float = 3_000_000,
-        spydefi_callanalyser_min_calls: int = 2,
-        spydefi_callanalyser_max_calls: int = 10,
         # Balance protection
         min_sol_balance: float = 0.03,
     ):
@@ -560,28 +539,7 @@ class UniversalTrader:
         self.enable_volume_pattern = enable_volume_pattern
         self.volume_pattern_analyzer: VolumePatternAnalyzer | None = None
 
-        # SpyDefi Telegram listener
-        self.enable_spydefi = enable_spydefi
-        self.spydefi_listener: "SpyDefiListener | None" = None
-        if enable_spydefi and SPYDEFI_AVAILABLE:
-            self.spydefi_listener = SpyDefiListener(
-                min_multiplier=spydefi_min_multiplier,
-                max_multiplier=spydefi_max_multiplier,
-                max_mcap=spydefi_max_mcap,
-                min_mcap=spydefi_min_mcap,
-                api_id=spydefi_api_id,
-                api_hash=spydefi_api_hash,
-                channels=spydefi_channels or ["spydefi", "KOLscope"],
-                kolscope_skip_dip=spydefi_kolscope_skip_dip,
-                callanalyser_min_cpw=spydefi_callanalyser_min_cpw,
-                callanalyser_mcap_max=spydefi_callanalyser_mcap_max,
-                callanalyser_min_calls=spydefi_callanalyser_min_calls,
-                callanalyser_max_calls=spydefi_callanalyser_max_calls,
-            )
-            self.spydefi_listener.set_callback(self._on_whale_buy)
-            logger.warning(f"[SPYDEFI] Listener created: x{spydefi_min_multiplier}-x{spydefi_max_multiplier}, mcap {spydefi_min_mcap:,.0f}-{spydefi_max_mcap:,.0f}, calls {spydefi_callanalyser_min_calls}-{spydefi_callanalyser_max_calls}")
-        elif enable_spydefi:
-            logger.error("[SPYDEFI] Enabled but SpyDefiListener not available (import failed)")
+        self.spydefi_listener = None
 
         if enable_volume_pattern:
             self.volume_pattern_analyzer = VolumePatternAnalyzer(
@@ -1497,13 +1455,13 @@ class UniversalTrader:
                 position.buy_confirmed = False  # PATCH: race condition guard — wait for TX confirmation
                 position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
                 position.buy_tx_sig = tx_sig  # FIX 10-3: save for on-chain entry verification
-                # S45: SpyDefi/KOLscope buys via Jupiter — TX already confirmed, no gRPC callback
+                # External signal buys — TX already confirmed, no gRPC callback
                 # Immediately mark as confirmed to unblock SL/TP
                 if getattr(whale_buy, 'platform', '') in ('spydefi', 'kolscope', 'solearlytrending', 'callanalyser', 'solhousesignal'):
                     position.buy_confirmed = True
                     position.tokens_arrived = True
                     position.entry_price_provisional = False
-                    logger.warning(f"[TELEGRAM] {whale_buy.token_symbol}: Instant confirm (no gRPC callback for Telegram signals)")
+                    logger.warning(f"[SIGNAL] {whale_buy.token_symbol}: Instant confirm (external signal)")
                 self.active_positions.append(position)
                 # FIX S23-6: Remove from sold_mints on new buy (prevent ZOMBIE KILL on re-bought tokens)
                 try:
@@ -3157,10 +3115,6 @@ class UniversalTrader:
                     logger.info("Whale tracker not enabled, skipping...")
 
 
-            # S45: Start SpyDefi Telegram listener
-            if self.spydefi_listener:
-                logger.warning("[SPYDEFI] Starting Telegram listener in background...")
-                asyncio.create_task(self.spydefi_listener.start())
 
             # S38: Start moonbag gRPC monitor (PublicNode) for moonbag/dust price tracking
             try:

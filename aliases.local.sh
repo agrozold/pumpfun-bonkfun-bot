@@ -62,14 +62,4 @@ alias blacklist='cd $BOT_DIR && ./venv/bin/python3 scripts/blacklist_cli.py'
 
 echo "✅ aliases.local loaded for whale-bot only"
 
-# === SpyDefi monitoring ===
-alias spy-log='grep -i "spydefi" /opt/pumpfun-bonkfun-bot/logs/bot-whale-copy.log | tail -30'
-alias spy-live='grep -i "spydefi" /opt/pumpfun-bonkfun-bot/logs/bot-whale-copy.log | tail -f'
-alias spy-buys='grep -i "spydefi.*SIGNAL\|spydefi.*WHALE COPY\|spydefi.*Achievement\|spydefi.*Skip\|spydefi.*Dedup\|spydefi.*already\|spydefi.*No contract" /opt/pumpfun-bonkfun-bot/logs/bot-whale-copy.log | tail -30'
-alias spy-seen='cat /opt/pumpfun-bonkfun-bot/data/spydefi_seen.json | python3 -m json.tool'
-alias spy-status='/opt/pumpfun-bonkfun-bot/scripts/spy_status.sh'
-
-# TG channels toggle (spy-only = CallAnalyser only, spy-all = all channels)
-alias spy-only='sed -i "/- solearlytrending/d; /- solhousesignal/d" /opt/pumpfun-bonkfun-bot/bots/bot-whale-copy.yaml && echo "✅ CallAnalyser only" && grep -A 5 "channels:" /opt/pumpfun-bonkfun-bot/bots/bot-whale-copy.yaml'
-alias spy-all='sed -i "/- CallAnalyserSol/a\\  - solearlytrending\n  - solhousesignal" /opt/pumpfun-bonkfun-bot/bots/bot-whale-copy.yaml && echo "✅ All channels restored" && grep -A 7 "channels:" /opt/pumpfun-bonkfun-bot/bots/bot-whale-copy.yaml'
-alias spy-channels='echo "Active channels:" && grep -A 5 "channels:" /opt/pumpfun-bonkfun-bot/bots/bot-whale-copy.yaml'
+alias token-add='cd $BOT_DIR && ./venv/bin/python3 scripts/token_add.py'

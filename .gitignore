@@ -185,3 +185,8 @@ logs/
 # Blacklist data (personal, generated at runtime)
 blacklisted_deployers.json
 *.bak*
+
+# SpyDefi/Telegram (private module)
+src/monitoring/spydefi_listener.py
+spydefi_seen.json
+scripts/spy_status.sh
