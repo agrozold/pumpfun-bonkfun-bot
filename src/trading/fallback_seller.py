@@ -772,7 +772,7 @@ class FallbackSeller:
             ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output) + bytes([0])  # track_volume = false
 
             # Instructions - use idempotent ATA creation like buy.py (always include, won't fail if exists)
-            compute_limit_ix = set_compute_unit_limit(100_000)  # S45: was 200K, real ~50-80K
+            compute_limit_ix = set_compute_unit_limit(300_000)  # S48: 300K for Token2022 (was 100K)
             compute_price_ix = set_compute_unit_price(self.priority_fee)
 
             # Create WSOL ATA (idempotent - won't fail if exists)
@@ -839,71 +839,7 @@ class FallbackSeller:
             logger.info(f"PumpSwap BUY signature: {sig}")
             logger.info(f"https://solscan.io/tx/{sig}")
 
-            # Quick status check - don't block too long on rate limits
-            import asyncio
-            for attempt in range(min(self.max_retries, 3)):  # Max 3 attempts for status
-                try:
-                    backoff = 2.0 * (attempt + 1)  # 2, 4, 6 seconds
-                    logger.info(f"Checking tx status (attempt {attempt + 1}/3, wait {backoff}s)...")
-                    await asyncio.sleep(backoff)
-
-                    tx_response = await rpc_client.get_transaction(
-                        Signature.from_string(sig),
-                        encoding="json",
-                        max_supported_transaction_version=0,
-                    )
-
-                    if tx_response.value is None:
-                        logger.warning("Transaction not found yet...")
-                        continue
-
-                    meta = tx_response.value.transaction.meta
-                    if meta and meta.err is not None:
-                        error_msg = f"Transaction FAILED on-chain: {meta.err}"
-                        logger.error(f"FAILED: {error_msg}")
-                        return False, sig, error_msg, 0.0, 0.0
-
-                    logger.info(f"PumpSwap BUY SUCCESS! Got ~{expected_tokens:,.2f} {symbol}")
-                    # Schedule callback for position management (TX already verified above)
-                    verifier = await get_tx_verifier()
-                    await verifier.schedule_verification(
-                        signature=sig, mint=str(mint), symbol=symbol, action="buy",
-                        token_amount=expected_tokens, price=price,
-                        on_success=on_buy_success, on_failure=on_buy_failure,
-                        context={"platform": "pumpswap", "bot_name": "fallback_seller", "pre_verified": True, **_vault_context, **(position_config or {})},
-                    )
-                    return True, sig, None, expected_tokens, price
-
-                except Exception as e:
-                    error_str = str(e).lower()
-                    # If rate limited, return signature - user can check on solscan
-                    if "429" in error_str or "rate" in error_str or "too many" in error_str:
-                        logger.warning(f"RPC rate limited - scheduling background verification: {sig}")
-                        # Schedule background verification instead of assuming success
-                        verifier = await get_tx_verifier()
-                        await verifier.schedule_verification(
-                            signature=sig, mint=str(mint), symbol=symbol, action="buy",
-                            token_amount=expected_tokens, price=price,
-                            on_success=on_buy_success, on_failure=on_buy_failure,
-                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **_vault_context, **(position_config or {})},
-                        )
-                        return True, sig, None, expected_tokens, price  # TX sent, verification pending
-
-                    error_msg = str(e) if str(e) else f"{type(e).__name__}"
-                    logger.warning(f"Status check failed: {error_msg}")
-                    if attempt == 2:  # Last attempt
-                        logger.warning(f"Could not verify - scheduling background verification: {sig}")
-                        verifier = await get_tx_verifier()
-                        await verifier.schedule_verification(
-                            signature=sig, mint=str(mint), symbol=symbol, action="buy",
-                            token_amount=expected_tokens, price=price,
-                            on_success=on_buy_success, on_failure=on_buy_failure,
-                            context={"platform": "pumpswap", "bot_name": "fallback_seller", **_vault_context, **(position_config or {})},
-                        )
-                        return True, sig, None, expected_tokens, price  # TX sent, verification pending
-
-            # If we get here, tx was sent but status unknown - schedule background verification
-            logger.warning(f"Status unknown - scheduling background verification: {sig}")
+            # S48: Fire & forget — TxVerifier confirms in background (was 2-6s blocking loop)
             verifier = await get_tx_verifier()
             await verifier.schedule_verification(
                 signature=sig, mint=str(mint), symbol=symbol, action="buy",
@@ -911,7 +847,8 @@ class FallbackSeller:
                 on_success=on_buy_success, on_failure=on_buy_failure,
                 context={"platform": "pumpswap", "bot_name": "fallback_seller", **_vault_context, **(position_config or {})},
             )
-            return True, sig, None, expected_tokens, price  # TX sent, verification pending
+            logger.info(f"PumpSwap BUY sent! ~{expected_tokens:,.2f} {symbol} — verifying in background")
+            return True, sig, None, expected_tokens, price
 
         except Exception as e:
             logger.exception(f"PumpSwap BUY error for {symbol}: {e}")
@@ -1202,7 +1139,7 @@ class FallbackSeller:
             )
             
             # Compute budget
-            cu_limit_ix = set_compute_unit_limit(80_000)  # S45: was 150K, real ~30-50K
+            cu_limit_ix = set_compute_unit_limit(150_000)  # S48: 150K safety (was 80K)
             cu_price_ix = set_compute_unit_price(self.priority_fee)
             
             # S45: Jito tip in TX body (required for Helius Sender, improves Jito landing)
