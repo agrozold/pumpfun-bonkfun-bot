@@ -205,6 +205,11 @@ class ParsedSwap:
     whale_creator_vault: str = ""       # S14: from whale TX account[9]
     whale_fee_recipient: str = ""       # S14: from whale TX account[1]
     whale_assoc_bonding_curve: str = "" # S14: from whale TX account[4]
+    # S46: PumpSwap accounts from whale TX
+    whale_pumpswap_pool: str = ""               # pool address (accounts[0])
+    whale_pumpswap_pool_base_vault: str = ""    # pool_base_token_account (accounts[7])
+    whale_pumpswap_pool_quote_vault: str = ""   # pool_quote_token_account (accounts[8])
+    whale_pumpswap_base_token_program: str = "" # Token2022 or SPL (accounts[11])
 
 
 @dataclass
@@ -328,7 +333,7 @@ class LocalTxParser:
             # Works for ALL DEXes without decoding instruction data
             # ------------------------------------------------------------------
             result = self._parse_from_balances(
-                meta, account_keys, signature, fee_payer, platform
+                msg, meta, account_keys, signature, fee_payer, platform
             )
             if result is not None:
                 self.stats.balance_method_used += 1
@@ -629,7 +634,7 @@ class LocalTxParser:
         )
 
     def _parse_from_balances(
-        self, meta, account_keys: list[str],
+        self, msg, meta, account_keys: list[str],
         signature: str, fee_payer: str, platform: str
     ) -> Optional[ParsedSwap]:
         """
@@ -734,6 +739,17 @@ class LocalTxParser:
             sol_amount = abs(sol_change_lamports) / 1e9
             token_amount = abs(best_diff) / (10 ** best_decimals)
 
+            # S46: Extract PumpSwap accounts from whale TX
+            _ps_pool = ""
+            _ps_base_vault = ""
+            _ps_quote_vault = ""
+            _ps_base_token_program = ""
+            if platform == "pumpswap":
+                try:
+                    _ps_pool, _ps_base_vault, _ps_quote_vault, _ps_base_token_program =                         self._extract_pumpswap_accounts(msg, meta, account_keys)
+                except Exception as _ps_err:
+                    logger.info(f"[LOCAL_PARSER] S46 PumpSwap account extract FAILED: {_ps_err}")
+
             return ParsedSwap(
                 signature=signature,
                 fee_payer=fee_payer,
@@ -742,11 +758,87 @@ class LocalTxParser:
                 sol_amount=sol_amount,
                 token_amount=token_amount,
                 platform=platform,
+                whale_pumpswap_pool=_ps_pool,
+                whale_pumpswap_pool_base_vault=_ps_base_vault,
+                whale_pumpswap_pool_quote_vault=_ps_quote_vault,
+                whale_pumpswap_base_token_program=_ps_base_token_program,
             )
 
         except Exception as e:
             logger.debug(f"[LOCAL_PARSER] Balance parse failed: {e}")
             return None
+
+    def _extract_pumpswap_accounts(
+        self, msg, meta, account_keys: list[str]
+    ) -> tuple[str, str, str, str]:
+        """S46: Extract PumpSwap pool, vault, and token_program accounts from whale TX.
+
+        PumpSwap buy_exact_quote_in IDL account layout:
+          #0:  pool (market_address)
+          #1:  user (whale)
+          #2:  global_config
+          #3:  base_mint (token)
+          #4:  quote_mint (SOL)
+          #5:  user_base_token_account
+          #6:  user_quote_token_account
+          #7:  pool_base_token_account  <- base vault
+          #8:  pool_quote_token_account <- quote vault
+          #9:  protocol_fee_recipient
+          #10: protocol_fee_recipient_token_account
+          #11: base_token_program       <- Token2022 or SPL
+          ...  (12-22: system programs, event_authority, fee programs)
+
+        Returns (pool, base_vault, quote_vault, base_token_program) or ("","","","").
+        """
+        _PUMPSWAP_PROG = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        _pool = ""
+        _base_vault = ""
+        _quote_vault = ""
+        _base_tp = ""
+
+        def _try_extract(accs: list[int], source: str) -> bool:
+            nonlocal _pool, _base_vault, _quote_vault, _base_tp
+            if len(accs) < 12:
+                return False
+            # Validate: accounts[0] should be a pool (not a known program)
+            # We just check that we have enough accounts
+            _pool = account_keys[accs[0]] if accs[0] < len(account_keys) else ""
+            _base_vault = account_keys[accs[7]] if accs[7] < len(account_keys) else ""
+            _quote_vault = account_keys[accs[8]] if accs[8] < len(account_keys) else ""
+            _base_tp = account_keys[accs[11]] if accs[11] < len(account_keys) else ""
+            if _pool and _base_vault and _quote_vault:
+                logger.info(
+                    f"[LOCAL_PARSER] S46 PumpSwap accounts ({source}): "
+                    f"pool={_pool[:12]}... base_vault={_base_vault[:12]}... "
+                    f"quote_vault={_quote_vault[:12]}... base_tp={_base_tp[:12]}..."
+                )
+                return True
+            return False
+
+        # Pass 1: outer instructions (direct PumpSwap TX)
+        for _oix in msg.instructions:
+            _prog_idx = _oix.program_id_index
+            _prog = account_keys[_prog_idx] if _prog_idx < len(account_keys) else ""
+            if _prog != _PUMPSWAP_PROG:
+                continue
+            _oix_accs = list(_oix.accounts)
+            if _try_extract(_oix_accs, "OUTER"):
+                return (_pool, _base_vault, _quote_vault, _base_tp)
+
+        # Pass 2: inner instructions (router TX — PumpSwap is CPI)
+        if meta.inner_instructions:
+            for _ig in meta.inner_instructions:
+                for _iix in _ig.instructions:
+                    _prog_idx = _iix.program_id_index
+                    _prog = account_keys[_prog_idx] if _prog_idx < len(account_keys) else ""
+                    if _prog != _PUMPSWAP_PROG:
+                        continue
+                    _iix_accs = list(_iix.accounts)
+                    if _try_extract(_iix_accs, "INNER CPI"):
+                        return (_pool, _base_vault, _quote_vault, _base_tp)
+
+        logger.info("[LOCAL_PARSER] S46 PumpSwap: no accounts found in TX")
+        return ("", "", "", "")
 
     def is_blacklisted(self, mint: str) -> bool:
         """Check if a token mint is in the blacklist."""

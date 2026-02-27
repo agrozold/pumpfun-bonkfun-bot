@@ -48,6 +48,14 @@ try:
     WHALE_GEYSER_AVAILABLE = True
 except ImportError:
     WHALE_GEYSER_AVAILABLE = False
+
+# SpyDefi Telegram listener (Achievement x2 signals)
+try:
+    from monitoring.spydefi_listener import SpyDefiListener
+    SPYDEFI_AVAILABLE = True
+except ImportError:
+    SPYDEFI_AVAILABLE = False
+
 # Signal deduplication for dual-receiver mode (gRPC + Webhook)
 try:
     from monitoring.signal_dedup import SignalDedup
@@ -131,6 +139,10 @@ class UniversalTrader:
         buy_amount: float,
         buy_slippage: float,
         sell_slippage: float,
+        # Dynamic SL
+        dynamic_sl_enabled: bool = True,
+        dynamic_sl_percentage: float = 0.30,
+        dynamic_sl_duration: int = 60,
         # Deployer blacklist
         deployer_blacklist_enabled: bool = True,
         # S44: Priority fees for FallbackSeller
@@ -257,6 +269,20 @@ class UniversalTrader:
         volume_pattern_max_tokens: int = 50,
         volume_pattern_min_health: int = 70,
         volume_pattern_min_opportunity: int = 70,
+        # SpyDefi Telegram listener
+        enable_spydefi: bool = False,
+        spydefi_api_id: int = 0,
+        spydefi_api_hash: str = "",
+        spydefi_min_multiplier: int = 2,
+        spydefi_max_multiplier: int = 2,
+        spydefi_max_mcap: float = 1_000_000,
+        spydefi_min_mcap: float = 10_000,
+        spydefi_channels: list | None = None,
+        spydefi_kolscope_skip_dip: bool = False,
+        spydefi_callanalyser_min_cpw: float = 490,
+        spydefi_callanalyser_mcap_max: float = 3_000_000,
+        spydefi_callanalyser_min_calls: int = 2,
+        spydefi_callanalyser_max_calls: int = 10,
         # Balance protection
         min_sol_balance: float = 0.03,
     ):
@@ -534,6 +560,29 @@ class UniversalTrader:
         self.enable_volume_pattern = enable_volume_pattern
         self.volume_pattern_analyzer: VolumePatternAnalyzer | None = None
 
+        # SpyDefi Telegram listener
+        self.enable_spydefi = enable_spydefi
+        self.spydefi_listener: "SpyDefiListener | None" = None
+        if enable_spydefi and SPYDEFI_AVAILABLE:
+            self.spydefi_listener = SpyDefiListener(
+                min_multiplier=spydefi_min_multiplier,
+                max_multiplier=spydefi_max_multiplier,
+                max_mcap=spydefi_max_mcap,
+                min_mcap=spydefi_min_mcap,
+                api_id=spydefi_api_id,
+                api_hash=spydefi_api_hash,
+                channels=spydefi_channels or ["spydefi", "KOLscope"],
+                kolscope_skip_dip=spydefi_kolscope_skip_dip,
+                callanalyser_min_cpw=spydefi_callanalyser_min_cpw,
+                callanalyser_mcap_max=spydefi_callanalyser_mcap_max,
+                callanalyser_min_calls=spydefi_callanalyser_min_calls,
+                callanalyser_max_calls=spydefi_callanalyser_max_calls,
+            )
+            self.spydefi_listener.set_callback(self._on_whale_buy)
+            logger.warning(f"[SPYDEFI] Listener created: x{spydefi_min_multiplier}-x{spydefi_max_multiplier}, mcap {spydefi_min_mcap:,.0f}-{spydefi_max_mcap:,.0f}, calls {spydefi_callanalyser_min_calls}-{spydefi_callanalyser_max_calls}")
+        elif enable_spydefi:
+            logger.error("[SPYDEFI] Enabled but SpyDefiListener not available (import failed)")
+
         if enable_volume_pattern:
             self.volume_pattern_analyzer = VolumePatternAnalyzer(
                 min_volume_1h=volume_pattern_min_volume_1h,
@@ -628,6 +677,9 @@ class UniversalTrader:
         # Trading parameters
         self.buy_amount = buy_amount
         self.deployer_blacklist_enabled = deployer_blacklist_enabled
+        self.dynamic_sl_enabled = dynamic_sl_enabled
+        self.dynamic_sl_percentage = dynamic_sl_percentage
+        self.dynamic_sl_duration = dynamic_sl_duration
         self.buy_slippage = buy_slippage
         self.sell_slippage = sell_slippage
         self.max_retries = max_retries
@@ -1198,8 +1250,32 @@ class UniversalTrader:
             # Check if already have position in this token
             for pos in self.active_positions:
                 if str(pos.mint) == mint_str:
-                    logger.info(f"[WHALE] Already have position in {mint_str[:8]}..., skipping")
-                    self._bought_tokens.add(mint_str)  # Mark as bought to prevent future attempts
+                    # === FIX S47-4: Allow re-buy if only moonbag/dust remains ===
+                    _is_mb_or_dust = getattr(pos, 'is_moonbag', False) or getattr(pos, 'is_dust', False)
+                    if _is_mb_or_dust:
+                        logger.warning(
+                            f"[WHALE] {mint_str[:8]}... has moonbag/dust (qty={pos.quantity:.2f}) — "
+                            f"CLOSING old position, allowing re-buy (FIX S47-4)"
+                        )
+                        # Kill old monitor
+                        unregister_monitor(mint_str)
+                        # Remove from active_positions
+                        self.active_positions = [p for p in self.active_positions if str(p.mint) != mint_str]
+                        # Remove from Redis
+                        try:
+                            from trading.position import save_position_redis, remove_position as _rem_pos
+                            _rem_pos(mint_str)
+                            import redis.asyncio as _r474
+                            _rc474 = _r474.Redis(host='localhost', port=6379, db=0)
+                            await _rc474.hdel("whale:positions", mint_str)
+                            await _rc474.aclose()
+                        except Exception as _e474:
+                            logger.warning(f"[FIX S47-4] Redis cleanup failed: {_e474}")
+                        # Remove from _bought_tokens so buy proceeds
+                        self._bought_tokens.discard(mint_str)
+                        break
+                    logger.info(f"[WHALE] Already have ACTIVE position in {mint_str[:8]}..., skipping")
+                    self._bought_tokens.add(mint_str)
                     return
 
             # Mark as BUYING (in progress) BEFORE releasing lock
@@ -1271,6 +1347,10 @@ class UniversalTrader:
                     whale_creator_vault=getattr(whale_buy, "whale_creator_vault", ""),
                     whale_fee_recipient=getattr(whale_buy, "whale_fee_recipient", ""),
                     whale_assoc_bonding_curve=getattr(whale_buy, "whale_assoc_bonding_curve", ""),
+                    whale_pumpswap_pool=getattr(whale_buy, "whale_pumpswap_pool", ""),
+                    whale_pumpswap_pool_base_vault=getattr(whale_buy, "whale_pumpswap_pool_base_vault", ""),
+                    whale_pumpswap_pool_quote_vault=getattr(whale_buy, "whale_pumpswap_pool_quote_vault", ""),
+                    whale_pumpswap_base_token_program=getattr(whale_buy, "whale_pumpswap_base_token_program", ""),
                 )
 
                 # Fatal errors — не ретраить, токен невалидный
@@ -1417,6 +1497,13 @@ class UniversalTrader:
                 position.buy_confirmed = False  # PATCH: race condition guard — wait for TX confirmation
                 position.tokens_arrived = False  # Phase 6: wait for gRPC ATA confirmation
                 position.buy_tx_sig = tx_sig  # FIX 10-3: save for on-chain entry verification
+                # S45: SpyDefi/KOLscope buys via Jupiter — TX already confirmed, no gRPC callback
+                # Immediately mark as confirmed to unblock SL/TP
+                if getattr(whale_buy, 'platform', '') in ('spydefi', 'kolscope', 'solearlytrending', 'callanalyser', 'solhousesignal'):
+                    position.buy_confirmed = True
+                    position.tokens_arrived = True
+                    position.entry_price_provisional = False
+                    logger.warning(f"[TELEGRAM] {whale_buy.token_symbol}: Instant confirm (no gRPC callback for Telegram signals)")
                 self.active_positions.append(position)
                 # FIX S23-6: Remove from sold_mints on new buy (prevent ZOMBIE KILL on re-bought tokens)
                 try:
@@ -1468,6 +1555,12 @@ class UniversalTrader:
                 # Without this, stop loss will NEVER trigger!
                 # ============================================
                 if self.exit_strategy == "tp_sl" and not self.marry_mode:
+                    # Pass dynamic SL config to position
+                    if hasattr(self, '_active_positions') and mint_str in self._active_positions:
+                        _pos = self._active_positions[mint_str]
+                        _pos.dynamic_sl_enabled = self.dynamic_sl_enabled
+                        _pos.dynamic_sl_percentage = self.dynamic_sl_percentage
+                        _pos.dynamic_sl_duration = self.dynamic_sl_duration
                     logger.warning(f"[WHALE] Starting TP/SL monitor for {whale_buy.token_symbol}")
 
                     # Create TokenInfo for monitoring WITH bonding_curve for fast sell!
@@ -1757,6 +1850,11 @@ class UniversalTrader:
         whale_creator_vault: str = "",
         whale_fee_recipient: str = "",
         whale_assoc_bonding_curve: str = "",
+        # S46: PumpSwap accounts from whale TX
+        whale_pumpswap_pool: str = "",
+        whale_pumpswap_pool_base_vault: str = "",
+        whale_pumpswap_pool_quote_vault: str = "",
+        whale_pumpswap_base_token_program: str = "",
     ) -> tuple[bool, str | None, str, float, float]:
         """Buy token on ANY available DEX - universal liquidity finder.
 
@@ -2119,6 +2217,48 @@ class UniversalTrader:
                 logger.info(f"[PUMPFUN-DIRECT] Failed: {d_err} — falling through to Jupiter")
         except Exception as e:
             logger.info(f"[PUMPFUN-DIRECT] Error: {e} — falling through to Jupiter")
+
+        # ============================================
+        # [2.7/4] S46: TRY PUMPSWAP DIRECT (for migrated tokens on PumpSwap AMM)
+        # Uses pool address from whale TX — no get_program_accounts needed
+        # Saves ~200ms HTTP round-trip vs Jupiter Metis API
+        # ============================================
+        if whale_pumpswap_pool:
+            logger.info(f"[CHECK] [2.7/4] Trying PumpSwap DIRECT for {symbol} (pool={whale_pumpswap_pool[:16]}...)...")
+            try:
+                _ps_market = Pubkey.from_string(whale_pumpswap_pool)
+                _ps_pos_config = {
+                    "take_profit_pct": self.take_profit_percentage,
+                    "stop_loss_pct": self.stop_loss_percentage,
+                    "tsl_enabled": self.tsl_enabled,
+                    "tsl_activation_pct": self.tsl_activation_pct,
+                    "tsl_trail_pct": self.tsl_trail_pct,
+                    "tsl_sell_pct": self.tsl_sell_pct,
+                    "tp_sell_pct": self.tp_sell_pct,
+                    "max_hold_time": self.max_hold_time,
+                    "bot_name": "universal_trader",
+                    "whale_wallet": whale_wallet,
+                    "whale_label": whale_label,
+                    "dca_enabled": self.dca_enabled,
+                    "dca_pending": self.dca_enabled,
+                    "dca_trigger_pct": 0.25,
+                    "dca_first_buy_pct": 0.50,
+                }
+                _ps_ok, _ps_sig, _ps_err, _ps_tokens, _ps_price = await self._fallback_buyer.buy_via_pumpswap(
+                    mint=mint,
+                    sol_amount=sol_amount,
+                    symbol=symbol,
+                    market_address=_ps_market,
+                    position_config=_ps_pos_config,
+                )
+                if _ps_ok:
+                    logger.warning(f"[OK] PumpSwap DIRECT BUY: {symbol} - {_ps_tokens:,.2f} tokens @ {_ps_price:.10f} SOL")
+                    logger.warning(f"[OK] PumpSwap DIRECT TX: {_ps_sig}")
+                    return True, _ps_sig, "pumpswap_direct", _ps_tokens, _ps_price
+                else:
+                    logger.info(f"[WARN] [2.7/4] PumpSwap DIRECT failed: {_ps_err} — falling through to Jupiter")
+            except Exception as _ps_e:
+                logger.info(f"[WARN] [2.7/4] PumpSwap DIRECT error: {_ps_e} — falling through to Jupiter")
 
         # ============================================
         # [3/4] TRY JUPITER (universal fallback) - NOW [2/4]
@@ -2615,8 +2755,28 @@ class UniversalTrader:
             # Check if already have position in this token
             for pos in self.active_positions:
                 if str(pos.mint) == mint_str:
-                    logger.info(f"[TRENDING] Already have position in {token.symbol}, skipping")
-                    self._bought_tokens.add(mint_str)  # Mark as bought to prevent future attempts
+                    # === FIX S47-4: Allow re-buy if only moonbag/dust remains ===
+                    _is_mb_or_dust = getattr(pos, 'is_moonbag', False) or getattr(pos, 'is_dust', False)
+                    if _is_mb_or_dust:
+                        logger.warning(
+                            f"[TRENDING] {mint_str[:8]}... has moonbag/dust (qty={pos.quantity:.2f}) — "
+                            f"CLOSING old position, allowing re-buy (FIX S47-4)"
+                        )
+                        unregister_monitor(mint_str)
+                        self.active_positions = [p for p in self.active_positions if str(p.mint) != mint_str]
+                        try:
+                            from trading.position import remove_position as _rem_pos
+                            _rem_pos(mint_str)
+                            import redis.asyncio as _r474
+                            _rc474 = _r474.Redis(host='localhost', port=6379, db=0)
+                            await _rc474.hdel("whale:positions", mint_str)
+                            await _rc474.aclose()
+                        except Exception as _e474:
+                            logger.warning(f"[FIX S47-4] Redis cleanup failed: {_e474}")
+                        self._bought_tokens.discard(mint_str)
+                        break
+                    logger.info(f"[TRENDING] Already have ACTIVE position in {token.symbol}, skipping")
+                    self._bought_tokens.add(mint_str)
                     return
 
             # Mark as BUYING (in progress) BEFORE releasing lock
@@ -2996,6 +3156,11 @@ class UniversalTrader:
                 else:
                     logger.info("Whale tracker not enabled, skipping...")
 
+
+            # S45: Start SpyDefi Telegram listener
+            if self.spydefi_listener:
+                logger.warning("[SPYDEFI] Starting Telegram listener in background...")
+                asyncio.create_task(self.spydefi_listener.start())
 
             # S38: Start moonbag gRPC monitor (PublicNode) for moonbag/dust price tracking
             try:
@@ -4773,6 +4938,35 @@ class UniversalTrader:
 
                     # Handle exit strategies based on exit_reason
                     # Calculate sell quantity
+                    # === FIX S47-3: TP guard BEFORE sell — detect moonbag by value ===
+                    # If position value is tiny vs buy_amount, this is a moonbag
+                    # with lost flags. Block TP and force moonbag transition.
+                    if exit_reason == ExitReason.TAKE_PROFIT:
+                        _val_s47 = position.quantity * position.entry_price if position.entry_price > 0 else 0
+                        if _val_s47 > 0 and _val_s47 < self.buy_amount * 0.30:
+                            logger.error(
+                                f"[FIX S47-3] {position.symbol}: TP BLOCKED (value guard)! "
+                                f"pos_value={_val_s47:.6f} SOL < buy*0.3={self.buy_amount*0.30:.6f}. "
+                                f"This is a moonbag with lost flags. Forcing moonbag."
+                            )
+                            position.tp_partial_done = True
+                            position.is_moonbag = True
+                            position.take_profit_price = None
+                            position.stop_loss_price = position.entry_price * 0.80
+                            position.tsl_enabled = True
+                            position.tsl_active = False
+                            position.high_water_mark = 0
+                            position.tsl_trigger_price = 0
+                            self._save_position(position)
+                            try:
+                                from trading.position import save_position_redis as _sr47
+                                await _sr47(position)
+                            except Exception:
+                                pass
+                            position.is_selling = False
+                            continue
+                    # === END FIX S47-3 ===
+
                     if exit_reason == ExitReason.TAKE_PROFIT:
                         if position.tp_sell_pct < 1.0:
                             sell_quantity = position.quantity * position.tp_sell_pct
@@ -5437,8 +5631,27 @@ class UniversalTrader:
         _tokens_ok = getattr(position, 'tokens_arrived', True)
         _buy_ok = getattr(position, 'buy_confirmed', True)
         if not _tokens_ok:
-            logger.warning(f"[FAST SELL] HARD BLOCK: {token_info.symbol} tokens_arrived=False — cannot sell")
-            return False
+            # S48: Auto-fix tokens_arrived if on-chain balance exists and age > 60s
+            from datetime import datetime as _dt_fix, timezone as _tz_fix
+            _pos_age_fix = (_dt_fix.now(_tz_fix.utc) - position.entry_time.replace(tzinfo=_tz_fix.utc)).total_seconds() if position.entry_time else 0
+            if _pos_age_fix > 60:
+                try:
+                    _fix_balance = await asyncio.wait_for(self._get_token_balance(mint_str), timeout=2.0)
+                    if _fix_balance is not None and _fix_balance > 0:
+                        logger.warning(f"[AUTO-FIX] {token_info.symbol}: tokens_arrived forced True (balance={_fix_balance:.2f}, age={_pos_age_fix:.0f}s)")
+                        position.tokens_arrived = True
+                        position.buy_confirmed = True
+                        position.entry_price_provisional = False
+                        save_positions(self.active_positions)
+                    else:
+                        logger.warning(f"[FAST SELL] HARD BLOCK: {token_info.symbol} tokens_arrived=False, age={_pos_age_fix:.0f}s, no on-chain balance — cannot sell")
+                        return False
+                except Exception as _fix_err:
+                    logger.warning(f"[FAST SELL] HARD BLOCK: {token_info.symbol} tokens_arrived=False, balance check failed: {_fix_err} — cannot sell")
+                    return False
+            else:
+                logger.warning(f"[FAST SELL] HARD BLOCK: {token_info.symbol} tokens_arrived=False, age={_pos_age_fix:.0f}s < 60s — cannot sell")
+                return False
         if not _buy_ok:
             logger.info(f"[FAST SELL] {token_info.symbol} buy_confirmed=False but tokens_arrived=True — proceeding")
 
@@ -6078,6 +6291,76 @@ class UniversalTrader:
             logger.info(f"[RESTORE] {position.symbol}: Using saved entry={position.entry_price:.10f}, SL={position.stop_loss_price}")
             # === END SYNC ===
             
+            # === FIX S46: STALE MOONBAG DETECTION (EARLY — before any TP/SL) ===
+            # Must run BEFORE TP/SL calculations! Otherwise stale Redis data
+            # (is_moonbag=False, tp_partial_done=False) causes TP to be recreated,
+            # and the bot sells 90% of the moonbag on restart.
+            # Moved from after balance ghost check (was too late in S43-3).
+            if not getattr(position, 'tp_partial_done', False) and not position.is_moonbag:
+                try:
+                    _wallet_bal_s46 = await asyncio.wait_for(
+                        self._get_token_balance(mint_str), timeout=5.0
+                    )
+                    if _wallet_bal_s46 is not None and _wallet_bal_s46 > 0 and position.quantity > 0:
+                        _bal_ratio_s46 = _wallet_bal_s46 / position.quantity
+                        if _bal_ratio_s46 < 0.5 and _wallet_bal_s46 > 1.0:
+                            logger.error(
+                                f"[FIX S46] {position.symbol}: STALE MOONBAG DETECTED! "
+                                f"wallet={_wallet_bal_s46:.2f} vs position.qty={position.quantity:.2f} "
+                                f"(ratio={_bal_ratio_s46:.2f}) — TP partial sell already happened! "
+                                f"FORCING moonbag transition BEFORE TP/SL setup"
+                            )
+                            position.quantity = _wallet_bal_s46
+                            position.tp_partial_done = True
+                            position.is_moonbag = True
+                            position.take_profit_price = None
+                            position.tsl_active = False
+                            position.tsl_enabled = True
+                            position.high_water_mark = 0
+                            position.tsl_trigger_price = 0
+                            position.stop_loss_price = position.entry_price * 0.80
+                            try:
+                                from trading.position import save_position_redis as _save_s46
+                                await _save_s46(position)
+                                logger.warning(f"[FIX S46] {position.symbol}: corrected data saved to Redis")
+                            except Exception:
+                                pass
+                except Exception as _s46_err:
+                    logger.warning(f"[FIX S46] {position.symbol}: early balance check failed: {_s46_err}, proceeding with saved data")
+
+            # === FIX S47-1: ENHANCED stale moonbag detection ===
+            # S46 missed the case where Redis qty=moonbag_qty AND is_moonbag=False
+            # (ratio = 1.0, passes S46 check). New criterion: if position value
+            # is tiny compared to buy_amount, this is almost certainly a moonbag.
+            # Also catches: original_entry_price=0 (lost metadata) + small qty.
+            if not getattr(position, 'tp_partial_done', False) and not position.is_moonbag:
+                _pos_value_s47 = position.quantity * position.entry_price if position.entry_price > 0 else 0
+                _buy_amt_s47 = self.buy_amount  # e.g. 0.08 or 0.1 SOL
+                # If position value < 30% of buy_amount AND TP still set → stale moonbag
+                if _pos_value_s47 > 0 and _pos_value_s47 < _buy_amt_s47 * 0.30 and position.take_profit_price is not None:
+                    logger.error(
+                        f"[FIX S47-1] {position.symbol}: STALE MOONBAG (value-based)! "
+                        f"pos_value={_pos_value_s47:.6f} SOL < buy_amount*0.3={_buy_amt_s47*0.3:.6f} "
+                        f"BUT is_moonbag=False, tp_partial_done=False, TP={position.take_profit_price:.10f}. "
+                        f"FORCING moonbag transition."
+                    )
+                    position.tp_partial_done = True
+                    position.is_moonbag = True
+                    position.take_profit_price = None
+                    position.tsl_active = False
+                    position.tsl_enabled = True
+                    position.high_water_mark = 0
+                    position.tsl_trigger_price = 0
+                    position.stop_loss_price = position.entry_price * 0.80
+                    try:
+                        from trading.position import save_position_redis as _save_s47_1
+                        await _save_s47_1(position)
+                        logger.warning(f"[FIX S47-1] {position.symbol}: corrected data saved to Redis")
+                    except Exception:
+                        pass
+            # === END FIX S47-1 ===
+            # === END FIX S46 ===
+            
             # === ALWAYS CALCULATE TP/SL IF MISSING (skip moonbag) ===
             if position.is_moonbag:
                 # Session 5: Moonbag KEEPS TSL as exit mechanism (wide trail 50%)
@@ -6210,45 +6493,7 @@ class UniversalTrader:
             except Exception as _be:
                 logger.warning(f"[RESTORE] Balance check failed for {position.symbol}: {type(_be).__name__}: {_be}")
 
-            # === FIX S43-3: STALE MOONBAG DETECTION ===
-            # If Redis returned tp_partial_done=False but wallet balance is much less than
-            # expected (TP partial sell already happened), force moonbag transition.
-            # This catches stale Redis data from race conditions.
-            if not getattr(position, 'tp_partial_done', False) and not position.is_moonbag:
-                _tp_sell_pct_s43 = getattr(self, 'tp_sell_pct', 0.9)
-                _expected_after_tp = position.quantity * (1 - _tp_sell_pct_s43)
-                try:
-                    _wallet_bal_s43 = await self._get_token_balance(mint_str)
-                    if _wallet_bal_s43 is not None and _wallet_bal_s43 > 0 and position.quantity > 0:
-                        _bal_ratio = _wallet_bal_s43 / position.quantity
-                        # If wallet has ~10% of position qty, TP partial sell already happened
-                        if _bal_ratio < 0.5 and _wallet_bal_s43 > 1.0:
-                            logger.error(
-                                f"[FIX S43-3] {position.symbol}: STALE DATA DETECTED! "
-                                f"wallet={_wallet_bal_s43:.2f} vs position.qty={position.quantity:.2f} "
-                                f"(ratio={_bal_ratio:.2f}) — TP partial sell already happened! "
-                                f"FORCING moonbag transition"
-                            )
-                            position.quantity = _wallet_bal_s43
-                            position.tp_partial_done = True
-                            position.is_moonbag = True
-                            position.take_profit_price = None
-                            position.tsl_active = False
-                            position.tsl_enabled = True
-                            position.high_water_mark = 0
-                            position.tsl_trigger_price = 0
-                            position.stop_loss_price = position.entry_price * 0.80
-                            # Save corrected data to Redis immediately
-                            try:
-                                from trading.position import save_position_redis as _save_redis_s43c
-                                await _save_redis_s43c(position)
-                                logger.warning(f"[FIX S43-3] {position.symbol}: corrected data saved to Redis")
-                            except Exception:
-                                pass
-                except Exception as _s43_bal_err:
-                    logger.warning(f"[FIX S43-3] {position.symbol}: balance check failed: {_s43_bal_err}")
-            # === END FIX S43-3 ===
-
+            # === FIX S43-3: MOVED TO FIX S46 (early detection before TP/SL) ===
             # === SMART RESTORE: Check current price vs TP/DCA ===
             # Prevent instant TP trigger or DCA buy when price already moved
             try:

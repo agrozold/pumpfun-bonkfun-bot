@@ -150,6 +150,9 @@ async def start_bot(config_path: str):
             buy_amount=cfg["trade"]["buy_amount"],
             buy_slippage=cfg["trade"]["buy_slippage"],
             deployer_blacklist_enabled=cfg.get("whale_copy", {}).get("deployer_blacklist_enabled", True),
+            dynamic_sl_enabled=cfg.get("trade", {}).get("dynamic_sl_enabled", True),
+            dynamic_sl_percentage=cfg.get("trade", {}).get("dynamic_sl_percentage", 0.30),
+            dynamic_sl_duration=cfg.get("trade", {}).get("dynamic_sl_duration", 60),
             # S44: Priority fees for FallbackSeller (buy/sell)
             buy_priority_fee=cfg.get("priority_fees", {}).get("buy_priority_fee", 20_000_000),
             buy_jupiter_priority_fee=cfg.get("priority_fees", {}).get("buy_jupiter_priority_fee", 2_000_000),
@@ -319,6 +322,20 @@ async def start_bot(config_path: str):
             volume_pattern_max_tokens=cfg.get("volume_pattern", {}).get("max_tokens_per_scan", 50),
             volume_pattern_min_health=cfg.get("volume_pattern", {}).get("min_health_score", 70),
             volume_pattern_min_opportunity=cfg.get("volume_pattern", {}).get("min_opportunity_score", 70),
+            # SpyDefi Telegram listener
+            enable_spydefi=cfg.get("spydefi", {}).get("enabled", False),
+            spydefi_api_id=cfg.get("spydefi", {}).get("api_id", 0),
+            spydefi_api_hash=cfg.get("spydefi", {}).get("api_hash", ""),
+            spydefi_min_multiplier=cfg.get("spydefi", {}).get("min_multiplier", 2),
+            spydefi_max_multiplier=cfg.get("spydefi", {}).get("max_multiplier", 2),
+            spydefi_max_mcap=cfg.get("spydefi", {}).get("max_mcap", 1000000),
+            spydefi_min_mcap=cfg.get("spydefi", {}).get("min_mcap", 10000),
+            spydefi_channels=cfg.get("spydefi", {}).get("channels", ["spydefi", "KOLscope"]),
+            spydefi_kolscope_skip_dip=cfg.get("spydefi", {}).get("kolscope_skip_dip", False),
+            spydefi_callanalyser_min_cpw=cfg.get("spydefi", {}).get("callanalyser_min_cpw", 490),
+            spydefi_callanalyser_mcap_max=cfg.get("spydefi", {}).get("callanalyser_mcap_max", 3000000),
+            spydefi_callanalyser_min_calls=cfg.get("spydefi", {}).get("callanalyser_min_calls", 2),
+            spydefi_callanalyser_max_calls=cfg.get("spydefi", {}).get("callanalyser_max_calls", 10),
             # Blind snipe mode configuration
         )
 

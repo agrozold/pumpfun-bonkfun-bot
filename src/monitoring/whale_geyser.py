@@ -171,6 +171,11 @@ class WhaleBuy:
     whale_creator_vault: str = ""       # S14: from whale TX for direct buy
     whale_fee_recipient: str = ""       # S14: from whale TX for direct buy
     whale_assoc_bonding_curve: str = "" # S14: from whale TX for direct buy
+    # S46: PumpSwap accounts from whale TX
+    whale_pumpswap_pool: str = ""
+    whale_pumpswap_pool_base_vault: str = ""
+    whale_pumpswap_pool_quote_vault: str = ""
+    whale_pumpswap_base_token_program: str = ""
 
 
 class WhaleGeyserReceiver:
@@ -256,6 +261,11 @@ class WhaleGeyserReceiver:
         # Dedup
         self._processed_sigs: set[str] = set()
         self._emitted_tokens: set[str] = set()
+
+        # === FIX S47: Whale buy accumulator (aggregate small buys within window) ===
+        self._whale_accumulator: dict[tuple, dict] = {}  # (whale, token) -> {total_sol, first_seen, ...}
+        self._accumulator_window: float = 60.0  # seconds
+        # === END FIX S47 INIT ===
         self._emit_lock = asyncio.Lock()  # S32: Prevent parallel emit for same TX
         self._processed_sigs_emit: set[str] = set()  # S32: Sig dedup inside emit tasks
 
@@ -1013,14 +1023,53 @@ class WhaleGeyserReceiver:
             sol_spent = parsed.sol_amount
 
             # FIX S28-6: 5% tolerance for CPI sol_amount vs actual (fees/rounding difference)
+            # === FIX S47: Accumulate small whale buys within time window ===
             _min_with_tolerance = self.min_buy_amount * 0.95
             if sol_spent < _min_with_tolerance:
-                self._stats["below_min"] += 1
-                logger.info(
-                    f"[GEYSER-LOCAL] Below min: {sol_spent:.4f} < "
-                    f"{_min_with_tolerance:.4f} SOL (min={self.min_buy_amount} * 0.95)"
-                )
-                return
+                _token_for_acc = parsed.token_mint
+                _acc_key = (fee_payer, _token_for_acc)
+                _now = time.time()
+                
+                # Clean stale entries
+                _stale = [k for k, v in self._whale_accumulator.items() if _now - v["first_seen"] > self._accumulator_window * 2]
+                for k in _stale:
+                    del self._whale_accumulator[k]
+                
+                if _acc_key not in self._whale_accumulator:
+                    self._whale_accumulator[_acc_key] = {
+                        "total_sol": 0.0,
+                        "first_seen": _now,
+                        "last_signature": parsed.signature,
+                    }
+                
+                acc = self._whale_accumulator[_acc_key]
+                
+                # Check if window expired
+                if _now - acc["first_seen"] > self._accumulator_window:
+                    acc["total_sol"] = 0.0
+                    acc["first_seen"] = _now
+                
+                acc["total_sol"] += sol_spent
+                acc["last_signature"] = parsed.signature
+                
+                if acc["total_sol"] >= self.min_buy_amount:
+                    logger.warning(
+                        f"[GEYSER-ACCUMULATOR] Whale {whale_info.get('label', '?')[:20]} accumulated "
+                        f"{acc['total_sol']:.4f} SOL >= {self.min_buy_amount} SOL "
+                        f"for {_token_for_acc[:16]}... in {_now - acc['first_seen']:.1f}s — EMITTING"
+                    )
+                    sol_spent = acc["total_sol"]
+                    del self._whale_accumulator[_acc_key]
+                    # Fall through to normal emit logic below
+                else:
+                    self._stats["below_min"] += 1
+                    logger.info(
+                        f"[GEYSER-ACCUMULATOR] {whale_info.get('label', '?')[:20]}: "
+                        f"{sol_spent:.4f} SOL added, total={acc['total_sol']:.4f}/{self.min_buy_amount} SOL, "
+                        f"token={_token_for_acc[:16]}..."
+                    )
+                    return
+            # === END FIX S47 ===
 
             token_received = parsed.token_mint
 
@@ -1079,6 +1128,10 @@ class WhaleGeyserReceiver:
                 whale_creator_vault=getattr(parsed, "whale_creator_vault", ""),
                 whale_fee_recipient=getattr(parsed, "whale_fee_recipient", ""),
                 whale_assoc_bonding_curve=getattr(parsed, "whale_assoc_bonding_curve", ""),
+                whale_pumpswap_pool=getattr(parsed, "whale_pumpswap_pool", ""),
+                whale_pumpswap_pool_base_vault=getattr(parsed, "whale_pumpswap_pool_base_vault", ""),
+                whale_pumpswap_pool_quote_vault=getattr(parsed, "whale_pumpswap_pool_quote_vault", ""),
+                whale_pumpswap_base_token_program=getattr(parsed, "whale_pumpswap_base_token_program", ""),
             )
 
             self._stats["parse_ok"] += 1

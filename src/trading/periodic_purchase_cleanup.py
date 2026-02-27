@@ -14,8 +14,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CLEANUP_INTERVAL = 86400  # 24 hours
-MAX_AGE_SECONDS = 86400  # 24 hours
+CLEANUP_INTERVAL = 3600  # 1 hour (check every hour, remove > 3h old)
+MAX_AGE_SECONDS = 3600  # 1 hour (S47: was 3h)
 HISTORY_FILE = Path("/opt/pumpfun-bonkfun-bot/data/purchased_tokens_history.json")
 
 

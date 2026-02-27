@@ -254,6 +254,21 @@ class FallbackSeller:
         if self._alt_client is not None:
             return self._alt_client
 
+        # S12: Chainstack PRIMARY (74ms avg), Alchemy fallback (45ms avg)
+        # dRPC has cold-start timeouts — moved to last resort
+        rpc_url = (
+            os.getenv("CHAINSTACK_RPC_ENDPOINT") or
+            os.getenv("ALCHEMY_RPC_ENDPOINT") or
+            os.getenv("DRPC_RPC_ENDPOINT") or
+            os.getenv("SOLANA_NODE_RPC_ENDPOINT") or
+            "https://api.mainnet-beta.solana.com"
+        )
+
+        from solana.rpc.async_api import AsyncClient
+        self._alt_client = AsyncClient(rpc_url)
+        logger.info(f"[FALLBACK] Using RPC: {rpc_url[:60]}...")
+        return self._alt_client
+
     async def _get_persistent_session(self) -> aiohttp.ClientSession:
         """S45: Reusable aiohttp session — avoids TCP+TLS handshake per call."""
         if self._persistent_session is None or self._persistent_session.closed:
@@ -270,20 +285,6 @@ class FallbackSeller:
             self._persistent_session = None
 
 
-        # S12: Chainstack PRIMARY (74ms avg), Alchemy fallback (45ms avg)
-        # dRPC has cold-start timeouts — moved to last resort
-        rpc_url = (
-            os.getenv("CHAINSTACK_RPC_ENDPOINT") or
-            os.getenv("ALCHEMY_RPC_ENDPOINT") or
-            os.getenv("DRPC_RPC_ENDPOINT") or
-            os.getenv("SOLANA_NODE_RPC_ENDPOINT") or
-            "https://api.mainnet-beta.solana.com"
-        )
-        
-        from solana.rpc.async_api import AsyncClient
-        self._alt_client = AsyncClient(rpc_url)
-        logger.info(f"[FALLBACK] Using RPC: {rpc_url[:60]}...")
-        return self._alt_client
 
     async def _send_tx_parallel(self, signed_tx, rpc_client):
         """S44-1: Send TX via ALL Jito endpoints + ALL RPC endpoints in parallel.
@@ -718,6 +719,10 @@ class FallbackSeller:
             user_volume_accumulator, _ = Pubkey.find_program_address(
                 [b"user_volume_accumulator", bytes(self.wallet.pubkey)], PUMP_AMM_PROGRAM_ID
             )
+            # S46: pool_v2 PDA (required since program upgrade)
+            pool_v2, _ = Pubkey.find_program_address(
+                [b"pool-v2", bytes(mint)], PUMP_AMM_PROGRAM_ID
+            )
 
             # Build accounts for BUY (SOL -> Token) - ORDER MUST MATCH IDL!
             accounts = [
@@ -744,6 +749,7 @@ class FallbackSeller:
                 AccountMeta(pubkey=user_volume_accumulator, is_signer=False, is_writable=True),  # 20: user_volume_accumulator
                 AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),  # 21: fee_config
                 AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),  # 22: fee_program
+                AccountMeta(pubkey=pool_v2, is_signer=False, is_writable=False),  # 23: pool_v2 (S46)
             ]
 
             # Log accounts list for debugging
@@ -1790,6 +1796,10 @@ class FallbackSeller:
             fee_config, _ = Pubkey.find_program_address(
                 [b"fee_config", bytes(PUMP_AMM_PROGRAM_ID)], PUMP_FEE_PROGRAM
             )
+            # S46: pool_v2 PDA (required since program upgrade)
+            pool_v2, _ = Pubkey.find_program_address(
+                [b"pool-v2", bytes(mint)], PUMP_AMM_PROGRAM_ID
+            )
 
             # Build accounts
             accounts = [
@@ -1814,6 +1824,7 @@ class FallbackSeller:
                 AccountMeta(pubkey=coin_creator_vault, is_signer=False, is_writable=False),
                 AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
                 AccountMeta(pubkey=PUMP_FEE_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=pool_v2, is_signer=False, is_writable=False),  # S46: pool_v2
             ]
 
             # Build instruction

@@ -285,20 +285,19 @@ class Position:
             else:
                 return False, None
 
-        # DYNAMIC SL: wider SL in first 60s to survive impact dip from whale buy
-        # Whale copy: bot buys AFTER whale, price naturally retraces 15-30%
-        # S36-1: 0-60s: -30% floor (was -40%, too wide — KASH/Silent lost extra 10-15%)
-        # 60s+: config SL (-20%)
+        # DYNAMIC SL: wider SL in first N seconds to survive impact dip from whale buy
+        # Configurable via bot-edit: dynamic_sl_enabled, dynamic_sl_percentage, dynamic_sl_duration
         if self.stop_loss_price and not self.is_moonbag:
+            _dsl_enabled = getattr(self, 'dynamic_sl_enabled', True)
+            _dsl_pct = getattr(self, 'dynamic_sl_percentage', 0.30)
+            _dsl_dur = getattr(self, 'dynamic_sl_duration', 60)
             _pos_age = (datetime.utcnow() - self.entry_time).total_seconds() if self.entry_time else 999
-            if _pos_age < 60.0:
-                # First 60s: whale impact absorption — SL at -30%
-                _dynamic_sl = self.entry_price * (1 - 0.30)
+            if _dsl_enabled and _pos_age < _dsl_dur:
+                _dynamic_sl = self.entry_price * (1 - _dsl_pct)
                 if current_price <= _dynamic_sl:
-                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < 60s, price hit -30% SL")
+                    logger.warning(f"[DYNAMIC SL] {self.symbol}: age={_pos_age:.0f}s < {_dsl_dur}s, price hit -{_dsl_pct*100:.0f}% SL")
                     return True, ExitReason.STOP_LOSS
             else:
-                # After 60s: normal config SL (-20%)
                 if current_price <= self.stop_loss_price:
                     return True, ExitReason.STOP_LOSS
 
@@ -320,11 +319,18 @@ class Position:
             _restore_t = getattr(self, 'restore_time', None)
             if _restore_t and not self.tsl_triggered:
                 _since_restore = (datetime.utcnow() - _restore_t).total_seconds()
-                if _since_restore < 15.0:
+                # FIX S46-1: If price ALREADY below trigger at restore — skip grace, trigger immediately
+                # Grace period protects against stale HWM updates, not against confirmed breakdown
+                if current_price <= self.tsl_trigger_price and _since_restore >= 2.0:
+                    # 2s minimum to let price stabilize (avoid triggering on first stale tick)
+                    logger.warning(f"[TSL] {self.symbol} GRACE BYPASS: price {current_price:.10f} already below trigger {self.tsl_trigger_price:.10f} at restore +{_since_restore:.1f}s — immediate trigger (FIX S46-1)")
+                    self.restore_time = None
+                elif _since_restore < 15.0 and current_price > self.tsl_trigger_price:
+                    # Normal grace period — price is ABOVE trigger, HWM might update
                     logger.info(f"[TSL] {self.symbol} GRACE PERIOD: {_since_restore:.1f}s < 15s after restore — skipping trigger")
                     return False, None
                 else:
-                    self.restore_time = None  # Grace period expired, clear it
+                    self.restore_time = None  # Grace period expired or price below trigger
             if not self.tsl_triggered:
                 logger.warning(f"[TSL] {self.symbol} TRIGGERED at {current_price:.10f}")
                 self.tsl_triggered = True
@@ -488,7 +494,36 @@ def save_positions(positions: list[Position], filepath: Path = POSITIONS_FILE) -
         state = await _get_redis()
         if state and await state.is_connected():
             for mint, pos in unique_positions.items():
-                await state.save_position(mint, pos.to_dict())
+                # === FIX S47-2: Merge-protect moonbag flags ===
+                # Never degrade moonbag/tp_partial_done from True→False
+                # This prevents stale in-memory data from corrupting Redis
+                new_data = pos.to_dict()
+                try:
+                    existing = await state.get_position(mint)
+                    if existing:
+                        _redis_moonbag = existing.get("is_moonbag", False)
+                        _redis_tp_done = existing.get("tp_partial_done", False)
+                        _redis_is_dust = existing.get("is_dust", False)
+                        _mem_moonbag = new_data.get("is_moonbag", False)
+                        _mem_tp_done = new_data.get("tp_partial_done", False)
+                        # If Redis has moonbag=True but memory has False → KEEP Redis flags
+                        if (_redis_moonbag and not _mem_moonbag) or (_redis_tp_done and not _mem_tp_done):
+                            logger.warning(
+                                f"[FIX S47-2] {new_data.get('symbol','?')}: MERGE PROTECT! "
+                                f"Redis moonbag={_redis_moonbag}/tp_done={_redis_tp_done} "
+                                f"vs memory moonbag={_mem_moonbag}/tp_done={_mem_tp_done}. "
+                                f"Keeping Redis flags."
+                            )
+                            new_data["is_moonbag"] = _redis_moonbag or _mem_moonbag
+                            new_data["tp_partial_done"] = _redis_tp_done or _mem_tp_done
+                            new_data["is_dust"] = _redis_is_dust or new_data.get("is_dust", False)
+                            # Also protect TP=None (moonbag should have no TP)
+                            if new_data["is_moonbag"] and new_data.get("take_profit_price") is not None:
+                                new_data["take_profit_price"] = None
+                except Exception as _s47e:
+                    pass  # On error, just save as-is
+                # === END FIX S47-2 ===
+                await state.save_position(mint, new_data)
     
     try:
         loop = asyncio.get_running_loop()
