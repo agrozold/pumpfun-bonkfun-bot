@@ -55,7 +55,7 @@ class BlockhashCache:
 
     # Configuration
     HTTP_POLL_INTERVAL = 5.0    # seconds between HTTP polls
-    GRPC_POLL_INTERVAL = 2.0    # seconds between gRPC polls (faster)
+    GRPC_POLL_INTERVAL = 0.5    # S45: was 2.0 — gRPC unary call via Chainstack channel, near-zero cost
     MAX_CACHE_AGE = 10.0        # max age before fallback fetch
     BLOCKHASH_VALIDITY = 60     # Solana blockhash valid ~60-90s
 

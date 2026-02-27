@@ -236,6 +236,9 @@ class FallbackSeller:
         self.jupiter_api_key = jupiter_api_key or os.getenv("JUPITER_TRADE_API_KEY")  # NO fallback to monitor key!
         self._alt_client = None
 
+        # S45: Persistent aiohttp session (saves ~58ms TCP+TLS per _send_tx_parallel)
+        self._persistent_session: aiohttp.ClientSession | None = None
+
     async def _get_rpc_client(self):
         """Get RPC client - uses dRPC/Chainstack/Alchemy.
         
@@ -250,6 +253,22 @@ class FallbackSeller:
 
         if self._alt_client is not None:
             return self._alt_client
+
+    async def _get_persistent_session(self) -> aiohttp.ClientSession:
+        """S45: Reusable aiohttp session — avoids TCP+TLS handshake per call."""
+        if self._persistent_session is None or self._persistent_session.closed:
+            self._persistent_session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(limit=50, keepalive_timeout=60),
+                timeout=aiohttp.ClientTimeout(total=10),
+            )
+        return self._persistent_session
+
+    async def close(self):
+        """S45: Cleanup persistent session."""
+        if self._persistent_session and not self._persistent_session.closed:
+            await self._persistent_session.close()
+            self._persistent_session = None
+
 
         # S12: Chainstack PRIMARY (74ms avg), Alchemy fallback (45ms avg)
         # dRPC has cold-start timeouts — moved to last resort
@@ -334,8 +353,8 @@ class FallbackSeller:
                     "maxRetries": 0
                 }]
             }
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
-                async with sess.post(url, json=payload) as resp:
+            sess = await self._get_persistent_session()
+            async with sess.post(url, json=payload) as resp:
                     data = await resp.json()
                     if "result" in data:
                         return data["result"]
@@ -349,8 +368,8 @@ class FallbackSeller:
                 "method": "sendTransaction",
                 "params": [tx_base64, {"encoding": "base64"}]
             }
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
-                async with sess.post(f"{url}/api/v1/transactions", json=payload) as resp:
+            sess = await self._get_persistent_session()
+            async with sess.post(f"{url}/api/v1/transactions", json=payload) as resp:
                     data = await resp.json()
                     if "result" in data:
                         return data["result"]
@@ -378,12 +397,12 @@ class FallbackSeller:
                     "frontRunningProtection": False,
                     "useStakedRPCs": True,
                 }
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
-                    async with sess.post(
-                        region_url,
-                        json=payload,
-                        headers={"Authorization": _bloxroute_auth, "Content-Type": "application/json"}
-                    ) as resp:
+                sess = await self._get_persistent_session()
+                async with sess.post(
+                    region_url,
+                    json=payload,
+                    headers={"Authorization": _bloxroute_auth, "Content-Type": "application/json"}
+                ) as resp:
                         data = await resp.json()
                         sig = data.get("signature")
                         if sig:
@@ -405,12 +424,12 @@ class FallbackSeller:
                     "method": "sendTransaction",
                     "params": [tx_base64, {"frontRunningProtection": False}]
                 }
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
-                    async with sess.post(
-                        "https://fast.circular.bot/transactions",
-                        json=payload,
-                        headers={"Content-Type": "application/json", "x-api-key": _circular_key}
-                    ) as resp:
+                sess = await self._get_persistent_session()
+                async with sess.post(
+                    "https://fast.circular.bot/transactions",
+                    json=payload,
+                    headers={"Content-Type": "application/json", "x-api-key": _circular_key}
+                ) as resp:
                         data = await resp.json()
                         result = data.get("result")
                         if result:
@@ -429,13 +448,40 @@ class FallbackSeller:
                     "method": "sendTransaction",
                     "params": [tx_base64, {"encoding": "base64", "skipPreflight": True}]
                 }
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
-                    async with sess.post(_tpu_endpoint, json=payload) as resp:
+                sess = await self._get_persistent_session()
+                async with sess.post(_tpu_endpoint, json=payload) as resp:
                         data = await resp.json()
                         if "result" in data:
                             return data["result"]
                         raise RuntimeError(f"TPU: {str(data.get('error',''))[:80]}")
             tasks.append(asyncio.create_task(_tpu_send()))
+
+
+        # === S45: Helius Sender (swQoS + Jito, FREE, no API key needed) ===
+        async def _helius_sender(region_url: str, label: str):
+            """Send via Helius Sender — largest Solana validator, swQoS staked connections."""
+            payload = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "sendTransaction",
+                "params": [tx_base64, {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 0
+                }]
+            }
+            sess = await self._get_persistent_session()
+            async with sess.post(region_url, json=payload) as resp:
+                data = await resp.json()
+                if "result" in data:
+                    return data["result"]
+                err = data.get("error", {})
+                raise RuntimeError(f"HeliusSender-{label}: {err}")
+
+        for _hs_label, _hs_url in (
+            ("fra", "http://fra-sender.helius-rpc.com/fast"),
+            ("ams", "http://ams-sender.helius-rpc.com/fast"),
+        ):
+            tasks.append(asyncio.create_task(_helius_sender(_hs_url, _hs_label)))
 
         total_tasks = len(tasks)
 
@@ -720,7 +766,7 @@ class FallbackSeller:
             ix_data = BUY_DISCRIMINATOR + struct.pack("<Q", buy_amount_lamports) + struct.pack("<Q", min_tokens_output) + bytes([0])  # track_volume = false
 
             # Instructions - use idempotent ATA creation like buy.py (always include, won't fail if exists)
-            compute_limit_ix = set_compute_unit_limit(200_000)
+            compute_limit_ix = set_compute_unit_limit(100_000)  # S45: was 200K, real ~50-80K
             compute_price_ix = set_compute_unit_price(self.priority_fee)
 
             # Create WSOL ATA (idempotent - won't fail if exists)
@@ -750,6 +796,10 @@ class FallbackSeller:
             buy_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
 
             # Order matches buy.py: wsol_ata, transfer, sync, token_ata, buy
+            # S45: Jito tip in TX body
+            _jito_ps = get_jito_sender()
+            _tip_ix_ps = _jito_ps.create_tip_instruction(self.wallet.pubkey) if _jito_ps.enabled else None
+
             instructions = [
                 compute_limit_ix,
                 compute_price_ix,
@@ -759,6 +809,8 @@ class FallbackSeller:
                 create_token_ata_ix,
                 buy_ix,
             ]
+            if _tip_ix_ps:
+                instructions.append(_tip_ix_ps)
 
             logger.info(f"[TX] Total instructions: {len(instructions)} (using idempotent ATA creation)")
 
@@ -1144,12 +1196,18 @@ class FallbackSeller:
             )
             
             # Compute budget
-            cu_limit_ix = set_compute_unit_limit(150_000)
+            cu_limit_ix = set_compute_unit_limit(80_000)  # S45: was 150K, real ~30-50K
             cu_price_ix = set_compute_unit_price(self.priority_fee)
             
+            # S45: Jito tip in TX body (required for Helius Sender, improves Jito landing)
+            _jito = get_jito_sender()
+            _tip_ix = _jito.create_tip_instruction(self.wallet.pubkey) if _jito.enabled else None
+
             instructions = [
                 cu_limit_ix, cu_price_ix, create_ata_ix, buy_ix
             ]
+            if _tip_ix:
+                instructions.append(_tip_ix)
             
             # --- Build and sign TX ---
             from solders.message import Message
@@ -1772,7 +1830,7 @@ class FallbackSeller:
             ]
             create_ata_ix = Instruction(ASSOCIATED_TOKEN_PROGRAM, bytes([1]), create_ata_accounts)
 
-            compute_limit_ix = set_compute_unit_limit(150_000)
+            compute_limit_ix = set_compute_unit_limit(100_000)  # S45: was 150K, real ~60-80K
             compute_price_ix = set_compute_unit_price(self.priority_fee)
             sell_ix = Instruction(PUMP_AMM_PROGRAM_ID, ix_data, accounts)
 
@@ -1783,8 +1841,14 @@ class FallbackSeller:
                 blockhash_resp = await rpc_client.get_latest_blockhash()
                 blockhash = blockhash_resp.value.blockhash
 
+            # S45: Jito tip in TX body for sell
+            _jito_sell = get_jito_sender()
+            _sell_ixs = [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix]
+            if _jito_sell.enabled:
+                _sell_ixs.append(_jito_sell.create_tip_instruction(self.wallet.pubkey))
+
             msg = Message.new_with_blockhash(
-                [compute_limit_ix, compute_price_ix, create_ata_ix, sell_ix],
+                _sell_ixs,
                 self.wallet.pubkey,
                 blockhash,
             )
