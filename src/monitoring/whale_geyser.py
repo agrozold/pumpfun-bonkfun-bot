@@ -24,6 +24,7 @@ import grpc
 from grpc import aio as grpc_aio
 
 from geyser.generated import geyser_pb2, geyser_pb2_grpc
+from geyser.generated import deshred_pb2
 
 # Local transaction parser — eliminates ~650ms Helius API call
 try:
@@ -297,6 +298,20 @@ class WhaleGeyserReceiver:
             "pong_received": 0,
         }
 
+        # Deshred stream: raw tx feed ahead of normal PROCESSED subscribe.
+        self._deshred_sigs: set[str] = set()
+        self._deshred_task: Optional[asyncio.Task] = None
+        self._deshred_stats = {
+            "messages": 0,
+            "tx_detected": 0,
+            "whale_hits": 0,
+            "prefetch_started": 0,
+            "prefetch_hits": 0,
+            "reconnects": 0,
+        }
+        self._deshred_prefetch_cache: dict[str, dict] = {}
+        self._deshred_prefetch_cleanup_counter: int = 0
+
         # Latency tracking
         self._last_latency_ms: float = 0
 
@@ -370,6 +385,13 @@ class WhaleGeyserReceiver:
             if inst.reconnect_event:
                 inst.reconnect_event.set()
 
+    def _select_deshred_instance(self) -> Optional[GrpcInstance]:
+        """Pick the first authenticated gRPC instance for deshred support."""
+        for inst in self._grpc_instances:
+            if inst.api_key:
+                return inst
+        return None
+
     async def start(self):
         """Start gRPC streams. Same interface as WhaleWebhookReceiver.start()."""
         self.running = True
@@ -393,6 +415,13 @@ class WhaleGeyserReceiver:
         if self._grpc_instances:
             self._stream_task = self._grpc_instances[0].stream_task
 
+        # Start deshred on the first authenticated gRPC instance.
+        deshred_inst = self._select_deshred_instance()
+        if deshred_inst:
+            self._deshred_task = asyncio.create_task(
+                self._run_deshred_stream(deshred_inst)
+            )
+
         logger.warning("=" * 70)
         logger.warning("[GEYSER] WHALE GEYSER TRACKER STARTED")
         for inst in self._grpc_instances:
@@ -407,11 +436,23 @@ class WhaleGeyserReceiver:
             logger.warning(f"[GEYSER] Mode: HYBRID (gRPC + Helius Enhanced API)")
         if len(self._grpc_instances) > 1:
             logger.warning(f"[GEYSER] DUAL gRPC: signal dedup via shared _processed_sigs — first wins!")
+        if self._deshred_task and deshred_inst:
+            logger.warning(
+                f"[GEYSER] DESHRED: enabled on authenticated gRPC instance "
+                f"({deshred_inst.name}) (~400ms pre-PROCESSED)"
+            )
         logger.warning("=" * 70)
 
     async def stop(self):
         """Stop all gRPC streams."""
         self.running = False
+        if self._deshred_task:
+            self._deshred_task.cancel()
+            try:
+                await self._deshred_task
+            except asyncio.CancelledError:
+                pass
+            self._deshred_task = None
         for inst in self._grpc_instances:
             # Stop ping loop
             if inst.ping_task:
@@ -624,6 +665,343 @@ class WhaleGeyserReceiver:
                 await asyncio.sleep(10)
         except asyncio.CancelledError:
             pass
+
+    async def _run_deshred_stream(self, inst: GrpcInstance):
+        """Run deshred stream for early tx detection and async prefetch warmup."""
+        pumpfun_program = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        pumpswap_program = "PSwapMdSai8tjrEXcxFeQth87PhDqyBMXBRnN29RLeEX"
+        pump_programs = {pumpfun_program, pumpswap_program}
+        tag = "DESHRED"
+        reconnect_delay = 1.0
+
+        logger.warning(f"[{tag}] Starting deshred stream on {inst.name}")
+
+        while self.running:
+            channel = None
+            try:
+                auth = grpc.metadata_call_credentials(
+                    lambda _, callback, _key=inst.api_key: callback((("x-token", _key),), None)
+                )
+                creds = grpc.composite_channel_credentials(
+                    grpc.ssl_channel_credentials(),
+                    auth,
+                )
+                channel = grpc_aio.secure_channel(
+                    inst.endpoint,
+                    creds,
+                    options=[
+                        ("grpc.keepalive_time_ms", 10000),
+                        ("grpc.keepalive_timeout_ms", 5000),
+                        ("grpc.keepalive_permit_without_calls", True),
+                        ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+                    ],
+                )
+                stub = geyser_pb2_grpc.GeyserStub(channel)
+                stub.SubscribeDeshred = channel.stream_stream(
+                    "/geyser.Geyser/SubscribeDeshred",
+                    request_serializer=deshred_pb2.SubscribeDeshredRequest.SerializeToString,
+                    response_deserializer=deshred_pb2.SubscribeUpdateDeshred.FromString,
+                    _registered_method=True,
+                )
+
+                request = deshred_pb2.SubscribeDeshredRequest()
+                tx_filter = deshred_pb2.SubscribeRequestFilterDeshredTransactions(vote=False)
+                for wallet in self.whale_wallets:
+                    tx_filter.account_include.append(wallet)
+                request.deshred_transactions["whale_deshred"].CopyFrom(tx_filter)
+
+                ping_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+                ping_counter = 0
+
+                async def deshred_request_iter():
+                    yield request
+                    while True:
+                        try:
+                            message = await ping_queue.get()
+                            if message is None:
+                                return
+                            yield message
+                        except asyncio.CancelledError:
+                            return
+
+                async def deshred_ping_loop():
+                    nonlocal ping_counter
+                    try:
+                        await asyncio.sleep(5)
+                        while self.running:
+                            ping_counter += 1
+                            ping_request = deshred_pb2.SubscribeDeshredRequest(
+                                ping=deshred_pb2.SubscribeRequestPing(id=ping_counter)
+                            )
+                            try:
+                                ping_queue.put_nowait(ping_request)
+                            except asyncio.QueueFull:
+                                pass
+                            await asyncio.sleep(10)
+                    except asyncio.CancelledError:
+                        pass
+
+                ping_task = asyncio.create_task(deshred_ping_loop())
+                logger.warning(f"[{tag}] Connected, streaming deshred for {len(self.whale_wallets)} wallets")
+
+                try:
+                    async for update in stub.SubscribeDeshred(deshred_request_iter()):
+                        if not self.running:
+                            break
+                        self._deshred_stats["messages"] += 1
+
+                        if update is None:
+                            continue
+                        if update.HasField("pong"):
+                            continue
+                        if update.HasField("ping"):
+                            ping_counter += 1
+                            try:
+                                ping_queue.put_nowait(
+                                    deshred_pb2.SubscribeDeshredRequest(
+                                        ping=deshred_pb2.SubscribeRequestPing(id=ping_counter)
+                                    )
+                                )
+                            except asyncio.QueueFull:
+                                pass
+                            continue
+                        if not update.HasField("deshred_transaction"):
+                            continue
+
+                        dtx = update.deshred_transaction
+                        signature = base58.b58encode(bytes(dtx.signature)).decode()
+                        self._deshred_stats["tx_detected"] += 1
+
+                        if signature in self._deshred_sigs:
+                            continue
+                        self._deshred_sigs.add(signature)
+                        if len(self._deshred_sigs) > 1000:
+                            self._deshred_sigs = set(list(self._deshred_sigs)[-500:])
+
+                        tx_msg = dtx.transaction.message if dtx.transaction else None
+                        if not tx_msg or not tx_msg.account_keys:
+                            continue
+
+                        all_accounts = list(tx_msg.account_keys)
+                        all_accounts.extend(dtx.loaded_writable_addresses)
+                        all_accounts.extend(dtx.loaded_readonly_addresses)
+                        account_strs = [base58.b58encode(bytes(account)).decode() for account in all_accounts]
+
+                        fee_payer = account_strs[0] if account_strs else ""
+                        whale_info = self.whale_wallets.get(fee_payer)
+                        if not whale_info:
+                            for account in account_strs:
+                                if account in self.whale_wallets:
+                                    whale_info = self.whale_wallets[account]
+                                    fee_payer = account
+                                    break
+                        if not whale_info:
+                            continue
+                        if not (pump_programs & set(account_strs)):
+                            continue
+
+                        self._deshred_stats["whale_hits"] += 1
+                        deshred_time = time.monotonic()
+
+                        token_mint = None
+                        detected_program = None
+                        for instruction in tx_msg.instructions or []:
+                            prog_idx = instruction.program_id_index
+                            if prog_idx >= len(account_strs):
+                                continue
+                            program_id = account_strs[prog_idx]
+                            account_indexes = bytes(instruction.accounts)
+                            if program_id == pumpfun_program and len(account_indexes) > 2:
+                                mint_idx = account_indexes[2]
+                                if mint_idx < len(account_strs):
+                                    token_mint = account_strs[mint_idx]
+                                    detected_program = "pumpfun"
+                                    break
+                            elif program_id == pumpswap_program and len(account_indexes) > 3:
+                                mint_idx = account_indexes[3]
+                                if mint_idx < len(account_strs):
+                                    token_mint = account_strs[mint_idx]
+                                    detected_program = "pumpswap"
+                                    break
+
+                        if token_mint and token_mint not in self.token_blacklist:
+                            logger.warning(
+                                f"[{tag}] WHALE TX PRE-DETECTED! "
+                                f"whale={whale_info.get('label', '?')[:20]} "
+                                f"mint={token_mint[:16]}... "
+                                f"program={detected_program} "
+                                f"sig={signature[:20]}..."
+                            )
+                            asyncio.create_task(
+                                self._deshred_prefetch(
+                                    signature,
+                                    fee_payer,
+                                    token_mint,
+                                    detected_program,
+                                    deshred_time,
+                                )
+                            )
+                finally:
+                    ping_task.cancel()
+                    try:
+                        await ping_task
+                    except asyncio.CancelledError:
+                        pass
+
+                reconnect_delay = 1.0
+
+            except grpc_aio.AioRpcError as e:
+                if e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                    logger.warning(
+                        f"[{tag}] SubscribeDeshred not supported by server, disabling. "
+                        f"Normal Subscribe continues."
+                    )
+                    return
+                logger.error(f"[{tag}] gRPC error: {e.code()} - {e.details() or ''}")
+            except asyncio.CancelledError:
+                logger.info(f"[{tag}] Stream cancelled")
+                return
+            except Exception as e:
+                logger.error(f"[{tag}] Unexpected error: {e}")
+
+            if self.running:
+                self._deshred_stats["reconnects"] += 1
+                logger.warning(f"[{tag}] Reconnecting in {reconnect_delay:.1f}s")
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 30)
+
+            if channel:
+                try:
+                    await channel.close()
+                except Exception:
+                    pass
+
+    async def _deshred_prefetch(
+        self,
+        signature: str,
+        whale_wallet: str,
+        token_mint: str,
+        program_id: str,
+        deshred_time: float,
+    ):
+        """Warm shared caches before the full PROCESSED transaction arrives."""
+        tag = "DESHRED"
+        try:
+            self._deshred_stats["prefetch_started"] += 1
+            cache_entry = {
+                "mint": token_mint,
+                "whale_wallet": whale_wallet,
+                "program": program_id,
+                "timestamp": deshred_time,
+                "ata": None,
+                "blockhash": None,
+                "pool_data": None,
+            }
+
+            async def _warmup_blockhash():
+                try:
+                    from core.blockhash_cache import BlockhashCache
+
+                    bh_inst = BlockhashCache._instance
+                    if bh_inst:
+                        blockhash = await bh_inst.get_blockhash()
+                        cache_entry["blockhash"] = str(blockhash) if blockhash else None
+                        return
+                except Exception:
+                    pass
+                try:
+                    from core.blockhash_cache import get_blockhash_cache
+
+                    bh_cache = await get_blockhash_cache()
+                    blockhash = await bh_cache.get_blockhash()
+                    cache_entry["blockhash"] = str(blockhash) if blockhash else None
+                except Exception as e:
+                    logger.debug(f"[{tag}] Blockhash warmup failed: {e}")
+
+            async def _derive_ata():
+                try:
+                    from solders.pubkey import Pubkey
+                    from spl.token.instructions import get_associated_token_address
+                    from core.pubkeys import SystemAddresses
+
+                    ata = get_associated_token_address(
+                        Pubkey.from_string(self._wallet_pubkey_str),
+                        Pubkey.from_string(token_mint),
+                        SystemAddresses.TOKEN_2022_PROGRAM,
+                    )
+                    cache_entry["ata"] = str(ata)
+                except Exception as e:
+                    logger.debug(f"[{tag}] ATA derivation failed: {e}")
+
+            async def _resolve_pool():
+                if program_id != "pumpswap":
+                    return
+                try:
+                    from trading.vault_resolver import resolve_vaults
+
+                    result = await asyncio.wait_for(resolve_vaults(token_mint), timeout=3.0)
+                    if result:
+                        base_vault, quote_vault, pool_address = result
+                        cache_entry["pool_data"] = {
+                            "base_vault": base_vault,
+                            "quote_vault": quote_vault,
+                            "pool_address": pool_address,
+                        }
+                except asyncio.TimeoutError:
+                    logger.debug(f"[{tag}] Vault resolve timeout for {token_mint[:12]}...")
+                except Exception as e:
+                    logger.debug(f"[{tag}] Vault resolve failed: {e}")
+
+            tasks = [_warmup_blockhash(), _derive_ata()]
+            if program_id == "pumpswap":
+                tasks.append(_resolve_pool())
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+            self._deshred_prefetch_cache[signature] = cache_entry
+
+            parts = []
+            if cache_entry["blockhash"]:
+                parts.append("blockhash")
+            if cache_entry["ata"]:
+                parts.append("ata")
+            if cache_entry["pool_data"]:
+                parts.append("pool")
+            logger.warning(
+                f"[{tag}] Prefetch started for {token_mint[:16]}... "
+                f"[{'+'.join(parts) or 'none'}] "
+                f"program={program_id}"
+            )
+
+            self._deshred_prefetch_cleanup_counter += 1
+            if self._deshred_prefetch_cleanup_counter % 20 == 0:
+                self._cleanup_deshred_prefetch_cache()
+        except Exception as e:
+            logger.debug(f"[{tag}] Prefetch error for {token_mint[:12]}: {e}")
+
+    def _cleanup_deshred_prefetch_cache(self):
+        """Drop stale deshred prefetch entries."""
+        now = time.monotonic()
+        stale_signatures = [
+            signature
+            for signature, data in self._deshred_prefetch_cache.items()
+            if now - data.get("timestamp", 0) > 10.0
+        ]
+        for signature in stale_signatures:
+            del self._deshred_prefetch_cache[signature]
+        if stale_signatures:
+            logger.debug(f"[DESHRED] Cache cleanup: removed {len(stale_signatures)} stale entries")
+
+    def _consume_deshred_prefetch(self, signature: str, token_mint: str) -> dict | None:
+        """Pop a fresh prefetch entry for the matching signature."""
+        entry = self._deshred_prefetch_cache.pop(signature, None)
+        if not entry:
+            return None
+        age = time.monotonic() - entry.get("timestamp", 0)
+        if age > 5.0:
+            logger.debug(f"[DESHRED] Prefetch expired for {token_mint[:12]}... age={age:.1f}s")
+            return None
+        self._deshred_stats["prefetch_hits"] += 1
+        return entry
 
     async def _run_stream_instance(self, inst: GrpcInstance):
         """Main gRPC stream loop for a specific instance with auto-reconnect."""
@@ -1135,6 +1513,25 @@ class WhaleGeyserReceiver:
             )
 
             self._stats["parse_ok"] += 1
+
+            prefetch = self._consume_deshred_prefetch(signature, token_received)
+            if prefetch:
+                age_ms = (time.monotonic() - prefetch.get("timestamp", 0)) * 1000
+                parts = []
+                pool_data = prefetch.get("pool_data")
+                if pool_data and not whale_buy.whale_pumpswap_pool:
+                    whale_buy.whale_pumpswap_pool = pool_data.get("pool_address", "")
+                    whale_buy.whale_pumpswap_pool_base_vault = pool_data.get("base_vault", "")
+                    whale_buy.whale_pumpswap_pool_quote_vault = pool_data.get("quote_vault", "")
+                    parts.append("pool")
+                if prefetch.get("ata"):
+                    parts.append("ata")
+                if prefetch.get("blockhash"):
+                    parts.append("blockhash")
+                logger.warning(
+                    f"[DESHRED] Prefetch HIT for {token_received[:16]}... "
+                    f"saved ~{age_ms:.0f}ms [{'+'.join(parts) or 'none'}]"
+                )
 
             logger.warning("=" * 70)
             _src = source_name.upper() if source_name else "?"

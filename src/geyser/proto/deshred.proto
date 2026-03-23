@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+import "solana-storage.proto";
+
+package geyser_deshred;
+
+// Separate deshred package to avoid collisions with the main geyser proto.
+
+message SubscribeRequestPing {
+  int32 id = 1;
+}
+
+message SubscribeUpdatePing {}
+
+message SubscribeUpdatePong {
+  int32 id = 1;
+}
+
+message SubscribeDeshredRequest {
+  map<string, SubscribeRequestFilterDeshredTransactions> deshred_transactions = 1;
+  optional SubscribeRequestPing ping = 2;
+}
+
+message SubscribeRequestFilterDeshredTransactions {
+  optional bool vote = 1;
+  repeated string account_include = 2;
+  repeated string account_exclude = 3;
+  repeated string account_required = 4;
+}
+
+message SubscribeUpdateDeshred {
+  oneof update_oneof {
+    SubscribeUpdateDeshredTransaction deshred_transaction = 1;
+    SubscribeUpdatePing ping = 2;
+    SubscribeUpdatePong pong = 3;
+  }
+}
+
+message SubscribeUpdateDeshredTransaction {
+  bytes signature = 1;
+  bool is_vote = 2;
+  solana.storage.ConfirmedBlock.Transaction transaction = 3;
+  repeated bytes loaded_writable_addresses = 4;
+  repeated bytes loaded_readonly_addresses = 5;
+}
